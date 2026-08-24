@@ -6,6 +6,7 @@ package eu.nodepass.somewhere.data
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -77,6 +78,26 @@ class NodeStoreTest {
                 .single()
                 .url.sharedKey,
         )
+    }
+
+    @Test
+    fun aKeyThatIsNotValidTextSurvivesBeingStored() {
+        // The store persists a node as the text `toUrl` renders and reads it
+        // back with `parse`, so it inherits every rounding error that round
+        // trip has. It had one: the key was rendered through a String, which is
+        // a UTF-8 decode, so a key of bytes that are not valid UTF-8 came back
+        // as U+FFFD — a different key, silently, with the only symptom being an
+        // authentication failure days later. Fixed in NowhereUrl; pinned here
+        // because this is the layer where it would have cost someone a node.
+        val raw = "nowhere://%FF%FE%00%80@h.example.net:443?up=tcp&down=tcp"
+        val original = node(raw)
+        assertEquals(4, original.sharedKey.toByteArray().size)
+
+        val store = store()
+        store.add(original)
+        val loaded = store.load().single().url
+        assertEquals(original.sharedKey, loaded.sharedKey)
+        assertArrayEquals(original.sharedKey.toByteArray(), loaded.sharedKey.toByteArray())
     }
 
     @Test

@@ -156,7 +156,14 @@ data class NowhereUrl(
             }.joinToString("&")
 
         val fragment = displayName?.let { "#${percentEncode(it)}" }.orEmpty()
-        return "$SCHEME://${percentEncode(String(sharedKey.toByteArray()))}@$host:$port?$query$fragment"
+        // Encoded from the key's bytes, never through a String. `String(bytes)`
+        // is a UTF-8 decode, and a key is not required to be text: the parser
+        // decodes userinfo to bytes precisely so that it need not be. Rendering
+        // a non-UTF-8 key through a String replaced every stray byte with U+FFFD
+        // — a one-byte key of 0x80 came back as the three bytes EF BF BD — so a
+        // node saved and reloaded authenticated as something else, with no
+        // message anywhere. Found by fuzzing the round trip.
+        return "$SCHEME://${percentEncode(sharedKey.toByteArray())}@$host:$port?$query$fragment"
     }
 
     companion object {
@@ -275,9 +282,18 @@ data class NowhereUrl(
             return String(bytes, Charsets.UTF_8)
         }
 
-        private fun percentEncode(value: String): String =
+        private fun percentEncode(value: String): String = percentEncode(value.encodeToByteArray())
+
+        /**
+         * The byte-level encoder. Every other overload funnels through here.
+         *
+         * Taking bytes rather than text is the whole point: the shared key is
+         * an arbitrary byte string, and any path that turns it into a String
+         * first has already lost the bytes that are not valid UTF-8.
+         */
+        private fun percentEncode(value: ByteArray): String =
             buildString {
-                value.encodeToByteArray().forEach { byte ->
+                value.forEach { byte ->
                     val code = byte.toInt() and 0xFF
                     val character = code.toChar()
                     if (character.isLetterOrDigit() && code < 0x80 || character in "-._~") {
