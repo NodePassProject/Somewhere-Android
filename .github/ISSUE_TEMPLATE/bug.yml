@@ -1,0 +1,62 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report a security problem here.** Use the private channel in
+        [SECURITY.md](../blob/main/SECURITY.md) instead.
+
+        **Never paste a real shared key, subscription token or node address.**
+        A subscription URL is a bearer credential. Redact them.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: e.g. Pixel 6, Android 14 (API 34)
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration shape
+      description: >
+        The transports, mux and TLS settings involved — with every key, token and
+        real host removed.
+      placeholder: "tcp/tcp, mux=1, no sni, no pin"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Redact credentials and real addresses before pasting.
+      render: text

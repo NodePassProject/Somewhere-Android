@@ -43,6 +43,29 @@ The lwIP / TUN / routing layer is inherited from `NodePassProject/Anywhere-Andro
   implements mechanisms and embeds no values; parameters are delivered by the
   server at runtime.
 
+## Quality gates
+
+They land in M0, before any protocol code, so correctness is enforced by
+automation from the first protocol commit rather than retrofitted later.
+
+```sh
+./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug assembleDebug
+python3 conformance/scripts/verify-vectors.py
+```
+
+| Gate | What it enforces |
+|---|---|
+| `ktlintCheck` | Style. `@Composable` PascalCase is exempted through ktlint's own `.editorconfig` switch, not suppressed |
+| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
+| `lintDebug` | Android lint |
+| `verify-vectors.py` | 43 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
+| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for why the baseline is held rather than advanced |
+
+The coverage gate was verified to actually fail: a protocol class with no tests
+produces `lines covered percentage is 0.000000, but expected minimum is 90`.
+
+New protocol code lands with a matching known-answer or behavioural case.
+
 ## Facts that are easy to get wrong (all verified on the ground)
 
 1. **The client import scheme is `nowhere://`, not `vector://`.**

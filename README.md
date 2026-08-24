@@ -33,6 +33,16 @@ NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
 The suite makes no assumption about where an upstream clone lives; point
 `NOWHERE_CLONE` at one.
 
+## Quality gates
+
+```sh
+./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug assembleDebug
+python3 conformance/scripts/verify-vectors.py
+```
+
+The protocol layer carries a 90% line-coverage gate. CI runs all of the above on
+every pull request, and checks upstream for normative protocol changes daily.
+
 ## Build
 
 Requires JDK 21, Android SDK with platform 36, and — from L1 onward, once the

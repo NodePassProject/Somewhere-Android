@@ -1,22 +1,26 @@
 import java.util.Properties
 
-val localProperties = Properties().apply {
-    val file = rootProject.file("local.properties")
-    if (file.exists()) load(file.inputStream())
-}
+val localProperties =
+    Properties().apply {
+        val file = rootProject.file("local.properties")
+        if (file.exists()) load(file.inputStream())
+    }
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.kover)
+    alias(libs.plugins.ktlint)
 }
 
 android {
     namespace = "eu.nodepass.somewhere"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version =
+            release(36) {
+                minorApiLevel = 1
+            }
     }
 
     defaultConfig {
@@ -59,7 +63,7 @@ android {
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -72,12 +76,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    sourceSets {
-        getByName("main") { kotlin.srcDir("src/main/kotlin") }
-        getByName("test") { kotlin.srcDir("src/test/kotlin") }
-        getByName("androidTest") { kotlin.srcDir("src/androidTest/kotlin") }
     }
 
     // The lwIP / TUN native layer is inherited from Anywhere-Android at L1.
@@ -104,4 +102,45 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// ── Quality gates ───────────────────────────────────────────────────────────
+// These land in M0, before any protocol code, so that correctness is enforced
+// by automation from the first protocol commit rather than retrofitted later.
+
+ktlint {
+    android = true
+    ignoreFailures = false
+    filter {
+        exclude { it.file.path.contains("/build/") }
+    }
+}
+
+kover {
+    reports {
+        // The gate exists for the protocol layer: that is the part where being
+        // wrong means being wrong on the wire. Kover 0.9 only supports filters
+        // at the report level, so the report *is* the protocol layer. UI and
+        // generated code are deliberately outside it — one coverage number
+        // applied uniformly just gets gamed with trivial tests.
+        filters {
+            includes { classes("eu.nodepass.somewhere.protocol.*") }
+            excludes {
+                classes(
+                    "eu.nodepass.somewhere.BuildConfig",
+                    "*.R",
+                    "*.R$*",
+                )
+            }
+        }
+
+        verify {
+            rule("Protocol layer line coverage") {
+                bound {
+                    minValue = 90
+                    coverageUnits = kotlinx.kover.gradle.plugin.dsl.CoverageUnit.LINE
+                }
+            }
+        }
+    }
 }

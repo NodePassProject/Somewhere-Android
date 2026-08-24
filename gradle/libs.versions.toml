@@ -14,6 +14,8 @@ camerax = "1.4.1"
 mlkitBarcode = "18.3.1"
 coroutines = "1.10.1"
 bouncycastle = "1.78.1"
+kover = "0.9.9"
+ktlint = "14.2.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,3 +46,5 @@ bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref 
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }

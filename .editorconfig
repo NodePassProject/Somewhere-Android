@@ -22,3 +22,8 @@ trim_trailing_whitespace = false
 
 [*.{toml,yml,yaml}]
 indent_size = 2
+
+[*.{kt,kts}]
+# Compose convention: @Composable functions are PascalCase by design.
+# This is ktlint's own escape hatch for it, not a suppression of the rule.
+ktlint_function_naming_ignore_when_annotated_with = Composable

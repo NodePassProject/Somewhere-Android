@@ -1,0 +1,49 @@
+name: Protocol conformance issue
+description: Behaviour that deviates from the Nowhere specification
+labels: [protocol]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the client's behaviour on the wire disagrees with the
+        specification or with another implementation. If the deviation has
+        security consequences, use the private channel in
+        [SECURITY.md](../blob/main/SECURITY.md) instead.
+
+  - type: input
+    id: section
+    attributes:
+      label: Specification section
+      description: Which part of the upstream `docs/protocol.md` this concerns.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the specification requires
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What this client does
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        Byte-level output, a failing vector, or a comparison against the Rust
+        reference implementation.
+      render: text
+
+  - type: input
+    id: baseline
+    attributes:
+      label: Baseline checked against
+      description: The commit in `conformance/PROTOCOL_BASELINE` you compared with.
+      placeholder: v1.8.0 @ 7720311b
