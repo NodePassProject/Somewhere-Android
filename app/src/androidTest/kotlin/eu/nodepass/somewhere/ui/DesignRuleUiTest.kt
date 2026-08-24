@@ -4,9 +4,12 @@
 package eu.nodepass.somewhere.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.protocol.frame.SetupResult
@@ -80,8 +83,12 @@ class DesignRuleUiTest {
                 Home(SampleState.frankfurt, SampleState.session, {}, {})
             }
         }
-        compose.onNodeWithText(string(R.string.direction_upstream)).assertIsDisplayed()
-        compose.onNodeWithText(string(R.string.direction_downstream)).assertIsDisplayed()
+        // Uppercased, because that is what a section label renders as. Asserting
+        // the raw string passed on a Chinese device — where uppercase() is a
+        // no-op — and failed on an English one. The rendered form is the thing
+        // under test, so it is the thing asserted.
+        compose.onNodeWithText(string(R.string.direction_upstream).uppercase()).assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.direction_downstream).uppercase()).assertIsDisplayed()
     }
 
     @Test
@@ -99,12 +106,19 @@ class DesignRuleUiTest {
             }
         compose.setContent { SomewhereTheme { DiagnosticsScreen(entries = entries) } }
 
+        // Scrolled to, not merely looked for. The screen is a lazy list, so an
+        // identifier below the fold is not composed at all — and whether it is
+        // below the fold depends on the device. The first version of this test
+        // passed on a 2532 px display and failed on a shorter one, which made it
+        // a test of screen height rather than of the rule.
         SetupResult.entries.filter { it.isRejection }.forEach { result ->
-            val matches = compose.onAllNodesWithText(result.identifier, substring = true)
+            compose
+                .onNode(hasScrollAction())
+                .performScrollToNode(hasText(result.identifier, substring = true))
             assertEquals(
                 "${result.identifier} must appear as its own line, not folded into another",
                 true,
-                matches.fetchSemanticsNodes().isNotEmpty(),
+                compose.onAllNodesWithText(result.identifier, substring = true).fetchSemanticsNodes().isNotEmpty(),
             )
         }
     }

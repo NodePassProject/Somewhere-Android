@@ -41,10 +41,39 @@ import java.io.IOException
 class NodeStore(
     private val file: File,
 ) {
+    /**
+     * Where a node came from, which decides what may be done to it.
+     *
+     * NW-D-04 is the reason this exists: a dashboard removes nodes from the
+     * feed when a subscription lapses, and the honest response is to keep
+     * showing the node and say why it went — not to delete it silently, and not
+     * to report a network error. That is only possible if the app knows which
+     * nodes a feed is allowed to speak for. A node the user pasted is theirs
+     * and no refresh may touch it.
+     */
+    enum class Origin(
+        val marker: String,
+    ) {
+        /** Pasted, scanned, or arrived by deep link. Only the user removes it. */
+        Manual("manual"),
+
+        /** Currently in the subscription feed. */
+        Subscription("sub"),
+
+        /** Was in the feed and is not any more. Kept, and marked. */
+        RemovedFromFeed("sub-removed"),
+        ;
+
+        companion object {
+            fun fromMarker(marker: String): Origin? = entries.firstOrNull { it.marker == marker }
+        }
+    }
+
     /** A stored node, and the text it round-trips through. */
     data class Entry(
         val url: NowhereUrl,
         val line: String,
+        val origin: Origin = Origin.Manual,
     )
 
     /**
@@ -61,17 +90,38 @@ class NodeStore(
                 .readLines()
                 .map(String::trim)
                 .filter { it.isNotEmpty() && !it.startsWith("#") }
-                .mapNotNull { line ->
-                    (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value?.let { Entry(it, line) }
-                }
+                .mapNotNull(::parseLine)
         } catch (_: IOException) {
             emptyList()
         }
     }
 
+    /**
+     * `origin<TAB>url`, or a bare url.
+     *
+     * A bare line is [Origin.Manual]. That is not only a default — it is the
+     * migration: every node written before origins existed was one the user
+     * added by hand, and reading them as manual is both correct and free. A
+     * marker that is not recognised is treated the same way, because inventing
+     * an origin for a node is worse than assuming the one that grants a feed no
+     * authority over it.
+     */
+    private fun parseLine(line: String): Entry? {
+        val separator = line.indexOf('\t')
+        val origin = if (separator < 0) Origin.Manual else Origin.fromMarker(line.take(separator)) ?: Origin.Manual
+        val urlText = if (separator < 0) line else line.substring(separator + 1)
+        return (NowhereUrl.parse(urlText) as? DecodeResult.Ok)?.value?.let { Entry(it, urlText, origin) }
+    }
+
+    private fun render(entry: Entry): String =
+        if (entry.origin == Origin.Manual) entry.url.toUrl() else "${entry.origin.marker}\t${entry.url.toUrl()}"
+
+    /** Replaces the list, treating every node as manual. */
+    fun save(nodes: List<NowhereUrl>): Boolean = saveEntries(nodes.map { Entry(it, it.toUrl(), Origin.Manual) })
+
     /** Replaces the list. Each node is written as the parser's own rendering. */
-    fun save(nodes: List<NowhereUrl>): Boolean {
-        val body = nodes.joinToString("\n") { it.toUrl() }
+    fun saveEntries(nodes: List<Entry>): Boolean {
+        val body = nodes.joinToString("\n") { render(it) }
         return try {
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, "${file.name}.tmp")
@@ -98,17 +148,49 @@ class NodeStore(
      *
      * @return the list as it stands afterwards.
      */
-    fun add(node: NowhereUrl): List<Entry> {
+    fun add(
+        node: NowhereUrl,
+        origin: Origin = Origin.Manual,
+    ): List<Entry> {
         val existing = load()
         val rendered = node.toUrl()
         if (existing.any { it.url.toUrl() == rendered }) return existing
-        save(existing.map { it.url } + node)
+        saveEntries(existing + Entry(node, rendered, origin))
         return load()
     }
 
     fun remove(node: NowhereUrl): List<Entry> {
         val rendered = node.toUrl()
-        save(load().map { it.url }.filter { it.toUrl() != rendered })
+        saveEntries(load().filter { it.url.toUrl() != rendered })
+        return load()
+    }
+
+    /**
+     * Reconciles the stored list against a freshly fetched feed.
+     *
+     * NW-D-04, in one place:
+     *
+     * - Manual nodes are untouched. A feed has no authority over them.
+     * - A node in the feed is present, whether it is new or was previously
+     *   marked as removed — a subscription that comes back is not a new node.
+     * - A node the feed no longer lists is **kept and marked**, not deleted.
+     *   Deleting it would leave the user with a shorter list and no explanation,
+     *   which is the outcome the requirement exists to prevent.
+     */
+    fun reconcileWithFeed(feed: List<NowhereUrl>): List<Entry> {
+        val fresh = feed.associateBy { it.toUrl() }
+        val existing = load()
+        val kept =
+            existing.map { entry ->
+                when {
+                    entry.origin == Origin.Manual -> entry
+                    entry.url.toUrl() in fresh -> entry.copy(origin = Origin.Subscription)
+                    else -> entry.copy(origin = Origin.RemovedFromFeed)
+                }
+            }
+        val known = kept.map { it.url.toUrl() }.toSet()
+        val added = feed.filter { it.toUrl() !in known }.map { Entry(it, it.toUrl(), Origin.Subscription) }
+        saveEntries(kept + added)
         return load()
     }
 
@@ -118,7 +200,7 @@ class NodeStore(
         new: NowhereUrl,
     ): List<Entry> {
         val rendered = old.toUrl()
-        save(load().map { it.url }.map { if (it.toUrl() == rendered) new else it })
+        saveEntries(load().map { if (it.url.toUrl() == rendered) it.copy(url = new, line = new.toUrl()) else it })
         return load()
     }
 }

@@ -7,6 +7,9 @@ import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.subscription.Subscription
+import eu.nodepass.somewhere.subscription.SubscriptionFetcher
+import eu.nodepass.somewhere.subscription.SubscriptionReason
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,12 +51,25 @@ sealed interface ProbeResult {
  */
 class NodeRepository(
     private val store: NodeStore,
+    private val subscriptions: SubscriptionStore,
+    private val fetcher: SubscriptionFetcher,
     private val dialer: NowhereDialer = NowhereDialer(),
     private val io: CoroutineDispatcher,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val _nodes = MutableStateFlow(store.load())
     val nodes: StateFlow<List<NodeStore.Entry>> = _nodes.asStateFlow()
+
+    private val _subscription = MutableStateFlow(subscriptions.load())
+    val subscription: StateFlow<SubscriptionStore.Record?> = _subscription.asStateFlow()
+
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    private val _lastRefreshFailure = MutableStateFlow<DecodeReason?>(null)
+
+    /** The last refresh's reason for failing, or null if the last one worked. */
+    val lastRefreshFailure: StateFlow<DecodeReason?> = _lastRefreshFailure.asStateFlow()
 
     private val _probes = MutableStateFlow<Map<String, ProbeResult>>(emptyMap())
 
@@ -62,6 +78,75 @@ class NodeRepository(
 
     fun refresh() {
         _nodes.value = store.load()
+        _subscription.value = subscriptions.load()
+    }
+
+    /**
+     * Points the app at a subscription and fetches it once.
+     *
+     * The URL is written before the fetch is attempted, so a subscription that
+     * is correct but temporarily unreachable is still the subscription when the
+     * network comes back. A failed first fetch leaves the URL in place and the
+     * reason in [lastRefreshFailure] rather than discarding what the user typed.
+     */
+    suspend fun setSubscription(url: String): DecodeResult<Subscription> {
+        subscriptions.save(SubscriptionStore.Record(url, title = null, usage = null, fetchedAtEpochMillis = null))
+        _subscription.value = subscriptions.load()
+        return refreshSubscription()
+    }
+
+    /**
+     * Re-fetches the feed and reconciles it against what is stored.
+     *
+     * The reconciliation, not the fetch, is where NW-D-04 lives: nodes the feed
+     * has stopped listing are kept and marked rather than deleted, and manual
+     * nodes are never touched by it.
+     */
+    suspend fun refreshSubscription(): DecodeResult<Subscription> {
+        val record =
+            _subscription.value
+                ?: return DecodeResult.Invalid(SubscriptionReason.Transport("no subscription is configured"))
+
+        _refreshing.value = true
+        try {
+            val result = withContext(io) { fetcher.fetch(record.url) }
+            when (result) {
+                is DecodeResult.Ok -> {
+                    val subscription = result.value
+                    _nodes.value = store.reconcileWithFeed(subscription.nodes)
+                    subscriptions.save(
+                        record.copy(
+                            title = subscription.title ?: record.title,
+                            usage = subscription.usage ?: record.usage,
+                            fetchedAtEpochMillis = clock(),
+                        ),
+                    )
+                    _subscription.value = subscriptions.load()
+                    _lastRefreshFailure.value = null
+                }
+
+                is DecodeResult.Invalid -> {
+                    // NW-D-04: an empty feed is almost never a broken
+                    // subscription, it is an exhausted one — so the nodes are
+                    // still reconciled against it and every one of them is
+                    // marked as removed, which is what actually happened.
+                    if (result.reason == SubscriptionReason.NoNodes) {
+                        _nodes.value = store.reconcileWithFeed(emptyList())
+                    }
+                    _lastRefreshFailure.value = result.reason
+                }
+            }
+            return result
+        } finally {
+            _refreshing.value = false
+        }
+    }
+
+    /** Forgets the subscription and the credential in it. Nodes are left alone. */
+    fun forgetSubscription() {
+        subscriptions.clear()
+        _subscription.value = null
+        _lastRefreshFailure.value = null
     }
 
     fun add(node: NowhereUrl) {

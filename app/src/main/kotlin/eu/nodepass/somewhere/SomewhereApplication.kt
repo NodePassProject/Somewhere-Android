@@ -6,6 +6,8 @@ package eu.nodepass.somewhere
 import android.app.Application
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
+import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import kotlinx.coroutines.Dispatchers
 import java.io.File
 
@@ -20,6 +22,11 @@ class SomewhereApplication : Application() {
     val nodes: NodeRepository by lazy {
         NodeRepository(
             store = NodeStore(File(filesDir, "nodes/nodes.txt")),
+            // Its own file, not a section of the node list: the subscription URL
+            // is a bearer credential, and a future "export my nodes" must not be
+            // able to sweep it up by accident.
+            subscriptions = SubscriptionStore(File(filesDir, "subscription/subscription.txt")),
+            fetcher = SubscriptionFetcher(clientVersion = BuildConfig.VERSION_NAME),
             io = Dispatchers.IO,
         )
     }

@@ -130,6 +130,88 @@ class NodeStoreTest {
     }
 
     @Test
+    fun aNodeStoredBeforeOriginsExistedReadsAsManual() {
+        // The migration, and the reason a bare line is still valid. Every node
+        // written before this file knew about origins was one the user added by
+        // hand, so reading it as manual is correct rather than merely safe —
+        // and it means no migration step exists to go wrong.
+        val file = File(folder.root, "nodes/nodes.txt")
+        file.parentFile.mkdirs()
+        file.writeText("$frankfurt\n")
+        assertEquals(NodeStore.Origin.Manual, NodeStore(file).load().single().origin)
+    }
+
+    @Test
+    fun aFeedRefreshNeverTouchesAManuallyAddedNode() {
+        // NW-D-04's other half, and the one that would hurt: a subscription
+        // refresh that swept away a hand-pasted node would delete something the
+        // feed was never speaking for.
+        val store = store()
+        store.add(node(frankfurt), NodeStore.Origin.Manual)
+        val after = store.reconcileWithFeed(listOf(node(singapore)))
+
+        val manual = after.single { it.url.host == "fra04.example.net" }
+        assertEquals(NodeStore.Origin.Manual, manual.origin)
+        assertEquals(2, after.size)
+    }
+
+    @Test
+    fun aNodeTheFeedStopsListingIsKeptAndMarked() {
+        // Deleting it would leave a shorter list and no explanation, which is
+        // exactly the outcome NW-D-04 exists to prevent.
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt), node(singapore)))
+        val after = store.reconcileWithFeed(listOf(node(frankfurt)))
+
+        assertEquals("the node is kept, not deleted", 2, after.size)
+        assertEquals(
+            NodeStore.Origin.RemovedFromFeed,
+            after.single { it.url.host == "sgp11.example.net" }.origin,
+        )
+    }
+
+    @Test
+    fun aSubscriptionThatComesBackIsNotANewNode() {
+        // A lapsed subscription that is renewed should restore the node the
+        // user already had, in place, rather than appending a second copy of it.
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt)))
+        store.reconcileWithFeed(emptyList())
+        val after = store.reconcileWithFeed(listOf(node(frankfurt)))
+
+        assertEquals(1, after.size)
+        assertEquals(NodeStore.Origin.Subscription, after.single().origin)
+    }
+
+    @Test
+    fun anOriginSurvivesBeingWrittenAndReadBack() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt)))
+        assertEquals(NodeStore.Origin.Subscription, store.load().single().origin)
+        assertEquals(
+            "the url itself must not carry the marker",
+            "fra04.example.net",
+            store
+                .load()
+                .single()
+                .url.host,
+        )
+    }
+
+    @Test
+    fun anUnrecognisedOriginMarkerIsReadAsManual() {
+        // A marker this version does not know is a node whose provenance is
+        // unknown, and the safe reading of unknown provenance is the one that
+        // grants a feed no authority over it.
+        val file = File(folder.root, "nodes/nodes.txt")
+        file.parentFile.mkdirs()
+        file.writeText("from-the-future\t$frankfurt\n")
+        val loaded = NodeStore(file).load().single()
+        assertEquals(NodeStore.Origin.Manual, loaded.origin)
+        assertEquals("fra04.example.net", loaded.url.host)
+    }
+
+    @Test
     fun replaceKeepsThePositionInTheList() {
         // The node editor edits in place. A node that jumped to the end of the
         // list every time it was saved would be its own bug report.
