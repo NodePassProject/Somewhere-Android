@@ -86,6 +86,29 @@ New protocol code lands with a matching known-answer or behavioural case.
   nothing today because dashboards ignore unknown parameters, and is the intended
   channel for server-delivered parameters (V-05).
 
+## Design and language
+
+Two documents in `docs/` carry the UI decisions. Both exist because nothing
+crashes when they are violated:
+
+- [`docs/design-system.md`](docs/design-system.md) — colour tokens for both
+  themes with measured contrast, type, controls, and the four rules the UI has to
+  keep. Copy values from there rather than from a mockup.
+- [`docs/i18n.md`](docs/i18n.md) — English, Simplified and Traditional Chinese,
+  matched by script (`values-b+zh+Hans`) rather than by region.
+
+Two rules from those documents that reach into protocol code:
+
+- **Machine identifiers stay English; sentences translate.** The seven
+  `SetupResult` names, the configuration parameters (`up`, `down`, `mux`, `alpn`,
+  `sni`, `pin`) and carrier names are values, not prose. A user pasting
+  `DIAL_FAILED` into an issue must match the specification, the source, and
+  someone else's log from another locale.
+- **Direction colour is not decoration.** Upstream and downstream are never the
+  same colour anywhere in the app, and Material You dynamic colour must not touch
+  them — a wallpaper that made both channels the same hue would erase the one
+  thing the home screen exists to show.
+
 ## Facts that are easy to get wrong (all verified on the ground)
 
 1. **The client import scheme is `nowhere://`, not `vector://`.**

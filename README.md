@@ -33,6 +33,13 @@ NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
 The suite makes no assumption about where an upstream clone lives; point
 `NOWHERE_CLONE` at one.
 
+## Design
+
+[`docs/design-system.md`](docs/design-system.md) carries the colour tokens for
+both themes, the type scale, and the rules the UI has to keep.
+[`docs/i18n.md`](docs/i18n.md) covers the three shipping locales and the rule
+that machine identifiers stay English while sentences translate.
+
 ## Quality gates
 
 ```sh
