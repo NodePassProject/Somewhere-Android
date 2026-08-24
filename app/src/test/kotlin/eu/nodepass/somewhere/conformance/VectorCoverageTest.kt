@@ -33,6 +33,7 @@ class VectorCoverageTest {
             mapOf(
                 "auth" to "eu.nodepass.somewhere.protocol.auth.AuthVectorTest",
                 "flowHeader" to "eu.nodepass.somewhere.protocol.frame.FlowHeaderVectorTest",
+                "target" to "eu.nodepass.somewhere.protocol.target.TargetVectorTest",
             )
     }
 
