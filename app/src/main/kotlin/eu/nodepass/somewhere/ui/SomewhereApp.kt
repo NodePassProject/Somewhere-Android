@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 The Somewhere Authors
+
+package eu.nodepass.somewhere.ui
+
+import androidx.annotation.StringRes
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.ui.icons.SomewhereIcons
+import eu.nodepass.somewhere.ui.screens.AppsScreen
+import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
+import eu.nodepass.somewhere.ui.screens.HomeScreen
+import eu.nodepass.somewhere.ui.screens.ImportScreen
+import eu.nodepass.somewhere.ui.screens.NodeEditorScreen
+import eu.nodepass.somewhere.ui.screens.NodesScreen
+import eu.nodepass.somewhere.ui.screens.RoutingScreen
+import eu.nodepass.somewhere.ui.screens.SettingsScreen
+import eu.nodepass.somewhere.ui.theme.SomewhereTheme
+import eu.nodepass.somewhere.ui.theme.SomewhereType
+
+/** The four destinations that carry a tab. Everything else is pushed over them. */
+enum class Tab(
+    val route: String,
+    @StringRes val label: Int,
+    val icon: ImageVector,
+) {
+    Home("home", R.string.tab_home, SomewhereIcons.TabHome),
+    Nodes("nodes", R.string.tab_nodes, SomewhereIcons.TabNodes),
+    Routing("routing", R.string.tab_routing, SomewhereIcons.TabRouting),
+    Logs("logs", R.string.tab_logs, SomewhereIcons.TabLogs),
+}
+
+object Routes {
+    const val EDITOR = "editor"
+    const val IMPORT = "import"
+    const val APPS = "apps"
+    const val SETTINGS = "settings"
+}
+
+@Composable
+fun SomewhereApp(navController: NavHostController = rememberNavController()) {
+    val colors = SomewhereTheme.colors
+    val backStack by navController.currentBackStackEntryAsState()
+    val route = backStack?.destination?.route
+    val tab = Tab.entries.firstOrNull { it.route == route }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(colors.ground),
+    ) {
+        Box(Modifier.weight(1f)) {
+            NavHost(navController, startDestination = Tab.Home.route) {
+                composable(Tab.Home.route) {
+                    HomeScreen(
+                        onOpenNodes = { navController.navigate(Tab.Nodes.route) },
+                        onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    )
+                }
+                composable(Tab.Nodes.route) {
+                    NodesScreen(
+                        onAdd = { navController.navigate(Routes.IMPORT) },
+                        onEdit = { navController.navigate(Routes.EDITOR) },
+                    )
+                }
+                composable(Tab.Routing.route) {
+                    RoutingScreen(onOpenApps = { navController.navigate(Routes.APPS) })
+                }
+                composable(Tab.Logs.route) { DiagnosticsScreen() }
+                composable(Routes.EDITOR) { NodeEditorScreen(onBack = { navController.popBackStack() }) }
+                composable(Routes.IMPORT) { ImportScreen(onClose = { navController.popBackStack() }) }
+                composable(Routes.APPS) { AppsScreen(onBack = { navController.popBackStack() }) }
+                composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
+            }
+        }
+
+        if (tab != null) {
+            TabBar(selected = tab) { target ->
+                if (target != tab) {
+                    navController.navigate(target.route) {
+                        popUpTo(Tab.Home.route) { inclusive = false }
+                        launchSingleTop = true
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabBar(
+    selected: Tab,
+    onSelect: (Tab) -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(colors.panel),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(colors.panelLine),
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(74.dp)
+                .padding(start = 8.dp, end = 8.dp, top = 10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Tab.entries.forEach { tab ->
+                val active = tab == selected
+                val interaction = remember { MutableInteractionSource() }
+                Column(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .clickable(
+                                interactionSource = interaction,
+                                indication = null,
+                                onClick = { onSelect(tab) },
+                            ).padding(vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        tab.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(21.dp),
+                        tint = if (active) colors.upstream else colors.muted,
+                    )
+                    Text(
+                        text = stringResource(tab.label),
+                        fontFamily = SomewhereType.Body,
+                        fontSize = 10.5.sp,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                        color = if (active) colors.upstream else colors.muted,
+                    )
+                }
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .width(0.dp),
+        )
+    }
+}

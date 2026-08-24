@@ -48,6 +48,36 @@ tint the neutrals from the wallpaper. It must not touch `upstream` or
 that made both channels the same hue would erase the one thing the home screen
 exists to show.
 
+**Surface detail.** Three grounds, not two: a card sits *on* the ground, a panel
+is cut *into* it. The direction reverses between themes; the role does not.
+
+| Token | Light | Dark | Role |
+|---|---|---|---|
+| `panel` | `#FFFFFF` | `#0F1719` | a grouped list — settings rows, rule sets |
+| `panel-line` | `#E2EAEA` | `#1B2528` | the hairline between two rows of a panel |
+| `upstream-line` | `#B6DCDF` | `#1E4A50` | the selected upstream option |
+| `downstream-line` | `#E8CBA5` | `#4A3418` | the selected downstream option |
+| `critical-line` | `#EFC9C3` | `#4A2A26` | the border of a panel making a critical statement |
+| `inactive` | `#B4C4C4` | `#3A4A4E` | a dot or switch knob that is off. Never carries text |
+
+**A selection border is never the only cue.** Measured, the selected border
+against the unselected one is **1.11:1** in light and **1.35:1** in dark — a 1 px
+hairline at that separation is not perceivable. Every selected state therefore
+carries something else as well: the radio on the routing modes, the status dot
+and latency figure on a node card. `ColorContrastTest` pins the measurement so
+that a screen cannot later be "simplified" down to the border alone.
+
+**The four filled actions differ by theme, and each carries its own foreground.**
+A tinted fill is the loudest thing on a dark screen; the same treatment on white
+reads as *disabled*. So dark tints and light goes solid — which means these are
+pairs, and are measured as pairs.
+
+| Token | Light | Dark | Contrast |
+|---|---|---|---|
+| `primary-action` / on | `#0C6E78` / `#FFFFFF` | `#12292C` / `#55C4CE` | 5.97 / 7.38 |
+| `warn-action` / on | `#8A6410` / `#FFFFFF` | `#3A2E18` / `#D9AC4A` | 5.37 / 6.28 |
+| `critical-action` / on | `#A33228` / `#FFFFFF` | `#4A2A26` / `#E7EFEF` | 6.90 / 10.90 |
+
 Tinted backgrounds for chips and panels:
 
 | | Light | Dark |
@@ -67,6 +97,13 @@ Tinted backgrounds for chips and panels:
 | Body | IBM Plex Sans | 14 / 400 |
 | Measured value | IBM Plex Mono | 33 / 500, tabular |
 | Log line | IBM Plex Mono | 11 / 400 |
+
+The faces ship with the app: Archivo and IBM Plex Sans as **variable** fonts —
+one file each covers every weight the design uses, where three static cuts would
+cost more and still not cover a fourth. Variable axes need API 26, which is
+exactly this app's `minSdk`. No CJK face is bundled: every Android device
+already carries one, and bundling adds several megabytes for glyphs the system
+has.
 
 **Anything measured is monospaced with `tabular-nums`** — throughput, latency,
 flow ids, timestamps, byte counts. A value updating in place must not shift the

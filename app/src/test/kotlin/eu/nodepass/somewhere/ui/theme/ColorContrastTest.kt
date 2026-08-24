@@ -115,6 +115,63 @@ class ColorContrastTest {
     }
 
     @Test
+    fun everyActionFillCarriesReadableText() {
+        // The four filled actions are the one place the design deliberately
+        // differs by theme — tinted on dark, solid on light — so each carries
+        // its own foreground rather than reusing `ink`. Which means each is a
+        // pair that has to be measured as a pair: change one half and the other
+        // silently stops meeting AA.
+        eachTheme { theme, c ->
+            assertReadable("$theme onPrimaryAction", c.onPrimaryAction, c.primaryAction)
+            assertReadable("$theme onWarnAction", c.onWarnAction, c.warnAction)
+            assertReadable("$theme onCriticalAction", c.onCriticalAction, c.criticalAction)
+        }
+    }
+
+    @Test
+    fun textOnAPanelIsAsReadableAsTextOnASurface() {
+        // A panel is a third ground, distinct from `ground` and `surface`.
+        // `faint` failed on `surfaceAlt` once already, having passed on
+        // `ground`; this is the same defect waiting on the new token.
+        eachTheme { theme, c ->
+            assertReadable("$theme ink on panel", c.ink, c.panel)
+            assertReadable("$theme inkMuted on panel", c.inkMuted, c.panel)
+            assertReadable("$theme muted on panel", c.muted, c.panel)
+            assertReadable("$theme faint on panel", c.faint, c.panel)
+        }
+    }
+
+    @Test
+    fun aSelectionBorderIsNeverTheOnlyCue() {
+        // Measured, not assumed: the selected border against the unselected one
+        // is 1.11:1 in light and 1.35:1 in dark. A 1 dp hairline at that
+        // separation is not perceivable, so **selection must always carry a
+        // second cue** — the radio on the routing modes, the status dot and
+        // latency on a node card. This test pins the measurement so that nobody
+        // later "simplifies" a screen down to the border alone believing it
+        // carries the state.
+        eachTheme { _, c ->
+            val separation = contrast(c.upstreamLine, c.line)
+            assertTrue(
+                "the selection border is now %.2f:1 against the unselected border. If it has ".format(separation) +
+                    "genuinely reached 3.0:1 it can stand alone and this test should be replaced by " +
+                    "assertReadable; until then every selected state needs a second cue.",
+                separation < AA_LARGE,
+            )
+        }
+    }
+
+    @Test
+    fun theTwoDirectionLinesCannotBeConfusedWithEachOther() {
+        // The selected upstream carrier and the selected downstream carrier sit
+        // side by side in the node editor. Whatever else is true of them, they
+        // must not be the same fill — that is the one rule of this design.
+        eachTheme { theme, c ->
+            assertNotEquals("$theme direction fills must differ", c.upstreamLine, c.downstreamLine)
+        }
+    }
+
+    @Test
     fun theLightThemeIsNotAnInversionOfTheDark() {
         // The whole reason two palettes exist. If someone ever "simplifies" this
         // by reusing one set, this fails and says why.

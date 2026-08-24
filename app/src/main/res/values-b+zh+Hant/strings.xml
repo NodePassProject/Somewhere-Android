@@ -10,10 +10,16 @@
     <string name="setup_dial_failed">Portal 無法連線 %1$s。</string>
     <string name="setup_session_replaced">另一台裝置用同一把金鑰連線，接管了這個工作階段。</string>
     <string name="setup_internal_error">Portal 發生錯誤，但沒有說明原因。</string>
+    <string name="log_handshake_complete">交握完成，耗時 %1$s · %2$s</string>
 
     <string name="cert_unverified_short">憑證未驗證</string>
     <string name="cert_unverified_detail">這個節點既沒有可驗證的名稱，也沒有可釘選的指紋，因此憑證未經檢查即被接受。</string>
     <string name="cert_unverified_confirm">我了解這個節點的憑證不會被檢查。</string>
+    <string name="cert_unverified_reason">這個節點沒有 %1$s，也沒有 %2$s</string>
+    <string name="cert_not_verified">未驗證</string>
+    <string name="cert_add_sni">新增 SNI</string>
+    <string name="cert_pin_fingerprint">釘選指紋</string>
+    <string name="chip_unverified">未驗證</string>
 
     <string name="node_needs_quic">這個節點需要 QUIC，目前版本尚未支援。</string>
     <string name="node_switch_to_tcp">改用 TCP</string>
@@ -26,4 +32,98 @@
     <plurals name="active_flows">
         <item quantity="other">%d 條連線</item>
     </plurals>
+
+    <string name="tab_home">首頁</string>
+    <string name="tab_nodes">節點</string>
+    <string name="tab_routing">路由</string>
+    <string name="tab_logs">記錄</string>
+
+    <string name="home_connected_to">已連線至</string>
+    <string name="home_not_connected">未連線</string>
+    <string name="home_no_node">尚未選擇節點</string>
+    <string name="home_stat_active_flows">作用中連線</string>
+    <string name="home_stat_session">本次工作階段</string>
+    <string name="home_stat_handshake">交握</string>
+    <string name="home_state_connected">已連線</string>
+    <string name="home_state_disconnected">已中斷</string>
+    <string name="home_node_options">節點選項</string>
+    <string name="action_connect">連線</string>
+    <string name="action_disconnect">中斷連線</string>
+
+    <string name="direction_upstream">上行</string>
+    <string name="direction_downstream">下行</string>
+
+    <string name="nodes_subscription">訂閱</string>
+    <string name="nodes_add">新增節點</string>
+    <string name="nodes_expires">%1$s 到期</string>
+    <plurals name="nodes_refreshed_minutes">
+        <item quantity="other">%d 分鐘前重新整理</item>
+    </plurals>
+    <plurals name="nodes_count">
+        <item quantity="other">%d 個節點</item>
+    </plurals>
+
+    <string name="routing_title">路由</string>
+    <string name="routing_rules">依規則</string>
+    <string name="routing_rules_detail">一部分流量直連，其餘走通道</string>
+    <string name="routing_everything">全部</string>
+    <string name="routing_everything_detail">所有流量都走通道</string>
+    <string name="routing_rule_sets">規則集</string>
+    <string name="routing_per_app">個別應用程式</string>
+    <string name="rule_private_ranges">私有位址範圍</string>
+    <string name="rule_domestic_domains">境內網域</string>
+    <string name="rule_everything_else">其餘全部</string>
+    <string name="rule_bypass_by_country">依國家略過</string>
+    <string name="action_edit">編輯</string>
+    <plurals name="apps_excluded_count">
+        <item quantity="other">已排除 %d 個應用程式</item>
+    </plurals>
+
+    <string name="diagnostics_title">診斷</string>
+    <string name="diagnostics_connections">連線</string>
+    <string name="diagnostics_runtime">執行階段</string>
+    <string name="diagnostics_all_reasons">所有拒絕原因</string>
+
+    <string name="apps_title">個別應用程式</string>
+    <string name="apps_exclude_these">排除這些</string>
+    <string name="apps_only_these">僅這些</string>
+    <string name="apps_search">搜尋應用程式</string>
+    <string name="apps_self_excluded">一律排除 — 它自己的流量不能繞回</string>
+
+    <string name="editor_title">編輯節點</string>
+    <string name="action_save">儲存</string>
+    <string name="action_back">返回</string>
+    <string name="action_close">關閉</string>
+    <string name="field_name">名稱</string>
+    <string name="field_host">主機</string>
+    <string name="field_port">連接埠</string>
+    <string name="field_carriers">傳輸方式</string>
+    <string name="field_certificate">憑證</string>
+    <string name="editor_multiplexing">多工</string>
+    <string name="editor_multiplexing_detail">多條流共用一條 TLS 連線</string>
+    <string name="editor_alpn_hint">必須與 Portal 完全一致</string>
+
+    <string name="import_title">新增節點</string>
+    <string name="import_scan_qr">掃描 QR 碼</string>
+    <string name="import_scan_qr_detail">來自你的服務商後台</string>
+    <string name="import_subscription_link">訂閱連結</string>
+    <string name="import_subscription_link_detail">讓節點清單保持最新</string>
+    <string name="import_paste_label">或貼上一條節點連結</string>
+    <string name="import_add_node">新增節點</string>
+
+    <string name="settings_title">設定</string>
+    <string name="settings_connection">連線</string>
+    <string name="settings_always_on">永遠開啟 VPN</string>
+    <string name="settings_always_on_detail">網路變更時自動重新連線</string>
+    <string name="settings_start_on_boot">開機時啟動</string>
+    <string name="settings_quick_tile">快速設定磚</string>
+    <string name="settings_refresh_automatically">自動重新整理</string>
+    <string name="settings_refresh_every_6h">每 6 小時</string>
+    <string name="settings_https_only">僅透過 HTTPS</string>
+    <string name="settings_https_only_detail">你的訂閱連結等同於密碼</string>
+    <string name="settings_about">關於</string>
+    <string name="settings_version">版本</string>
+    <string name="settings_protocol">協定</string>
+    <string name="settings_source_code">原始碼</string>
+    <string name="settings_privacy_note">Somewhere 不蒐集統計資料，不記錄你造訪的網站，也沒有帳號。你的節點清單只留在這台裝置上。</string>
 </resources>

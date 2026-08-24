@@ -43,6 +43,39 @@ data class SomewhereColors(
     val warn: Color,
     val critical: Color,
     val criticalTint: Color,
+    /**
+     * A recessed container for a grouped list — settings rows, rule sets.
+     *
+     * Distinct from [surface]: a card sits *on* the ground, a panel is cut
+     * *into* it. In the dark theme that means darker than the surface; in the
+     * light theme it means lighter. The direction reverses, the role does not.
+     */
+    val panel: Color,
+    /** The hairline between two rows inside a [panel]. Lighter than [line]. */
+    val panelLine: Color,
+    /** The border that marks the selected upstream option, or a chosen row. */
+    val upstreamLine: Color,
+    /** The border that marks the selected downstream option. */
+    val downstreamLine: Color,
+    /** The border of a panel carrying a critical statement. */
+    val criticalLine: Color,
+    /** A dot or switch knob that is off. Never carries text. */
+    val inactive: Color,
+    /**
+     * The primary action's fill, and the three secondary action fills.
+     *
+     * **These differ by theme on purpose**, per `docs/design-system.md`: a
+     * tinted fill is the loudest thing on a dark screen, and the same treatment
+     * on white reads as *disabled*. So dark tints and light goes solid — which
+     * is why each carries its own `on*` colour rather than reusing [ink].
+     */
+    val primaryAction: Color,
+    val onPrimaryAction: Color,
+    val primaryActionLine: Color,
+    val warnAction: Color,
+    val onWarnAction: Color,
+    val criticalAction: Color,
+    val onCriticalAction: Color,
     val isDark: Boolean,
 )
 
@@ -65,6 +98,19 @@ val LightColors: SomewhereColors =
         warn = Color(0xFF8A6410), // 4.98:1
         critical = Color(0xFFA33228), // 6.40:1
         criticalTint = Color(0xFFF8E7E4),
+        panel = Color(0xFFFFFFFF),
+        panelLine = Color(0xFFE2EAEA),
+        upstreamLine = Color(0xFFB6DCDF),
+        downstreamLine = Color(0xFFE8CBA5),
+        criticalLine = Color(0xFFEFC9C3),
+        inactive = Color(0xFFB4C4C4),
+        primaryAction = Color(0xFF0C6E78),
+        onPrimaryAction = Color(0xFFFFFFFF), // 5.97:1
+        primaryActionLine = Color(0xFF0C6E78),
+        warnAction = Color(0xFF8A6410),
+        onWarnAction = Color(0xFFFFFFFF), // 5.37:1
+        criticalAction = Color(0xFFA33228),
+        onCriticalAction = Color(0xFFFFFFFF), // 6.90:1
         isDark = false,
     )
 
@@ -87,5 +133,18 @@ val DarkColors: SomewhereColors =
         warn = Color(0xFFD9AC4A), // 8.95:1
         critical = Color(0xFFE2857A), // 7.08:1
         criticalTint = Color(0xFF2E1A18),
+        panel = Color(0xFF0F1719),
+        panelLine = Color(0xFF1B2528),
+        upstreamLine = Color(0xFF1E4A50),
+        downstreamLine = Color(0xFF4A3418),
+        criticalLine = Color(0xFF4A2A26),
+        inactive = Color(0xFF3A4A4E),
+        primaryAction = Color(0xFF12292C),
+        onPrimaryAction = Color(0xFF55C4CE), // 7.38:1
+        primaryActionLine = Color(0xFF1E4A50),
+        warnAction = Color(0xFF3A2E18),
+        onWarnAction = Color(0xFFD9AC4A), // 6.28:1
+        criticalAction = Color(0xFF4A2A26),
+        onCriticalAction = Color(0xFFE7EFEF), // 10.90:1
         isDark = true,
     )

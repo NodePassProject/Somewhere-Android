@@ -8,10 +8,16 @@
     <string name="setup_dial_failed">Portal 无法连接 %1$s。</string>
     <string name="setup_session_replaced">另一台设备用同一个密钥连接，接管了这个会话。</string>
     <string name="setup_internal_error">Portal 出错了，但没有说明原因。</string>
+    <string name="log_handshake_complete">握手完成，用时 %1$s · %2$s</string>
 
     <string name="cert_unverified_short">证书未验证</string>
     <string name="cert_unverified_detail">这个节点既没有可校验的名称，也没有可固定的指纹，因此证书未经检查即被接受。</string>
     <string name="cert_unverified_confirm">我知道这个节点的证书不会被检查。</string>
+    <string name="cert_unverified_reason">这个节点没有 %1$s，也没有 %2$s</string>
+    <string name="cert_not_verified">未验证</string>
+    <string name="cert_add_sni">添加 SNI</string>
+    <string name="cert_pin_fingerprint">固定指纹</string>
+    <string name="chip_unverified">未验证</string>
 
     <string name="node_needs_quic">这个节点需要 QUIC，当前版本还不支持。</string>
     <string name="node_switch_to_tcp">改用 TCP</string>
@@ -24,4 +30,98 @@
     <plurals name="active_flows">
         <item quantity="other">%d 条活动连接</item>
     </plurals>
+
+    <string name="tab_home">主页</string>
+    <string name="tab_nodes">节点</string>
+    <string name="tab_routing">路由</string>
+    <string name="tab_logs">日志</string>
+
+    <string name="home_connected_to">已连接到</string>
+    <string name="home_not_connected">未连接</string>
+    <string name="home_no_node">未选择节点</string>
+    <string name="home_stat_active_flows">活动连接</string>
+    <string name="home_stat_session">本次会话</string>
+    <string name="home_stat_handshake">握手</string>
+    <string name="home_state_connected">已连接</string>
+    <string name="home_state_disconnected">已断开</string>
+    <string name="home_node_options">节点选项</string>
+    <string name="action_connect">连接</string>
+    <string name="action_disconnect">断开</string>
+
+    <string name="direction_upstream">上行</string>
+    <string name="direction_downstream">下行</string>
+
+    <string name="nodes_subscription">订阅</string>
+    <string name="nodes_add">添加节点</string>
+    <string name="nodes_expires">%1$s 到期</string>
+    <plurals name="nodes_refreshed_minutes">
+        <item quantity="other">%d 分钟前刷新</item>
+    </plurals>
+    <plurals name="nodes_count">
+        <item quantity="other">%d 个节点</item>
+    </plurals>
+
+    <string name="routing_title">路由</string>
+    <string name="routing_rules">按规则</string>
+    <string name="routing_rules_detail">一部分流量直连，其余走隧道</string>
+    <string name="routing_everything">全部</string>
+    <string name="routing_everything_detail">所有流量都走隧道</string>
+    <string name="routing_rule_sets">规则集</string>
+    <string name="routing_per_app">分应用</string>
+    <string name="rule_private_ranges">私有地址段</string>
+    <string name="rule_domestic_domains">国内域名</string>
+    <string name="rule_everything_else">其余全部</string>
+    <string name="rule_bypass_by_country">按国家绕过</string>
+    <string name="action_edit">编辑</string>
+    <plurals name="apps_excluded_count">
+        <item quantity="other">已排除 %d 个应用</item>
+    </plurals>
+
+    <string name="diagnostics_title">诊断</string>
+    <string name="diagnostics_connections">连接</string>
+    <string name="diagnostics_runtime">运行时</string>
+    <string name="diagnostics_all_reasons">全部拒绝原因</string>
+
+    <string name="apps_title">分应用</string>
+    <string name="apps_exclude_these">排除这些</string>
+    <string name="apps_only_these">仅这些</string>
+    <string name="apps_search">搜索应用</string>
+    <string name="apps_self_excluded">始终排除 — 它自己的流量不能回环</string>
+
+    <string name="editor_title">编辑节点</string>
+    <string name="action_save">保存</string>
+    <string name="action_back">返回</string>
+    <string name="action_close">关闭</string>
+    <string name="field_name">名称</string>
+    <string name="field_host">主机</string>
+    <string name="field_port">端口</string>
+    <string name="field_carriers">传输方式</string>
+    <string name="field_certificate">证书</string>
+    <string name="editor_multiplexing">多路复用</string>
+    <string name="editor_multiplexing_detail">多条流复用一条 TLS 连接</string>
+    <string name="editor_alpn_hint">必须与 Portal 完全一致</string>
+
+    <string name="import_title">添加节点</string>
+    <string name="import_scan_qr">扫描二维码</string>
+    <string name="import_scan_qr_detail">来自你的服务商面板</string>
+    <string name="import_subscription_link">订阅链接</string>
+    <string name="import_subscription_link_detail">让节点列表保持最新</string>
+    <string name="import_paste_label">或粘贴一条节点链接</string>
+    <string name="import_add_node">添加节点</string>
+
+    <string name="settings_title">设置</string>
+    <string name="settings_connection">连接</string>
+    <string name="settings_always_on">始终开启 VPN</string>
+    <string name="settings_always_on_detail">网络变化时自动重连</string>
+    <string name="settings_start_on_boot">开机自启</string>
+    <string name="settings_quick_tile">快捷设置磁贴</string>
+    <string name="settings_refresh_automatically">自动刷新</string>
+    <string name="settings_refresh_every_6h">每 6 小时</string>
+    <string name="settings_https_only">仅通过 HTTPS</string>
+    <string name="settings_https_only_detail">你的订阅链接等同于密码</string>
+    <string name="settings_about">关于</string>
+    <string name="settings_version">版本</string>
+    <string name="settings_protocol">协议</string>
+    <string name="settings_source_code">源代码</string>
+    <string name="settings_privacy_note">Somewhere 不收集统计数据，不记录你访问的站点，也没有账号。你的节点列表只留在这台设备上。</string>
 </resources>

@@ -6,44 +6,36 @@ package eu.nodepass.somewhere
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import eu.nodepass.somewhere.ui.SomewhereApp
+import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 
 /**
- * Placeholder entry point for the M0 skeleton.
+ * The single activity.
  *
- * The product surface is built from L1 onward; this exists so the build,
- * the quality gates and the instrumentation harness have something to run
- * against before any protocol code is written.
+ * Edge to edge on purpose: the design's screens start 52 dp from the top of the
+ * display, with the status bar sitting over the app's own ground rather than in
+ * a band of its own. A system bar in a different colour would put a seam across
+ * every screen.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Placeholder()
+            SomewhereTheme {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(SomewhereTheme.colors.ground),
+                ) {
+                    SomewhereApp()
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun Placeholder() {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("Somewhere", style = MaterialTheme.typography.headlineMedium)
-        Text("Nowhere protocol client", style = MaterialTheme.typography.bodyMedium)
     }
 }
