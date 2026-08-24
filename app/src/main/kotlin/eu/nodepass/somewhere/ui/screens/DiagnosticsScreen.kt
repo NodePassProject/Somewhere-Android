@@ -232,7 +232,7 @@ private fun LogSeverity.foreground(colors: SomewhereColors): Color =
 private fun LogSeverity.background(colors: SomewhereColors): Color =
     when (this) {
         LogSeverity.Good -> colors.goodTint
-        LogSeverity.Warn -> colors.downstreamTint
+        LogSeverity.Warn -> colors.warnTint
         LogSeverity.Critical -> colors.criticalTint
         LogSeverity.Neutral -> colors.surfaceAlt
     }

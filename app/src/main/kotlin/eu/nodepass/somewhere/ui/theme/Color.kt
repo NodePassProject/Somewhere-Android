@@ -41,6 +41,17 @@ data class SomewhereColors(
     val good: Color,
     val goodTint: Color,
     val warn: Color,
+    /**
+     * The ground under a warning.
+     *
+     * It exists because both warning surfaces once borrowed `downstreamTint`,
+     * which is the *other* amber. Naming it does not separate it: `warn` sits
+     * at 41° and `downstream` at 28°, so the two tints differ by about 1.05:1
+     * in luminance and are not told apart at a glance. What the token buys is
+     * that a reader of the code sees which meaning was intended. The hues
+     * themselves are a palette-level question — see `docs/design-system.md`.
+     */
+    val warnTint: Color,
     val critical: Color,
     val criticalTint: Color,
     /**
@@ -53,12 +64,23 @@ data class SomewhereColors(
     val panel: Color,
     /** The hairline between two rows inside a [panel]. Lighter than [line]. */
     val panelLine: Color,
-    /** The border that marks the selected upstream option, or a chosen row. */
+    /** The border that marks the selected upstream option. */
     val upstreamLine: Color,
     /** The border that marks the selected downstream option. */
     val downstreamLine: Color,
     /** The border of a panel carrying a critical statement. */
     val criticalLine: Color,
+    /**
+     * The border of a card whose subject is in a good state — a reachable node,
+     * an input that parsed.
+     *
+     * It exists so that "good" is not spelled in the direction hue. The node
+     * card already says reachable three times (a [good] dot, a [good] latency
+     * figure, full-strength [ink] on the name); the border is the fourth
+     * telling, and it must reinforce those rather than introduce a hue that
+     * means traffic direction.
+     */
+    val goodLine: Color,
     /** A dot or switch knob that is off. Never carries text. */
     val inactive: Color,
     /**
@@ -126,6 +148,7 @@ val LightColors: SomewhereColors =
         good = Color(0xFF2C6E49), // 5.68:1
         goodTint = Color(0xFFE4F0E9),
         warn = Color(0xFF8A6410), // 4.98:1
+        warnTint = Color(0xFFF6EFD8),
         critical = Color(0xFFA33228), // 6.40:1
         criticalTint = Color(0xFFF8E7E4),
         panel = Color(0xFFFFFFFF),
@@ -133,10 +156,11 @@ val LightColors: SomewhereColors =
         upstreamLine = Color(0xFFB6DCDF),
         downstreamLine = Color(0xFFE8CBA5),
         criticalLine = Color(0xFFEFC9C3),
+        goodLine = Color(0xFFB3D9C1),
         inactive = Color(0xFFB4C4C4),
-        primaryAction = Color(0xFF0C6E78),
-        onPrimaryAction = Color(0xFFFFFFFF), // 5.97:1
-        primaryActionLine = Color(0xFF0C6E78),
+        primaryAction = Color(0xFF991FD6),
+        onPrimaryAction = Color(0xFFFFFFFF), // 5.96:1
+        primaryActionLine = Color(0xFF991FD6),
         warnAction = Color(0xFF8A6410),
         onWarnAction = Color(0xFFFFFFFF), // 5.37:1
         criticalAction = Color(0xFFA33228),
@@ -165,6 +189,7 @@ val DarkColors: SomewhereColors =
         good = Color(0xFF6BBF8C), // 8.50:1
         goodTint = Color(0xFF16261D),
         warn = Color(0xFFD9AC4A), // 8.95:1
+        warnTint = Color(0xFF2B2612),
         critical = Color(0xFFE2857A), // 7.08:1
         criticalTint = Color(0xFF2E1A18),
         panel = Color(0xFF0F1719),
@@ -172,10 +197,11 @@ val DarkColors: SomewhereColors =
         upstreamLine = Color(0xFF1E4A50),
         downstreamLine = Color(0xFF4A3418),
         criticalLine = Color(0xFF4A2A26),
+        goodLine = Color(0xFF2A5540),
         inactive = Color(0xFF3A4A4E),
-        primaryAction = Color(0xFF12292C),
-        onPrimaryAction = Color(0xFF55C4CE), // 7.38:1
-        primaryActionLine = Color(0xFF1E4A50),
+        primaryAction = Color(0xFF22112B),
+        onPrimaryAction = Color(0xFFB477D2), // 5.50:1
+        primaryActionLine = Color(0xFF48235A),
         warnAction = Color(0xFF3A2E18),
         onWarnAction = Color(0xFFD9AC4A), // 6.28:1
         criticalAction = Color(0xFF4A2A26),

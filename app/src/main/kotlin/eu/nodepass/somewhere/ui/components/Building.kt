@@ -201,7 +201,7 @@ fun SomewhereSwitch(
         modifier
             .size(width = 46.dp, height = 27.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (checked) colors.upstreamLine else colors.surfaceAlt)
+            .background(if (checked) colors.brandLine else colors.surfaceAlt)
             .clickable { onCheckedChange(!checked) }
             .padding(3.dp),
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
@@ -210,13 +210,15 @@ fun SomewhereSwitch(
             Modifier
                 .size(21.dp)
                 .clip(CircleShape)
-                .background(if (checked) colors.upstream else colors.inactive),
+                .background(if (checked) colors.brand else colors.inactive),
         )
     }
 }
 
-/** A two-or-more-way segmented control. The selected fill is passed in so the
- *  upstream and downstream carriers keep their own hue. */
+/** A two-or-more-way segmented control. The selected fill defaults to the
+ *  brand, and is passed in where the choice *is* a direction — the upstream and
+ *  downstream carrier pickers keep their own hue, because there the selection
+ *  and the meaning are the same thing. */
 @Composable
 fun Segmented(
     options: List<String>,
@@ -225,7 +227,7 @@ fun Segmented(
     modifier: Modifier = Modifier,
     background: Color = SomewhereTheme.colors.surface,
     borderColor: Color = SomewhereTheme.colors.line,
-    selectedFill: Color = SomewhereTheme.colors.upstreamLine,
+    selectedFill: Color = SomewhereTheme.colors.brandLine,
     height: androidx.compose.ui.unit.Dp = 36.dp,
     mono: Boolean = false,
 ) {

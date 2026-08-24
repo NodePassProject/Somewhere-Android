@@ -126,8 +126,8 @@ private fun SelfRow() {
                 .fillMaxWidth()
                 .padding(bottom = 14.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(colors.upstreamTint)
-                .border(1.dp, colors.upstreamLine, RoundedCornerShape(10.dp))
+                .background(colors.brandTint)
+                .border(1.dp, colors.brandLine, RoundedCornerShape(10.dp))
                 .padding(horizontal = 15.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(13.dp),
@@ -136,7 +136,7 @@ private fun SelfRow() {
             Modifier
                 .size(34.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(colors.upstreamLine),
+                .background(colors.brandLine),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -144,7 +144,7 @@ private fun SelfRow() {
                 fontFamily = SomewhereType.Display,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp,
-                color = colors.upstream,
+                color = colors.brand,
             )
         }
         Column(
@@ -166,7 +166,7 @@ private fun SelfRow() {
                 color = colors.muted,
             )
         }
-        Icon(SomewhereIcons.Check, null, Modifier.size(17.dp), tint = colors.upstream)
+        Icon(SomewhereIcons.Check, null, Modifier.size(17.dp), tint = colors.brand)
     }
 }
 

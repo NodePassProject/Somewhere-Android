@@ -89,7 +89,7 @@ fun RoutingScreen(onOpenApps: () -> Unit) {
                         fontFamily = SomewhereType.Body,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Medium,
-                        color = colors.upstream,
+                        color = colors.brand,
                         modifier = Modifier.clickable {},
                     )
                 }
@@ -152,7 +152,7 @@ private fun ModeCard(
     val colors = SomewhereTheme.colors
     Card(
         modifier = Modifier.clickable(onClick = onClick),
-        borderColor = if (selected) colors.upstreamLine else colors.line,
+        borderColor = if (selected) colors.brandLine else colors.line,
         padding = PaddingValues(horizontal = 16.dp, vertical = 15.dp),
     ) {
         Row(
@@ -163,7 +163,7 @@ private fun ModeCard(
                 Modifier
                     .size(20.dp)
                     .clip(CircleShape)
-                    .border(2.dp, if (selected) colors.upstream else colors.inactive, CircleShape),
+                    .border(2.dp, if (selected) colors.brand else colors.inactive, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 if (selected) {
@@ -171,7 +171,7 @@ private fun ModeCard(
                         Modifier
                             .size(9.dp)
                             .clip(CircleShape)
-                            .background(colors.upstream),
+                            .background(colors.brand),
                     )
                 }
             }
@@ -199,8 +199,8 @@ private fun RuleRow(
         // monospaced and English so a rule file and this screen read alike.
         MonoChip(
             text = set.action.name.uppercase(),
-            foreground = if (set.action == RuleAction.Tunnel) colors.upstream else colors.muted,
-            background = if (set.action == RuleAction.Tunnel) colors.upstreamTint else colors.surfaceAlt,
+            foreground = if (set.action == RuleAction.Tunnel) colors.brand else colors.muted,
+            background = if (set.action == RuleAction.Tunnel) colors.brandTint else colors.surfaceAlt,
         )
         Text(
             text = stringResource(set.labelResource),

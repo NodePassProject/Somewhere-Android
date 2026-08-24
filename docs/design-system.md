@@ -37,6 +37,21 @@ each theme's own ground; AA is 4.5:1 for text.
 | `good` | `#2C6E49` | 5.68 | `#6BBF8C` | 8.50 |
 | `warn` | `#8A6410` | 4.98 | `#D9AC4A` | 8.95 |
 | `critical` | `#A33228` | 6.40 | `#E2857A` | 7.08 |
+| `brand` | `#991FD6` | 5.54 | `#B477D2` | 5.85 |
+
+**Five of these carry protocol meaning; `brand` deliberately carries none.** It
+is the app's accent — the active tab, the primary action, a selected row, a
+checked switch. Its hue was not chosen but derived: see `brand.md`.
+
+**The five meaning hues are not 60° apart from each other, and that is a known
+defect rather than a design.** `brand` is held to 60° from every one of them by
+a test. Nothing holds the five to it, and they do not meet it — `warn` sits 13°
+from `downstream`, `critical` 22° from `downstream`, `good` 40° from `upstream`.
+The visible consequence is on the node list, where a warning banner and a
+`DOWN UDP` chip are both amber and differ by about 1.05:1 in luminance. Moving
+a hue changes every screen, so this is recorded rather than silently repaired;
+`ColorContrastTest.theFiveMeaningHuesAreNotAllSixtyDegreesApart` pins the number
+so that nobody adds a sixth meaning believing the rule was ever kept.
 
 **The light theme is not an inversion.** Dark `#55C4CE` on white measures 1.9:1
 and is unreadable. Each theme picks its own lightness for the same hue: *hue is
@@ -58,11 +73,14 @@ is cut *into* it. The direction reverses between themes; the role does not.
 | `upstream-line` | `#B6DCDF` | `#1E4A50` | the selected upstream option |
 | `downstream-line` | `#E8CBA5` | `#4A3418` | the selected downstream option |
 | `critical-line` | `#EFC9C3` | `#4A2A26` | the border of a panel making a critical statement |
+| `good-line` | `#B3D9C1` | `#2A5540` | the border of a card whose subject is in a good state |
+| `brand-line` | `#D4B4E4` | `#48235A` | the border of a **selected** row, and the checked switch track |
 | `inactive` | `#B4C4C4` | `#3A4A4E` | a dot or switch knob that is off. Never carries text |
 
 **A selection border is never the only cue.** Measured, the selected border
-against the unselected one is **1.11:1** in light and **1.35:1** in dark — a 1 px
-hairline at that separation is not perceivable. Every selected state therefore
+against the unselected one is **1.39:1** in light and **1.05:1** in dark — a 1 px
+hairline at that separation is not perceivable, and moving selection to the
+brand made the dark figure *worse*, not better. Every selected state therefore
 carries something else as well: the radio on the routing modes, the status dot
 and latency figure on a node card. `ColorContrastTest` pins the measurement so
 that a screen cannot later be "simplified" down to the border alone.
@@ -74,7 +92,7 @@ pairs, and are measured as pairs.
 
 | Token | Light | Dark | Contrast |
 |---|---|---|---|
-| `primary-action` / on | `#0C6E78` / `#FFFFFF` | `#12292C` / `#55C4CE` | 5.97 / 7.38 |
+| `primary-action` / on | `#991FD6` / `#FFFFFF` | `#22112B` / `#B477D2` | 5.96 / 5.50 |
 | `warn-action` / on | `#8A6410` / `#FFFFFF` | `#3A2E18` / `#D9AC4A` | 5.37 / 6.28 |
 | `critical-action` / on | `#A33228` / `#FFFFFF` | `#4A2A26` / `#E7EFEF` | 6.90 / 10.90 |
 
@@ -85,7 +103,9 @@ Tinted backgrounds for chips and panels:
 | upstream tint | `#E0F0F1` | `#12292C` |
 | downstream tint | `#F7EADD` | `#2A1F14` |
 | good tint | `#E4F0E9` | `#16261D` |
+| warn tint | `#F6EFD8` | `#2B2612` |
 | critical tint | `#F8E7E4` | `#2E1A18` |
+| brand tint | `#F4E9F9` | `#22112B` |
 
 ## Type
 
@@ -154,6 +174,25 @@ forbids.
   Portal, so two subscriptions sharing one are both charged the full amount.
 - **Quota exhaustion is named**: "subscription expired or out of quota", never
   "network error" or an empty list.
+
+### 5. A direction hue is never used as an accent
+
+`upstream` and `downstream` say which way traffic travels. They are read only
+through `SomewhereColors.direction(upstream = …)`, and `DirectionHueIsNotAnAccentTest`
+fails the build if any other file names them.
+
+The rule exists because the violation is invisible. `colors.upstream` compiles
+anywhere, renders an agreeable teal, and passes every contrast assertion — while
+telling the reader that whatever it paints has something to do with direction.
+It had happened **twenty-two times** before anyone counted: teal was the active
+tab, the add button, a reachable node's border, the tunnel action, a subscription
+usage meter *and* the upstream direction. On the node list that put a teal
+`UP TCP` chip beside a teal border meaning "this node answers".
+
+Anything that is an accent uses `brand`. Anything that is a state uses that
+state's own hue — which is why `good-line` and `warn-tint` exist: both were
+previously spelled with a direction token because the state had no token of its
+own.
 
 ## Language
 

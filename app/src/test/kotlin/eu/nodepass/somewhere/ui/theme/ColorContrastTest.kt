@@ -110,6 +110,7 @@ class ColorContrastTest {
             assertReadable("$theme upstream on tint", c.upstream, c.upstreamTint, AA_LARGE)
             assertReadable("$theme downstream on tint", c.downstream, c.downstreamTint, AA_LARGE)
             assertReadable("$theme good on tint", c.good, c.goodTint, AA_LARGE)
+            assertReadable("$theme warn on tint", c.warn, c.warnTint, AA_LARGE)
             assertReadable("$theme critical on tint", c.critical, c.criticalTint, AA_LARGE)
         }
     }
@@ -144,14 +145,16 @@ class ColorContrastTest {
     @Test
     fun aSelectionBorderIsNeverTheOnlyCue() {
         // Measured, not assumed: the selected border against the unselected one
-        // is 1.11:1 in light and 1.35:1 in dark. A 1 dp hairline at that
+        // is 1.39:1 in light and 1.05:1 in dark — the brand made dark *worse*,
+        // which is the whole reason this is a test and not a note. A 1 dp
+        // hairline at that
         // separation is not perceivable, so **selection must always carry a
         // second cue** — the radio on the routing modes, the status dot and
         // latency on a node card. This test pins the measurement so that nobody
         // later "simplifies" a screen down to the border alone believing it
         // carries the state.
         eachTheme { _, c ->
-            val separation = contrast(c.upstreamLine, c.line)
+            val separation = contrast(c.brandLine, c.line)
             assertTrue(
                 "the selection border is now %.2f:1 against the unselected border. If it has ".format(separation) +
                     "genuinely reached 3.0:1 it can stand alone and this test should be replaced by " +
@@ -305,5 +308,37 @@ class ColorContrastTest {
     fun theTwoThemesDeclareThemselvesCorrectly() {
         assertTrue(DarkColors.isDark)
         assertTrue(!LightColors.isDark)
+    }
+
+    @Test
+    fun theFiveMeaningHuesAreNotAllSixtyDegreesApart() {
+        // A characterisation test: it records what is true rather than what was
+        // wanted, because the honest number is uncomfortable.
+        //
+        // `theBrandIsFarEnoughFromEveryHueThatCarriesMeaning` holds the newcomer
+        // to 60°. Nothing holds the five incumbents to it, and they do not meet
+        // it: warn sits 13° from downstream, critical 22° from downstream, good
+        // 40° from upstream. Two amber tints therefore appear together on the
+        // node list — a warning banner above a `DOWN UDP` chip — separated by
+        // about 1.05:1 in luminance, which is to say not separated.
+        //
+        // Moving a hue changes every screen and is a design decision, not a
+        // test's to make. What this pins is that the gap is known: if someone
+        // later adds a sixth meaning hue believing the palette already keeps
+        // 60° between meanings, this test says plainly that it never did.
+        eachTheme { theme, c ->
+            val warnToDownstream = hueSeparation(c.warn, c.downstream)
+            assertTrue(
+                "$theme: warn and downstream are %.0f° apart. This test records the ".format(warnToDownstream) +
+                    "collision rather than forbidding it; if the palette is ever fixed, raise the " +
+                    "bound here and in docs/design-system.md rather than deleting the test.",
+                warnToDownstream < 60.0,
+            )
+            assertTrue(
+                "$theme: the brand, unlike the five, is held to 60° — that rule lives in " +
+                    "theBrandIsFarEnoughFromEveryHueThatCarriesMeaning and must keep passing",
+                hueSeparation(c.brand, c.warn) >= 60.0,
+            )
+        }
     }
 }

@@ -50,6 +50,7 @@ import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.ui.theme.direction
 
 /**
  * Editing one node.
@@ -114,7 +115,7 @@ internal fun NodeEditor(
                     fontFamily = SomewhereType.Display,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
-                    color = colors.upstream,
+                    color = colors.brand,
                     modifier =
                         Modifier.clickable {
                             // Only the carriers and mux are editable here. The
@@ -157,8 +158,8 @@ internal fun NodeEditor(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.direction_upstream),
                         icon = SomewhereIcons.ArrowUp,
-                        color = colors.upstream,
-                        selectedFill = colors.upstreamLine,
+                        color = colors.direction(upstream = true).figure,
+                        selectedFill = colors.direction(upstream = true).line,
                         carrier = up,
                         onSelect = { up = it },
                     )
@@ -166,8 +167,8 @@ internal fun NodeEditor(
                         modifier = Modifier.weight(1f),
                         label = stringResource(R.string.direction_downstream),
                         icon = SomewhereIcons.ArrowDown,
-                        color = colors.downstream,
-                        selectedFill = colors.downstreamLine,
+                        color = colors.direction(upstream = false).figure,
+                        selectedFill = colors.direction(upstream = false).line,
                         carrier = down,
                         onSelect = { down = it },
                     )

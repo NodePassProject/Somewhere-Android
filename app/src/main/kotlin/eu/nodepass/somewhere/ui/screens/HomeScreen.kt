@@ -53,6 +53,7 @@ import eu.nodepass.somewhere.ui.state.NodeEntry
 import eu.nodepass.somewhere.ui.state.SessionSnapshot
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.ui.theme.direction
 
 /**
  * Home — the node, the two directions, and the one action.
@@ -177,8 +178,8 @@ internal fun Home(
             DirectionCard(
                 label = stringResource(R.string.direction_upstream),
                 icon = SomewhereIcons.ArrowUp,
-                color = colors.upstream,
-                tint = colors.upstreamTint,
+                color = colors.direction(upstream = true).figure,
+                tint = colors.direction(upstream = true).tint,
                 carrier = carrierLabel(node.url.up, node.url.mux),
                 bytesPerSecond = session.upstreamBytesPerSecond,
                 ofPeak = session.upstreamOfPeak,
@@ -186,8 +187,8 @@ internal fun Home(
             DirectionCard(
                 label = stringResource(R.string.direction_downstream),
                 icon = SomewhereIcons.ArrowDown,
-                color = colors.downstream,
-                tint = colors.downstreamTint,
+                color = colors.direction(upstream = false).figure,
+                tint = colors.direction(upstream = false).tint,
                 carrier = carrierLabel(node.url.down, node.url.mux),
                 bytesPerSecond = session.downstreamBytesPerSecond,
                 ofPeak = session.downstreamOfPeak,

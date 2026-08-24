@@ -65,6 +65,7 @@ import eu.nodepass.somewhere.ui.state.asMessage
 import eu.nodepass.somewhere.ui.state.switchedToTcp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.ui.theme.direction
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -139,9 +140,9 @@ fun NodesScreen(
                 icon = SomewhereIcons.Plus,
                 contentDescription = stringResource(R.string.nodes_add),
                 onClick = onAdd,
-                tint = SomewhereTheme.colors.upstream,
-                background = SomewhereTheme.colors.upstreamTint,
-                borderColor = SomewhereTheme.colors.upstreamLine,
+                tint = SomewhereTheme.colors.brand,
+                background = SomewhereTheme.colors.brandTint,
+                borderColor = SomewhereTheme.colors.brandLine,
             )
         }
 
@@ -344,7 +345,7 @@ private fun SubscriptionHeader(
                         subscription.refreshedMinutesAgo,
                     )
                 },
-            color = if (refreshing) colors.upstream else colors.faint,
+            color = if (refreshing) colors.brand else colors.faint,
             fontSize = 10.5.sp,
             modifier =
                 Modifier
@@ -395,7 +396,7 @@ private fun SubscriptionCard(subscription: SubscriptionState) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Meter(
                 fraction = usage.fractionCounted?.toFloat() ?: 0f,
-                color = colors.upstream,
+                color = colors.brand,
                 track = colors.surfaceAlt,
                 height = 5.dp,
             )
@@ -487,7 +488,7 @@ private fun NodeCard(
     val active = node.status is NodeStatus.Reachable
     Card(
         modifier = Modifier.clickable(onClick = onClick),
-        borderColor = if (active) colors.upstreamLine else colors.line,
+        borderColor = if (active) colors.goodLine else colors.line,
         padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Row(
@@ -576,8 +577,8 @@ private fun CarrierChip(
     val colors = SomewhereTheme.colors
     MonoChip(
         text = text,
-        foreground = if (upstreamHue) colors.upstream else colors.downstream,
-        background = if (upstreamHue) colors.upstreamTint else colors.downstreamTint,
+        foreground = colors.direction(upstreamHue).figure,
+        background = colors.direction(upstreamHue).tint,
     )
 }
 
@@ -599,7 +600,7 @@ private fun NeedsQuicNotice(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
-                .background(colors.downstreamTint)
+                .background(colors.warnTint)
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(9.dp),
     ) {

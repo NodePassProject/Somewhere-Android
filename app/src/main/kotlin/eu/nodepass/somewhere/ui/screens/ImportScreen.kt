@@ -54,6 +54,7 @@ import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.ui.theme.direction
 
 /**
  * Adding nodes: scan, subscribe, or paste.
@@ -127,7 +128,7 @@ fun ImportScreen(
                         .background(colors.surface)
                         .border(
                             1.dp,
-                            if (parsed is DecodeResult.Invalid) colors.criticalLine else colors.upstreamLine,
+                            if (parsed is DecodeResult.Invalid) colors.criticalLine else colors.goodLine,
                             RoundedCornerShape(10.dp),
                         ).padding(horizontal = 14.dp, vertical = 13.dp),
                 ) {
@@ -154,7 +155,7 @@ fun ImportScreen(
                                     lineHeight = 19.2.sp,
                                     color = colors.inkMuted,
                                 ),
-                            cursorBrush = SolidColor(colors.upstream),
+                            cursorBrush = SolidColor(colors.brand),
                             modifier = Modifier.fillMaxWidth(),
                             decorationBox = { inner ->
                                 if (typed.isEmpty()) {
@@ -378,8 +379,8 @@ private fun CarrierChipFor(
     val upstreamHue = token == "tcp"
     MonoChip(
         text = "$prefix ${token.uppercase()}",
-        foreground = if (upstreamHue) colors.upstream else colors.downstream,
-        background = if (upstreamHue) colors.upstreamTint else colors.downstreamTint,
+        foreground = colors.direction(upstreamHue).figure,
+        background = colors.direction(upstreamHue).tint,
         fontSize = 10.sp,
     )
 }
@@ -403,10 +404,10 @@ private fun SourceCard(
                 Modifier
                     .size(42.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(colors.upstreamTint),
+                    .background(colors.brandTint),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, null, Modifier.size(20.dp), tint = colors.upstream)
+                Icon(icon, null, Modifier.size(20.dp), tint = colors.brand)
             }
             Column(
                 modifier = Modifier.weight(1f),

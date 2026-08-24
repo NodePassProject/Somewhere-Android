@@ -209,14 +209,14 @@ private fun TabBar(
                         tab.icon,
                         contentDescription = null,
                         modifier = Modifier.size(21.dp),
-                        tint = if (active) colors.upstream else colors.muted,
+                        tint = if (active) colors.brand else colors.muted,
                     )
                     Text(
                         text = stringResource(tab.label),
                         fontFamily = SomewhereType.Body,
                         fontSize = 10.5.sp,
                         fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-                        color = if (active) colors.upstream else colors.muted,
+                        color = if (active) colors.brand else colors.muted,
                     )
                 }
             }

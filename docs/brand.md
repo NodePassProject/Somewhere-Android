@@ -101,14 +101,40 @@ rest exist for artwork and have no in-app role.
 - **Not subject to dynamic colour.** Same rule as the directions: Material You
   may tint neutrals, and must not touch this.
 
-## Open: should the in-app accent move to it?
+## Settled: the in-app accent is the brand
 
-Today the app's accent is still `upstream`, because that is what the design
-canvas draws. Moving it to `brand` would resolve the ambiguity described at the
-top — the selected node border, the primary button, the active tab and the add
-button would stop being teal.
+**D-13, decided 2026-08-25.** The accent moved from `upstream` to `brand`: the
+active tab, the primary action, the add button, a selected row, a checked
+switch, the text cursor, and the routing modes' radio.
 
-The tokens exist and are tested, so the change is small. Whether to make it is
-a brand decision rather than a technical one, and it is recorded as **D-13** in
-the private decision log. Nothing in the app reads `brand` until that is
-settled.
+Applying it turned out to be a larger job than D-13 estimated, and the reason is
+worth recording. The decision was written as "four call sites, roughly a dozen
+lines". It was **twenty-two**, because `upstream` had quietly become the token
+for anything that needed emphasis — the active tab, the add button, a reachable
+node's border, the tunnel action, a subscription usage meter, and the upstream
+direction. One token, six meanings, of which exactly one was the direction it is
+named after.
+
+So the move was not a substitution. Each site had to be read and sorted:
+
+| Was `upstream` because it meant | Now |
+|---|---|
+| the direction traffic travels | `direction(upstream = true)` — the only sanctioned reader |
+| the app is emphasising this | `brand` |
+| the node answers / the URL parsed | `good`, and a new `good-line` |
+| this is a warning | `warn`, and a new `warn-tint` |
+
+The last two rows are the part that would have been missed by a
+search-and-replace: two states had no token of their own, so they had borrowed a
+direction's. A warning banner was drawn in `downstream-tint` — the *other* amber
+— on both screens that have one.
+
+`DirectionHueIsNotAnAccentTest` now fails the build if any file outside the
+palette names a direction hue directly. That is the durable half of this change;
+the colour swap is the visible half.
+
+**One thing got worse and is kept on purpose.** The selected border against the
+unselected one measured 1.11:1 in light and 1.35:1 in dark; with `brand-line` it
+is 1.39:1 and **1.05:1**. Dark selection is now essentially invisible as a
+border — which is exactly why the rule that selection always carries a second
+cue is a test rather than a note.
