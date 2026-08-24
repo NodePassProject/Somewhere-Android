@@ -23,7 +23,7 @@ comments, everything. Do not emit Chinese in project files.
 |---|---|
 | `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36 |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
-| `docs/` | Protocol implementation notes, architecture, contribution guide |
+| `docs/` | Architecture, the design system, i18n, brand, and the TLS exporter ADR |
 
 The lwIP / TUN / routing layer is inherited from `NodePassProject/Anywhere-Android`
 (GPL-3.0) at L1; it is not present yet.

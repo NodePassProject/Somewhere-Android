@@ -67,6 +67,11 @@ conformance/scripts/portal-for-tests.sh --stop
 | [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, and the rule that machine identifiers stay English while sentences translate |
 | [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Why the TLS exporter has two sources, and why `minSdk` is 26 |
 
+[`docs/architecture.md`](docs/architecture.md) covers the layers, which way they
+depend, and the rules that keep them apart.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) covers the gates and what a change is
+expected to carry.
+
 Every contrast figure in those documents is asserted by a test rather than
 claimed, because measuring has already caught defects the eye did not.
 
