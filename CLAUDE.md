@@ -21,7 +21,7 @@ comments, everything. Do not emit Chinese in project files.
 
 | Path | Purpose |
 |---|---|
-| `app/` | The client. Kotlin, Compose, `minSdk` 31, `compileSdk` 36 |
+| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36 |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
 | `docs/` | Protocol implementation notes, architecture, contribution guide |
 
