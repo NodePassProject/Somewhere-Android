@@ -34,6 +34,8 @@ class VectorCoverageTest {
                 "auth" to "eu.nodepass.somewhere.protocol.auth.AuthVectorTest",
                 "flowHeader" to "eu.nodepass.somewhere.protocol.frame.FlowHeaderVectorTest",
                 "target" to "eu.nodepass.somewhere.protocol.target.TargetVectorTest",
+                "setupResult" to "eu.nodepass.somewhere.protocol.frame.SetupResultVectorTest",
+                "uot" to "eu.nodepass.somewhere.protocol.frame.UdpOverTcpVectorTest",
             )
     }
 
