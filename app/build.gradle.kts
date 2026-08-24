@@ -124,7 +124,12 @@ kover {
         // generated code are deliberately outside it — one coverage number
         // applied uniformly just gets gamed with trivial tests.
         filters {
-            includes { classes("eu.nodepass.somewhere.protocol.*") }
+            includes {
+                classes(
+                    "eu.nodepass.somewhere.protocol.*",
+                    "eu.nodepass.somewhere.subscription.*",
+                )
+            }
             excludes {
                 classes(
                     "eu.nodepass.somewhere.BuildConfig",

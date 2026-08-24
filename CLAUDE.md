@@ -56,7 +56,7 @@ python3 conformance/scripts/verify-vectors.py
 | Gate | What it enforces |
 |---|---|
 | `ktlintCheck` | Style. `@Composable` PascalCase is exempted through ktlint's own `.editorconfig` switch, not suppressed |
-| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
+| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*` and `.subscription.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
 | `verify-vectors.py` | 43 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
 | `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for why the baseline is held rather than advanced |
@@ -65,6 +65,26 @@ The coverage gate was verified to actually fail: a protocol class with no tests
 produces `lines covered percentage is 0.000000, but expected minimum is 90`.
 
 New protocol code lands with a matching known-answer or behavioural case.
+
+## Settled positions that shape the code
+
+- **Shared key, no per-user identity** (D-07). Per-user identity is a *Portal*
+  decision, not a client one: the Portal holds one `auth_key`, and the 32-byte
+  authentication frame is full — 16 bytes of session id, 16 of tag, no room for a
+  user identifier. When it is eventually wanted, the cheap implementation gives
+  each user a distinct shared key and has the Portal hold a key set; that changes
+  nothing on the wire and nothing in this client.
+- **Faithful downstream** (D-08). This client follows upstream and stays
+  byte-compatible with it. The L1 acceptance criterion is "byte-identical to the
+  oracle". Following does not mean tracking automatically: the baseline is pinned
+  and drift is flagged for a human.
+- **No obfuscation layer.** It requires controlling both ends, and this project
+  does not run Portals. Nowhere does not claim to resist censorship either, so the
+  client must not imply that it does.
+- **Capability negotiation is sent from day one** (`type`, `ver`, `caps` on the
+  subscription request). It cannot be retrofitted onto installed clients, costs
+  nothing today because dashboards ignore unknown parameters, and is the intended
+  channel for server-delivered parameters (V-05).
 
 ## Facts that are easy to get wrong (all verified on the ground)
 
