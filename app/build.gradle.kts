@@ -78,6 +78,17 @@ android {
         buildConfig = true
     }
 
+    // The conformance vectors are the acceptance test for the protocol layer, so
+    // unit tests consume the same file the Python checker does rather than a
+    // transcribed copy. Copied in rather than read by relative path: a test that
+    // reaches outside the module breaks when the working directory changes, and
+    // CI runs Gradle from the repository root.
+    sourceSets {
+        getByName("test") {
+            resources.srcDir(rootProject.file("conformance/vectors"))
+        }
+    }
+
     // The lwIP / TUN native layer is inherited from Anywhere-Android at L1.
     // Until then there is no JNI source set, so no externalNativeBuild block.
 }
