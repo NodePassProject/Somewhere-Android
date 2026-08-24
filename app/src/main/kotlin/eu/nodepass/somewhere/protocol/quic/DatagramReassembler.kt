@@ -46,11 +46,20 @@ class DatagramReassembler(
 
         val isComplete: Boolean get() = fragments.size == count
 
-        fun assemble(): ByteArray {
-            val out = ByteArray(fragments.values.sumOf { it.size })
+        /**
+         * Concatenates in index order.
+         *
+         * Returns null rather than throwing if an index is missing. [isComplete]
+         * counts fragments, and a count can be satisfied while leaving a hole if
+         * a caller supplies an out-of-range index — the caller-facing guard
+         * prevents that, and this returns a value instead of throwing so a future
+         * gap surfaces as a rejection rather than as a crash.
+         */
+        fun assemble(): ByteArray? {
+            val ordered = (0 until count).map { fragments[it] ?: return null }
+            val out = ByteArray(ordered.sumOf { it.size })
             var offset = 0
-            for (index in 0 until count) {
-                val part = fragments.getValue(index)
+            ordered.forEach { part ->
                 part.copyInto(out, offset)
                 offset += part.size
             }
@@ -121,6 +130,21 @@ class DatagramReassembler(
         fragment: DatagramFrame.Fragment,
         nowMillis: Long,
     ): DecodeResult<Accepted> {
+        // Re-checked here rather than trusted from the decoder. This is a trust
+        // boundary: offer() is reachable with a Fragment built by any caller, and
+        // an index at or above the count would satisfy the "all fragments
+        // present" count while leaving a hole, so assembly would read a slot that
+        // was never filled. Found by fuzzing, which fed frames straight to offer()
+        // without going through decode().
+        if (fragment.count !in DatagramFrame.FRAGMENT_COUNT_MIN..DatagramFrame.FRAGMENT_COUNT_MAX) {
+            return invalid(DatagramReason.FragmentCountOutOfRange(fragment.count))
+        }
+        if (fragment.index >= fragment.count || fragment.index < 0) {
+            return invalid(DatagramReason.FragmentIndexOutOfRange(fragment.index, fragment.count))
+        }
+        if (fragment.flowId == 0u) return invalid(DatagramReason.FlowIdZero)
+        if (fragment.packetId == 0u) return invalid(DatagramReason.PacketIdZero)
+
         val key = Key(fragment.flowId, fragment.packetId)
         val slot = slots[key]
 
@@ -164,7 +188,7 @@ class DatagramReassembler(
     ): DecodeResult<Accepted> {
         if (!slot.isComplete) return Accepted.Pending.ok()
         slots.remove(key)
-        val assembled = slot.assemble()
+        val assembled = slot.assemble() ?: return invalid(DatagramReason.MetadataConflict)
         return if (assembled.size != slot.totalLength) {
             invalid(DatagramReason.ReassembledLengthMismatch(assembled.size, slot.totalLength))
         } else {

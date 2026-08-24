@@ -6,6 +6,7 @@ package eu.nodepass.somewhere.protocol.auth
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.invalid
 import eu.nodepass.somewhere.protocol.ok
+import java.security.MessageDigest
 
 /**
  * The pre-shared key a session authenticates with. 1–255 bytes, never transmitted.
@@ -14,14 +15,26 @@ import eu.nodepass.somewhere.protocol.ok
  * enforced once, at the boundary, and so that [toString] cannot leak it into a
  * log or a crash report.
  */
-@JvmInline
-value class SharedKey private constructor(
+class SharedKey private constructor(
     private val bytes: ByteArray,
 ) {
     /** A defensive copy: the key must not be mutable through a caller's reference. */
     fun toByteArray(): ByteArray = bytes.copyOf()
 
     val size: Int get() = bytes.size
+
+    /**
+     * Value equality, in constant time.
+     *
+     * A value type has to compare by value. Identity equality was the original
+     * behaviour, and fuzzing caught it: two keys decoded from identical bytes
+     * compared as different. [MessageDigest.isEqual] rather than `contentEquals`
+     * because this compares key material, and a short-circuiting comparison
+     * leaks how many leading bytes matched.
+     */
+    override fun equals(other: Any?): Boolean = this === other || (other is SharedKey && MessageDigest.isEqual(bytes, other.bytes))
+
+    override fun hashCode(): Int = bytes.contentHashCode()
 
     /** Never renders the key. It is the one value in this project that must not reach a log. */
     override fun toString(): String = "SharedKey(${bytes.size} bytes)"
