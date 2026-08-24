@@ -168,3 +168,82 @@ kover {
         }
     }
 }
+
+// ── Compile/runtime classpath consistency ───────────────────────────────────
+// Added after a real failure: `FlowRow` compiled against foundation-layout
+// 1.7.2 and shipped against 1.9.2, whose signature differed, so the Diagnostics
+// tab died with NoSuchMethodError the first time it was opened. Every existing
+// gate was green — the build, ktlint, lint, and 253 unit tests — because the
+// compiler validates against one classpath and the device runs another.
+//
+// Nothing else in this project notices that, and the failure mode is a crash on
+// a screen nobody happened to open before a release.
+
+/** Every external module on a configuration, as `group:name` -> version. */
+fun resolvedVersions(configurationName: String): Provider<Map<String, String>> =
+    configurations.named(configurationName).map { configuration ->
+        configuration.incoming.resolutionResult.allComponents
+            .mapNotNull { it.id as? ModuleComponentIdentifier }
+            .associate { "${it.group}:${it.module}" to it.version }
+    }
+
+abstract class ClasspathConsistencyTask : DefaultTask() {
+    @get:Input
+    abstract val compileVersions: MapProperty<String, String>
+
+    @get:Input
+    abstract val runtimeVersions: MapProperty<String, String>
+
+    @get:Input
+    abstract val variant: Property<String>
+
+    @TaskAction
+    fun check() {
+        val compile = compileVersions.get()
+        val runtime = runtimeVersions.get()
+        val skewed =
+            compile
+                .filterKeys { it in runtime }
+                .filter { (module, version) -> runtime.getValue(module) != version }
+                .toSortedMap()
+
+        if (skewed.isEmpty()) {
+            logger.lifecycle(
+                "${variant.get()}: ${compile.size} modules, compile and runtime agree on every one.",
+            )
+            return
+        }
+
+        val detail =
+            skewed.entries.joinToString("\n") { (module, compiled) ->
+                "  $module: compiled against $compiled, packaged ${runtime.getValue(module)}"
+            }
+        throw GradleException(
+            "${skewed.size} module(s) differ between the ${variant.get()} compile and runtime " +
+                "classpaths:\n$detail\n\n" +
+                "The compiler validates calls against the first version and the device runs the " +
+                "second. Where a signature changed between them the result is a NoSuchMethodError " +
+                "at the moment that code first runs — with the build, lint and every unit test " +
+                "green. Align the versions (usually by moving the BOM, not by pinning one module).",
+        )
+    }
+}
+
+val classpathConsistencyTasks =
+    listOf("Debug" to "debug", "Release" to "release").map { (capitalised, lowercase) ->
+        tasks.register<ClasspathConsistencyTask>("checkClasspathConsistency$capitalised") {
+            group = "verification"
+            description = "Fails when $lowercase compiles against a different version than it ships."
+            variant.set(lowercase)
+            compileVersions.set(resolvedVersions("${lowercase}CompileClasspath"))
+            runtimeVersions.set(resolvedVersions("${lowercase}RuntimeClasspath"))
+        }
+    }
+
+tasks.register("checkClasspathConsistency") {
+    group = "verification"
+    description = "Compile/runtime version skew across every variant."
+    dependsOn(classpathConsistencyTasks)
+}
+
+tasks.named("check") { dependsOn(classpathConsistencyTasks) }

@@ -49,7 +49,8 @@ They land in M0, before any protocol code, so correctness is enforced by
 automation from the first protocol commit rather than retrofitted later.
 
 ```sh
-./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug assembleDebug
+./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug \
+          checkClasspathConsistency assembleDebug
 python3 conformance/scripts/verify-vectors.py
 ```
 
@@ -58,11 +59,16 @@ python3 conformance/scripts/verify-vectors.py
 | `ktlintCheck` | Style. `@Composable` PascalCase is exempted through ktlint's own `.editorconfig` switch, not suppressed |
 | `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*` and `.subscription.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
+| `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
 | `verify-vectors.py` | 43 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
 | `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for why the baseline is held rather than advanced |
 
-The coverage gate was verified to actually fail: a protocol class with no tests
-produces `lines covered percentage is 0.000000, but expected minimum is 90`.
+Both gates that can silently pass were verified to actually fail. The coverage
+gate: a protocol class with no tests produces `lines covered percentage is
+0.000000, but expected minimum is 90`. The classpath gate: reverting the Compose
+BOM to `2024.09.00` reports 29 modules skewed, including the
+`foundation-layout: compiled against 1.7.2, packaged 1.9.2` line that names the
+crash.
 
 New protocol code lands with a matching known-answer or behavioural case.
 

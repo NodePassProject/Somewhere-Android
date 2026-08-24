@@ -39,6 +39,12 @@ jobs:
       - name: Android lint
         run: ./gradlew lintDebug
 
+      # Runs before Assemble on purpose: a skew is a property of the resolved
+      # graph, so it is cheaper to catch here than after a full build — and the
+      # build succeeding is exactly what makes a skew invisible.
+      - name: Classpath consistency
+        run: ./gradlew checkClasspathConsistency
+
       - name: Assemble
         run: ./gradlew assembleDebug
 
