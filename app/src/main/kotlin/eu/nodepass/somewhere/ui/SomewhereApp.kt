@@ -21,8 +21,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -36,6 +39,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.screens.AppsScreen
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
@@ -68,11 +73,29 @@ object Routes {
 }
 
 @Composable
-fun SomewhereApp(navController: NavHostController = rememberNavController()) {
+fun SomewhereApp(
+    nodes: NodeRepository,
+    pendingLink: String? = null,
+    onLinkHandled: () -> Unit = {},
+    navController: NavHostController = rememberNavController(),
+) {
     val colors = SomewhereTheme.colors
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val tab = Tab.entries.firstOrNull { it.route == route }
+
+    // A link that arrives while the app is open lands on the import screen
+    // wherever the user happened to be. Navigating on arrival rather than
+    // storing it for later, because an import the user asked for and did not
+    // get is worse than one they have to dismiss.
+    LaunchedEffect(pendingLink) {
+        if (pendingLink != null) navController.navigate(Routes.IMPORT)
+    }
+
+    // The node being edited. Held here rather than passed through the route,
+    // because a route argument carrying a node URL would put a shared key in
+    // the navigation back stack, and from there into logs and crash reports.
+    var editing by remember { mutableStateOf<NowhereUrl?>(null) }
 
     Column(
         Modifier
@@ -83,22 +106,48 @@ fun SomewhereApp(navController: NavHostController = rememberNavController()) {
             NavHost(navController, startDestination = Tab.Home.route) {
                 composable(Tab.Home.route) {
                     HomeScreen(
+                        nodes = nodes,
                         onOpenNodes = { navController.navigate(Tab.Nodes.route) },
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                     )
                 }
                 composable(Tab.Nodes.route) {
                     NodesScreen(
-                        onAdd = { navController.navigate(Routes.IMPORT) },
-                        onEdit = { navController.navigate(Routes.EDITOR) },
+                        nodes = nodes,
+                        onAdd = {
+                            onLinkHandled()
+                            navController.navigate(Routes.IMPORT)
+                        },
+                        onEdit = { entry ->
+                            editing = entry.url
+                            navController.navigate(Routes.EDITOR)
+                        },
                     )
                 }
                 composable(Tab.Routing.route) {
                     RoutingScreen(onOpenApps = { navController.navigate(Routes.APPS) })
                 }
                 composable(Tab.Logs.route) { DiagnosticsScreen() }
-                composable(Routes.EDITOR) { NodeEditorScreen(onBack = { navController.popBackStack() }) }
-                composable(Routes.IMPORT) { ImportScreen(onClose = { navController.popBackStack() }) }
+                composable(Routes.EDITOR) {
+                    NodeEditorScreen(
+                        nodes = nodes,
+                        editing = editing,
+                        onBack = {
+                            editing = null
+                            navController.popBackStack()
+                        },
+                    )
+                }
+                composable(Routes.IMPORT) {
+                    ImportScreen(
+                        nodes = nodes,
+                        link = pendingLink,
+                        onClose = {
+                            onLinkHandled()
+                            navController.popBackStack()
+                        },
+                    )
+                }
                 composable(Routes.APPS) { AppsScreen(onBack = { navController.popBackStack() }) }
                 composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
             }

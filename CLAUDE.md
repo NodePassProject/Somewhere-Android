@@ -156,7 +156,17 @@ Two rules from those documents that reach into protocol code:
 10. **Nowhere is not an anti-censorship protocol, and does not claim to be.** The
    words obfuscation, censorship, active probing and DPI appear zero times in the
    upstream `docs/security.md` and `docs/protocol.md`.
-11. **Keep both ABIs, for different reasons**: physical devices and local
+11. **`no_application_protocol` is not a string you can match on.** A Portal
+    refusing an ALPN aborts the handshake, and Conscrypt surfaces that as
+    `SSLProtocolException: Read error: ... Failure in SSL library, usually a
+    protocol error` — no alert code, no mention of ALPN. The phrase `TLS alert,
+    no application protocol` is what **`openssl s_client`** prints for the same
+    event. A client that matched on it would name the failure correctly at a
+    shell prompt and never on a device. `NowhereDialer` therefore attaches the
+    requested ALPN to the generic handshake failure rather than claiming to
+    have identified it, and reserves `AlpnRejected` for the case that *is*
+    observable: a handshake that completed carrying the wrong protocol.
+12. **Keep both ABIs, for different reasons**: physical devices and local
     emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
     The donor project ships only the former.
 
@@ -173,4 +183,11 @@ Two rules from those documents that reach into protocol code:
   Re-run `python3 conformance/scripts/verify-vectors.py` (43 checks).
 - Sending a TLS handshake to a Portal that ends at `TLS alert, no application
   protocol` is **correct** — the Portal rejecting an ALPN other than `now/1` —
-  and is usable as a connectivity check.
+  and is usable as a connectivity check. That wording is `openssl s_client`'s;
+  see fact 11 for what the same event looks like from Android, which is not the
+  same thing at all.
+- **The dialer's certificate handling is verified against a live Portal**, pins
+  included: `NowhereDialerAgainstPortalTest` reads the Portal's real leaf
+  fingerprint over an independent connection and hands it back as `pin=`, so a
+  passing pin test cannot be the dialer agreeing with itself. Re-run with a
+  Portal from `conformance/scripts/portal-for-tests.sh`.

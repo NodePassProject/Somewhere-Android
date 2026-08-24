@@ -38,6 +38,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.MonoChip
 import eu.nodepass.somewhere.ui.components.MonoText
@@ -46,8 +49,6 @@ import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.PanelRow
 import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
-import eu.nodepass.somewhere.ui.state.NodeEntry
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 
@@ -61,12 +62,23 @@ import eu.nodepass.somewhere.ui.theme.SomewhereType
  */
 @Composable
 fun ImportScreen(
+    nodes: NodeRepository,
+    link: String?,
     onClose: () -> Unit,
-    parsed: NodeEntry = SampleState.frankfurt,
 ) {
     val colors = SomewhereTheme.colors
     var acknowledged by remember { mutableStateOf(false) }
-    val verified = parsed.url.certificateVerification.isVerified
+
+    // The link is parsed once, by the real parser, and whatever it says is what
+    // the screen shows. A link that arrived through the deep link and one the
+    // user pasted go down the same path — there is no second, more forgiving
+    // reader for text the system handed us.
+    val parsed =
+        remember(link) {
+            link?.let { NowhereUrl.parse(it) }
+        }
+    val node = (parsed as? DecodeResult.Ok)?.value
+    val verified = node?.certificateVerification?.isVerified ?: true
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
@@ -106,11 +118,14 @@ fun ImportScreen(
                         .defaultMinSize(minHeight = 96.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(colors.surface)
-                        .border(1.dp, colors.upstreamLine, RoundedCornerShape(10.dp))
-                        .padding(horizontal = 14.dp, vertical = 13.dp),
+                        .border(
+                            1.dp,
+                            if (parsed is DecodeResult.Invalid) colors.criticalLine else colors.upstreamLine,
+                            RoundedCornerShape(10.dp),
+                        ).padding(horizontal = 14.dp, vertical = 13.dp),
                 ) {
                     Text(
-                        text = maskedUrl(parsed),
+                        text = if (node != null) maskedUrl(node) else AnnotatedString(link.orEmpty()),
                         fontFamily = SomewhereType.Mono,
                         fontSize = 12.sp,
                         lineHeight = 19.2.sp,
@@ -118,32 +133,55 @@ fun ImportScreen(
                     )
                 }
 
-                Panel {
-                    PanelRow(Modifier.padding(vertical = 11.dp)) {
-                        RowLabel(stringResource(R.string.field_host), Modifier.weight(1f))
-                        MonoText("${parsed.url.host}:${parsed.url.port}", colors.ink, fontSize = 12.sp)
-                    }
-                    PanelDivider()
-                    PanelRow(Modifier.padding(vertical = 11.dp)) {
-                        RowLabel(stringResource(R.string.field_carriers), Modifier.weight(1f))
-                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            CarrierChipFor("UP", parsed.url.up.token)
-                            CarrierChipFor("DOWN", parsed.url.down.token)
+                // The parser's own reason, verbatim. It distinguishes a wrong
+                // scheme from a bad port from a key with a password component,
+                // and a screen that replaced all three with "invalid link"
+                // would be throwing away the only useful part.
+                (parsed as? DecodeResult.Invalid)?.let { failure ->
+                    Text(
+                        text = stringResource(R.string.import_invalid),
+                        fontFamily = SomewhereType.Body,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 12.5.sp,
+                        color = colors.critical,
+                    )
+                    Text(
+                        text = failure.reason.detail,
+                        fontFamily = SomewhereType.Body,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = colors.inkMuted,
+                    )
+                }
+
+                if (node != null) {
+                    Panel {
+                        PanelRow(Modifier.padding(vertical = 11.dp)) {
+                            RowLabel(stringResource(R.string.field_host), Modifier.weight(1f))
+                            MonoText("${node.host}:${node.port}", colors.ink, fontSize = 12.sp)
                         }
-                    }
-                    PanelDivider()
-                    PanelRow(Modifier.padding(vertical = 11.dp)) {
-                        RowLabel(stringResource(R.string.field_certificate), Modifier.weight(1f))
-                        Text(
-                            text =
-                                stringResource(
-                                    if (verified) R.string.setup_ready else R.string.cert_not_verified,
-                                ),
-                            fontFamily = SomewhereType.Body,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 12.sp,
-                            color = if (verified) colors.good else colors.critical,
-                        )
+                        PanelDivider()
+                        PanelRow(Modifier.padding(vertical = 11.dp)) {
+                            RowLabel(stringResource(R.string.field_carriers), Modifier.weight(1f))
+                            Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                CarrierChipFor("UP", node.up.token)
+                                CarrierChipFor("DOWN", node.down.token)
+                            }
+                        }
+                        PanelDivider()
+                        PanelRow(Modifier.padding(vertical = 11.dp)) {
+                            RowLabel(stringResource(R.string.field_certificate), Modifier.weight(1f))
+                            Text(
+                                text =
+                                    stringResource(
+                                        if (verified) R.string.setup_ready else R.string.cert_not_verified,
+                                    ),
+                                fontFamily = SomewhereType.Body,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.sp,
+                                color = if (verified) colors.good else colors.critical,
+                            )
+                        }
                     }
                 }
 
@@ -196,7 +234,7 @@ fun ImportScreen(
         // Disabled until the certificate statement has been acknowledged. The
         // affordance stays visible rather than hidden, so the reason the button
         // does nothing is on the screen next to it.
-        val enabled = verified || acknowledged
+        val enabled = node != null && (verified || acknowledged)
         Box(
             Modifier
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
@@ -204,7 +242,10 @@ fun ImportScreen(
                 .height(52.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(if (enabled) colors.primaryAction else colors.surfaceAlt)
-                .clickable(enabled = enabled, onClick = onClose),
+                .clickable(enabled = enabled) {
+                    node?.let(nodes::add)
+                    onClose()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -290,9 +331,8 @@ private fun SourceCard(
  * and this keeps the same promise where the URL is shown back to the user.
  */
 @Composable
-private fun maskedUrl(node: NodeEntry): AnnotatedString {
+private fun maskedUrl(url: NowhereUrl): AnnotatedString {
     val colors = SomewhereTheme.colors
-    val url = node.url
     val query =
         buildString {
             append("?up=${url.up.token}&down=${url.down.token}")

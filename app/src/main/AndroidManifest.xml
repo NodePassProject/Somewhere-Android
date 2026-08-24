@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Without this every socket fails with an IOException, which the dialer
+         reports as "the Portal did not answer" — an honest message about a
+         connection that was never allowed to be attempted. Found on a device:
+         nothing in the build, the tests or lint notices a client that cannot
+         reach the network, because the unit tests run on a JVM that can. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
+        android:name=".SomewhereApplication"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
@@ -11,6 +20,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:label="@string/app_name"
             android:theme="@style/Theme.Somewhere">
 

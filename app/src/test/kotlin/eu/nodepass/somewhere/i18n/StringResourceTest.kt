@@ -141,6 +141,35 @@ class StringResourceTest {
     }
 
     @Test
+    fun everyDialFailureHasItsOwnTranslatedSentence() {
+        // A probe that fails shows this to the user. The first wiring of the
+        // node list put `DecodeReason.detail` on the card instead — an English
+        // developer string, on a Chinese device, for every failure. These keys
+        // are what replaced it, so their absence is the same bug returning.
+        val expected =
+            listOf(
+                "dial_unreachable",
+                "dial_handshake_failed",
+                "dial_alpn_rejected",
+                "dial_pin_mismatch",
+                "dial_no_certificate",
+                "dial_unknown",
+            )
+        LOCALES.forEach { locale ->
+            val present = strings(locale)
+            expected.forEach { key ->
+                assertTrue("$locale is missing $key", key in present)
+                assertTrue("$locale/$key is empty", present.getValue(key).isNotBlank())
+            }
+            assertEquals(
+                "$locale: each dial failure must read differently from the others",
+                expected.size,
+                expected.map { present.getValue(it) }.toSet().size,
+            )
+        }
+    }
+
+    @Test
     fun placeholdersMatchAcrossLocales() {
         // A translation that drops %1$s crashes at format time, in that locale
         // only, on somebody else's phone.

@@ -21,6 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -31,9 +35,12 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.data.ProbeResult
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.IconSquare
 import eu.nodepass.somewhere.ui.components.Meter
@@ -45,11 +52,13 @@ import eu.nodepass.somewhere.ui.components.StatusDot
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
 import eu.nodepass.somewhere.ui.state.NodeEntry
-import eu.nodepass.somewhere.ui.state.NodeHealth
+import eu.nodepass.somewhere.ui.state.NodeStatus
 import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.state.SubscriptionState
+import eu.nodepass.somewhere.ui.state.asMessage
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -63,11 +72,31 @@ import java.time.format.DateTimeFormatter
  */
 @Composable
 fun NodesScreen(
+    nodes: NodeRepository,
     onAdd: () -> Unit,
     onEdit: (NodeEntry) -> Unit,
-    nodes: List<NodeEntry> = SampleState.nodes,
-    subscription: SubscriptionState = SampleState.subscription,
 ) {
+    val stored by nodes.nodes.collectAsState()
+    val probes by nodes.probes.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    val entries =
+        stored.map { entry ->
+            NodeEntry(entry.url, probes[entry.url.toUrl()].toStatus())
+        }
+
+    // Probing on arrival rather than behind a button: a list of nodes with no
+    // indication of which ones work is the state this screen exists to leave.
+    // Only nodes never probed in this process are dialled, so returning to the
+    // tab does not re-dial the whole list.
+    LaunchedEffect(stored) {
+        stored.forEach { entry ->
+            if (probes[entry.url.toUrl()] == null) {
+                scope.launch { nodes.probe(entry.url) }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 52.dp, bottom = 18.dp),
@@ -90,22 +119,90 @@ fun NodesScreen(
             )
         }
 
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            item { SubscriptionHeader(subscription) }
-            item { SubscriptionCard(subscription) }
-            item {
-                Box(Modifier.padding(top = 8.dp)) {
-                    SectionLabel(pluralStringResource(R.plurals.nodes_count, nodes.size, nodes.size))
-                }
-            }
-            items(nodes) { node -> NodeCard(node, onClick = { onEdit(node) }) }
+        if (entries.isEmpty()) {
+            EmptyNodeList(onAdd)
+            return@Column
         }
+
+        NodeList(entries, subscription = null, onEdit = onEdit)
     }
 }
+
+/**
+ * The list itself, separated from its data source so a preview can render the
+ * populated design without a repository behind it.
+ */
+@Composable
+private fun NodeList(
+    entries: List<NodeEntry>,
+    subscription: SubscriptionState?,
+    onEdit: (NodeEntry) -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (subscription != null) {
+            item { SubscriptionHeader(subscription) }
+            item { SubscriptionCard(subscription) }
+        }
+        item {
+            Box(Modifier.padding(top = if (subscription != null) 8.dp else 0.dp)) {
+                SectionLabel(pluralStringResource(R.plurals.nodes_count, entries.size, entries.size))
+            }
+        }
+        items(entries, key = { it.url.toUrl() }) { node -> NodeCard(node, onClick = { onEdit(node) }) }
+    }
+}
+
+/**
+ * No nodes yet.
+ *
+ * The design canvas has no artboard for this — every screen there is drawn
+ * populated — but it is the first screen a new install actually shows, so it is
+ * built from the same system rather than left as a blank column.
+ */
+@Composable
+private fun EmptyNodeList(onAdd: () -> Unit) {
+    val colors = SomewhereTheme.colors
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.nodes_empty_title),
+            style = SomewhereType.rowHeading,
+            color = colors.inkMuted,
+        )
+        Text(
+            text = stringResource(R.string.nodes_empty_detail),
+            style = SomewhereType.bodySmall,
+            color = colors.faint,
+            textAlign = TextAlign.Center,
+        )
+        SmallButton(
+            label = stringResource(R.string.nodes_add),
+            onClick = onAdd,
+            fill = colors.primaryAction,
+            contentColor = colors.onPrimaryAction,
+            height = 40.dp,
+        )
+    }
+}
+
+/** A probe result as the list's own vocabulary. Never probed is not a failure. */
+private fun ProbeResult?.toStatus(): NodeStatus =
+    when (this) {
+        null -> NodeStatus.Unknown
+        ProbeResult.Probing -> NodeStatus.Probing
+        is ProbeResult.Reachable -> NodeStatus.Reachable(handshakeMillis)
+        is ProbeResult.Unreachable -> NodeStatus.Unreachable(reason)
+    }
 
 @Composable
 private fun SubscriptionHeader(subscription: SubscriptionState) {
@@ -219,7 +316,7 @@ private fun NodeCard(
 ) {
     val colors = SomewhereTheme.colors
 
-    if (node.health == NodeHealth.Unavailable) {
+    if (node.status is NodeStatus.RemovedByProvider) {
         // NW-D-04: the dashboard drops nodes when a subscription lapses. The
         // node stays visible and says which it was — expiry or quota — because
         // "network error" and an empty list are both wrong.
@@ -253,7 +350,7 @@ private fun NodeCard(
         return
     }
 
-    val active = node.health == NodeHealth.Active
+    val active = node.status is NodeStatus.Reachable
     Card(
         modifier = Modifier.clickable(onClick = onClick),
         borderColor = if (active) colors.upstreamLine else colors.line,
@@ -264,7 +361,13 @@ private fun NodeCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            StatusDot(if (active) colors.good else colors.inactive)
+            StatusDot(
+                when (node.status) {
+                    is NodeStatus.Reachable -> colors.good
+                    is NodeStatus.Unreachable -> colors.critical
+                    else -> colors.inactive
+                },
+            )
             Text(
                 text = node.displayName,
                 fontFamily = SomewhereType.Display,
@@ -274,8 +377,18 @@ private fun NodeCard(
                 modifier = Modifier.weight(1f),
             )
             MonoText(
-                text = node.latencyMillis?.let { "$it ms" } ?: "—",
-                color = if (active) colors.good else colors.faint,
+                text =
+                    when (val status = node.status) {
+                        is NodeStatus.Reachable -> "${status.handshakeMillis} ms"
+                        NodeStatus.Probing -> "…"
+                        else -> "—"
+                    },
+                color =
+                    when (node.status) {
+                        is NodeStatus.Reachable -> colors.good
+                        is NodeStatus.Unreachable -> colors.critical
+                        else -> colors.faint
+                    },
                 fontSize = 11.5.sp,
             )
         }
@@ -296,6 +409,19 @@ private fun NodeCard(
                     },
                 )
             }
+        }
+
+        (node.status as? NodeStatus.Unreachable)?.let { unreachable ->
+            // The dialer's own reason, not "offline". It distinguishes a wrong
+            // port from a refused ALPN from a pin that did not match, and those
+            // are three different things for the person to go and fix.
+            Text(
+                text = unreachable.reason.asMessage(),
+                fontFamily = SomewhereType.Body,
+                fontSize = 11.5.sp,
+                lineHeight = 16.sp,
+                color = colors.critical,
+            )
         }
 
         if (node.url.requiresQuic) {

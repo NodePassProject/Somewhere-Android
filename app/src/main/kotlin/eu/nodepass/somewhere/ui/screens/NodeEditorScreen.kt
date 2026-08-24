@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,7 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.FieldBox
 import eu.nodepass.somewhere.ui.components.MonoText
@@ -44,8 +47,6 @@ import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SmallButton
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
-import eu.nodepass.somewhere.ui.state.NodeEntry
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 
@@ -59,13 +60,39 @@ import eu.nodepass.somewhere.ui.theme.SomewhereType
  */
 @Composable
 fun NodeEditorScreen(
+    nodes: NodeRepository,
+    editing: NowhereUrl?,
     onBack: () -> Unit,
-    node: NodeEntry = SampleState.frankfurt,
+) {
+    // Nothing to edit means the screen was reached by a back-stack restore
+    // rather than by a tap. Leaving rather than rendering a blank form.
+    if (editing == null) {
+        LaunchedEffect(Unit) { onBack() }
+        return
+    }
+    NodeEditor(
+        node = editing,
+        onSave = { edited ->
+            if (edited != editing) nodes.replace(editing, edited)
+            onBack()
+        },
+        onBack = onBack,
+    )
+}
+
+/**
+ * The form, separated from its data source so a preview can render it.
+ */
+@Composable
+internal fun NodeEditor(
+    node: NowhereUrl,
+    onSave: (NowhereUrl) -> Unit,
+    onBack: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
-    var up by remember { mutableStateOf(node.url.up) }
-    var down by remember { mutableStateOf(node.url.down) }
-    var mux by remember { mutableStateOf(node.url.mux) }
+    var up by remember { mutableStateOf(node.up) }
+    var down by remember { mutableStateOf(node.down) }
+    var mux by remember { mutableStateOf(node.mux) }
 
     Column(
         Modifier
@@ -82,7 +109,14 @@ fun NodeEditorScreen(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
                     color = colors.upstream,
-                    modifier = Modifier.clickable(onClick = onBack),
+                    modifier =
+                        Modifier.clickable {
+                            // Only the carriers and mux are editable here. The
+                            // rest of the node is what the parser produced, and
+                            // rebuilding it field by field would be a second
+                            // place for a node's shape to be defined.
+                            onSave(node.copy(up = up, down = down, mux = mux))
+                        },
                 )
             },
         )
@@ -94,7 +128,7 @@ fun NodeEditorScreen(
             Labelled(stringResource(R.string.field_name)) {
                 FieldBox {
                     Text(
-                        text = node.displayName,
+                        text = (node.displayName ?: "${node.host}:${node.port}"),
                         fontFamily = SomewhereType.Body,
                         fontSize = 14.5.sp,
                         color = colors.ink,
@@ -104,10 +138,10 @@ fun NodeEditorScreen(
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Labelled(stringResource(R.string.field_host), Modifier.weight(1f)) {
-                    FieldBox { MonoText(node.url.host, colors.ink, fontSize = 13.5.sp) }
+                    FieldBox { MonoText(node.host, colors.ink, fontSize = 13.5.sp) }
                 }
                 Labelled(stringResource(R.string.field_port), Modifier.width(96.dp)) {
-                    FieldBox { MonoText(node.url.port.toString(), colors.ink, fontSize = 13.5.sp) }
+                    FieldBox { MonoText(node.port.toString(), colors.ink, fontSize = 13.5.sp) }
                 }
             }
 
@@ -175,7 +209,7 @@ fun NodeEditorScreen(
                         color = colors.faint,
                     )
                 }
-                FieldBox { MonoText(node.url.alpn, colors.ink, fontSize = 13.5.sp) }
+                FieldBox { MonoText(node.alpn, colors.ink, fontSize = 13.5.sp) }
             }
 
             Labelled(stringResource(R.string.field_certificate)) {

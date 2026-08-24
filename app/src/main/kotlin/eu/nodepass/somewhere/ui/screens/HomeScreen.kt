@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
@@ -42,11 +45,11 @@ import eu.nodepass.somewhere.ui.components.IconSquare
 import eu.nodepass.somewhere.ui.components.Meter
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.SectionLabel
+import eu.nodepass.somewhere.ui.components.SmallButton
 import eu.nodepass.somewhere.ui.components.StatusDot
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
 import eu.nodepass.somewhere.ui.state.NodeEntry
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.state.SessionSnapshot
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
@@ -62,10 +65,66 @@ import eu.nodepass.somewhere.ui.theme.SomewhereType
  */
 @Composable
 fun HomeScreen(
+    nodes: NodeRepository,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
-    node: NodeEntry = SampleState.frankfurt,
-    session: SessionSnapshot = SampleState.session,
+) {
+    val stored by nodes.nodes.collectAsState()
+    val first = stored.firstOrNull()
+
+    if (first == null) {
+        NoNodeYet(onOpenNodes)
+        return
+    }
+
+    // There is no session layer running yet, so the session is reported as
+    // disconnected rather than filled in. A screen that showed throughput
+    // nobody measured would be the one thing this design set out not to do.
+    Home(NodeEntry(first.url), SessionSnapshot.DISCONNECTED, onOpenNodes, onOpenSettings)
+}
+
+/** No node to connect to. The one thing to do from here is add one. */
+@Composable
+private fun NoNodeYet(onOpenNodes: () -> Unit) {
+    val colors = SomewhereTheme.colors
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.home_no_node),
+            style = SomewhereType.rowHeading,
+            color = colors.inkMuted,
+        )
+        Text(
+            text = stringResource(R.string.home_empty_detail),
+            style = SomewhereType.bodySmall,
+            color = colors.faint,
+        )
+        SmallButton(
+            label = stringResource(R.string.nodes_add),
+            onClick = onOpenNodes,
+            fill = colors.primaryAction,
+            contentColor = colors.onPrimaryAction,
+            height = 40.dp,
+        )
+    }
+}
+
+/**
+ * The populated home screen, separated from its data source so a preview can
+ * render the design without a repository behind it.
+ */
+@Composable
+internal fun Home(
+    node: NodeEntry,
+    session: SessionSnapshot,
+    onOpenNodes: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
     Column(Modifier.fillMaxSize()) {

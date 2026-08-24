@@ -4,11 +4,12 @@
 package eu.nodepass.somewhere.ui.state
 
 import androidx.compose.runtime.Immutable
+import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.subscription.SubscriptionUsage
 
-/**
+/*
  * What the screens render.
  *
  * The types the protocol layer already defines are used directly — [NowhereUrl],
@@ -21,40 +22,63 @@ import eu.nodepass.somewhere.subscription.SubscriptionUsage
  * device; until then [SampleState] supplies a snapshot so the layout can be
  * checked against the design at the size it actually ships at.
  */
-enum class NodeHealth {
-    /** Reachable, and measured. */
-    Active,
 
-    /** Known, not currently measured. */
-    Idle,
+/**
+ * What is currently known about one node.
+ *
+ * Two different kinds of "not working" are kept apart on purpose, because the
+ * user's next move differs:
+ *
+ * - [Unreachable] — this device could not open a connection. The node may be
+ *   fine and the network may not be.
+ * - [RemovedByProvider] — the node is gone from the subscription feed. NW-D-04:
+ *   the dashboard removes nodes when a subscription lapses, so the honest
+ *   message is expiry or quota, never "network error" and never an empty list.
+ *
+ * Collapsing them into one "offline" would tell someone whose subscription
+ * expired to check their wifi.
+ */
+sealed interface NodeStatus {
+    /** Never probed. Not the same as failing a probe. */
+    data object Unknown : NodeStatus
+
+    data object Probing : NodeStatus
 
     /**
-     * Gone from the subscription feed.
+     * A TLS connection completed and the Portal accepted this node's ALPN.
      *
-     * NW-D-04: the dashboard removes nodes when a subscription lapses, so the
-     * truthful message is expiry or quota — never "network error", and never an
-     * empty list with no explanation.
+     * Narrower than "works": the shared key is carried in the frame that opens
+     * a flow, so it is not exercised here. A node green in this list can still
+     * fail to authenticate — see `ProbeResult.Reachable`.
      */
-    Unavailable,
+    data class Reachable(
+        val handshakeMillis: Int,
+    ) : NodeStatus
+
+    /**
+     * Carries the reason, not a rendered sentence.
+     *
+     * Rendering here would freeze the message in whatever locale was current
+     * when the probe ran, which is the wrong one after a language change and
+     * the wrong one for a reason that has an argument in it.
+     */
+    data class Unreachable(
+        val reason: DecodeReason,
+    ) : NodeStatus
+
+    data object RemovedByProvider : NodeStatus
 }
 
 @Immutable
 data class NodeEntry(
     val url: NowhereUrl,
-    val health: NodeHealth,
-    val latencyMillis: Int?,
+    val status: NodeStatus = NodeStatus.Unknown,
 ) {
     val displayName: String get() = url.displayName ?: "${url.host}:${url.port}"
+
+    val latencyMillis: Int? get() = (status as? NodeStatus.Reachable)?.handshakeMillis
 }
 
-/**
- * The live session.
- *
- * The two directions are separate fields with no combined total, because the
- * protocol gives them no common denominator: `up` and `down` can be on different
- * carriers, and a single "throughput" number would be an average of two things
- * that are not the same thing.
- */
 @Immutable
 data class SessionSnapshot(
     val connected: Boolean,

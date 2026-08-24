@@ -9,13 +9,15 @@ import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.subscription.SubscriptionUsage
 
 /**
- * The snapshot the screens render until a session can supply a real one.
+ * The snapshot the design previews render.
  *
- * This is **placeholder state, not a demo mode**: nothing here reaches the
- * network, and the whole object disappears the moment the VPN service exists.
- * It is in the source rather than in a preview annotation so the screens can be
- * checked on a device at the size they ship at, which is where spacing and
- * translated line-wrapping actually fail.
+ * **The screens no longer default to this.** They read the real node list, and
+ * a fresh install shows empty states because a fresh install has no nodes —
+ * which is the honest thing for them to show. This object survives as the
+ * fixture behind `@Preview`, so the populated design stays inspectable without
+ * a device and without inventing state at runtime.
+ *
+ * Nothing here reaches the network.
  *
  * Two rules it keeps, because a placeholder that breaks them teaches the wrong
  * shape:
@@ -51,8 +53,7 @@ object SampleState {
     val frankfurt: NodeEntry =
         NodeEntry(
             url = node("nowhere://$FAKE_KEY@fra04.example.net:443?up=tcp&down=tcp&mux=1#Frankfurt%20%C2%B7%20Portal%2004"),
-            health = NodeHealth.Active,
-            latencyMillis = 38,
+            status = NodeStatus.Reachable(handshakeMillis = 38),
         )
 
     /** Upstream defaults both directions to `udp`, so this is what a pasted
@@ -60,16 +61,14 @@ object SampleState {
     val singapore: NodeEntry =
         NodeEntry(
             url = node("nowhere://$FAKE_KEY@sgp11.example.net:443?up=udp&down=udp#Singapore%20%C2%B7%20Portal%2011"),
-            health = NodeHealth.Idle,
-            latencyMillis = null,
+            status = NodeStatus.Unknown,
         )
 
     /** Dropped from the feed. NW-D-04: name the reason, never an empty list. */
     val tokyo: NodeEntry =
         NodeEntry(
             url = node("nowhere://$FAKE_KEY@tyo02.example.net:443?up=tcp&down=tcp#Tokyo%20%C2%B7%20Portal%2002"),
-            health = NodeHealth.Unavailable,
-            latencyMillis = null,
+            status = NodeStatus.RemovedByProvider,
         )
 
     val nodes: List<NodeEntry> = listOf(frankfurt, singapore, tokyo)

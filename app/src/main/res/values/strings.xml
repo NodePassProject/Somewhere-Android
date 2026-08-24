@@ -163,4 +163,18 @@
     <string name="settings_protocol">Protocol</string>
     <string name="settings_source_code">Source code</string>
     <string name="settings_privacy_note">Somewhere does not collect analytics, does not log the sites you visit, and has no account. Your node list stays on this device.</string>
+
+    <string name="nodes_empty_title">No nodes yet</string>
+    <string name="nodes_empty_detail">Add one from your provider\'s dashboard, or paste a link.</string>
+    <string name="home_empty_detail">Add a node before connecting.</string>
+    <string name="import_invalid">This is not a node link.</string>
+    <string name="import_added">Node added.</string>
+    <string name="probe_checking">Checking</string>
+
+    <string name="dial_unreachable">This node did not answer.</string>
+    <string name="dial_handshake_failed">The secure connection could not be set up. This node asks for ALPN %1$s — check that the Portal uses the same one.</string>
+    <string name="dial_alpn_rejected">The Portal did not accept ALPN %1$s.</string>
+    <string name="dial_pin_mismatch">The certificate does not match this node’s pinned fingerprint.</string>
+    <string name="dial_no_certificate">The Portal presented no certificate to pin against.</string>
+    <string name="dial_unknown">This node could not be reached.</string>
 </resources>

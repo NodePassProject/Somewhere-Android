@@ -126,4 +126,18 @@
     <string name="settings_protocol">協定</string>
     <string name="settings_source_code">原始碼</string>
     <string name="settings_privacy_note">Somewhere 不蒐集統計資料，不記錄你造訪的網站，也沒有帳號。你的節點清單只留在這台裝置上。</string>
+
+    <string name="nodes_empty_title">尚無節點</string>
+    <string name="nodes_empty_detail">從你的服務商後台新增一個，或貼上一條連結。</string>
+    <string name="home_empty_detail">請先新增節點再連線。</string>
+    <string name="import_invalid">這不是一條節點連結。</string>
+    <string name="import_added">節點已新增。</string>
+    <string name="probe_checking">檢查中</string>
+
+    <string name="dial_unreachable">這個節點沒有回應。</string>
+    <string name="dial_handshake_failed">無法建立安全連線。這個節點要求 ALPN 為 %1$s — 請檢查 Portal 是否一致。</string>
+    <string name="dial_alpn_rejected">Portal 不接受 ALPN %1$s。</string>
+    <string name="dial_pin_mismatch">憑證與這個節點釘選的指紋不一致。</string>
+    <string name="dial_no_certificate">Portal 沒有提供可用於釘選的憑證。</string>
+    <string name="dial_unknown">無法連線這個節點。</string>
 </resources>

@@ -124,4 +124,18 @@
     <string name="settings_protocol">协议</string>
     <string name="settings_source_code">源代码</string>
     <string name="settings_privacy_note">Somewhere 不收集统计数据，不记录你访问的站点，也没有账号。你的节点列表只留在这台设备上。</string>
+
+    <string name="nodes_empty_title">还没有节点</string>
+    <string name="nodes_empty_detail">从你的服务商面板添加一个，或粘贴一条链接。</string>
+    <string name="home_empty_detail">先添加一个节点再连接。</string>
+    <string name="import_invalid">这不是一条节点链接。</string>
+    <string name="import_added">节点已添加。</string>
+    <string name="probe_checking">检查中</string>
+
+    <string name="dial_unreachable">这个节点没有响应。</string>
+    <string name="dial_handshake_failed">无法建立安全连接。这个节点要求 ALPN 为 %1$s — 请检查 Portal 是否一致。</string>
+    <string name="dial_alpn_rejected">Portal 不接受 ALPN %1$s。</string>
+    <string name="dial_pin_mismatch">证书与这个节点固定的指纹不一致。</string>
+    <string name="dial_no_certificate">Portal 没有提供可用于固定的证书。</string>
+    <string name="dial_unknown">无法连接这个节点。</string>
 </resources>
