@@ -154,4 +154,7 @@
 
     <string name="editor_remove">删除这个节点</string>
     <string name="editor_removed">已删除。</string>
+
+    <string name="diagnostics_empty_title">还没有记录</string>
+    <string name="diagnostics_empty_detail">会话运行后，连接结果会出现在这里。</string>
 </resources>

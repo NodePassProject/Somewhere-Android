@@ -31,6 +31,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
@@ -41,7 +42,6 @@ import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.state.ConnectionLogEntry
 import eu.nodepass.somewhere.ui.state.LogSeverity
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.state.explanation
 import eu.nodepass.somewhere.ui.state.identifier
 import eu.nodepass.somewhere.ui.state.severity
@@ -66,7 +66,7 @@ private val STRIPE_WIDTH = 2.dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DiagnosticsScreen(entries: List<ConnectionLogEntry> = SampleState.connectionLog) {
+fun DiagnosticsScreen(entries: List<ConnectionLogEntry> = emptyList()) {
     val colors = SomewhereTheme.colors
     var surface by remember { mutableIntStateOf(0) }
 
@@ -91,6 +91,16 @@ fun DiagnosticsScreen(entries: List<ConnectionLogEntry> = SampleState.connection
                 selectedIndex = surface,
                 onSelect = { surface = it },
             )
+        }
+
+        if (entries.isEmpty()) {
+            // No session has run, so there is nothing to report. The screen said
+            // so with fabricated log lines until now — seven plausible entries
+            // with plausible timestamps, none of which had ever happened. That
+            // is the same defect as rendering an unmeasured throughput: it is
+            // not a placeholder, it is the app claiming something.
+            NothingLogged()
+            return@Column
         }
 
         LazyColumn(
@@ -122,6 +132,31 @@ fun DiagnosticsScreen(entries: List<ConnectionLogEntry> = SampleState.connection
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NothingLogged() {
+    val colors = SomewhereTheme.colors
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = stringResource(R.string.diagnostics_empty_title),
+            style = SomewhereType.rowHeading,
+            color = colors.inkMuted,
+        )
+        Text(
+            text = stringResource(R.string.diagnostics_empty_detail),
+            style = SomewhereType.bodySmall,
+            color = colors.faint,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 

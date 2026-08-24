@@ -193,4 +193,7 @@
 
     <string name="editor_remove">Remove this node</string>
     <string name="editor_removed">Removed.</string>
+
+    <string name="diagnostics_empty_title">Nothing logged yet</string>
+    <string name="diagnostics_empty_detail">Connection outcomes appear here once a session has run.</string>
 </resources>

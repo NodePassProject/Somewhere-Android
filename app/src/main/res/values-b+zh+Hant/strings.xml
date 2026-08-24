@@ -156,4 +156,7 @@
 
     <string name="editor_remove">刪除這個節點</string>
     <string name="editor_removed">已刪除。</string>
+
+    <string name="diagnostics_empty_title">尚無記錄</string>
+    <string name="diagnostics_empty_detail">工作階段執行後，連線結果會出現在這裡。</string>
 </resources>
