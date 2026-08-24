@@ -1,0 +1,104 @@
+# CLAUDE.md
+
+Somewhere for Android — a native Kotlin client for the Nowhere protocol.
+
+## Language policy
+
+This is a global collaboration project. **All project output is in English**:
+documentation, code comments, commit messages, script output, `.gitignore`
+comments, everything. Do not emit Chinese in project files.
+
+## Scope
+
+- **Nowhere protocol only.** No VLESS, Trojan, Shadowsocks, Naive, and so on.
+- **Engine hand-written in Kotlin.** The upstream Rust implementation is built
+  only on a development host as a conformance oracle; it does not ship and is not
+  cross-compiled for Android.
+- **Delivered in layers**: L1 TLS/TCP → L2 Mux → L3 QUIC. Each layer ships to
+  internal testing and leaves a fix-back window. No big-bang release.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `app/` | The client. Kotlin, Compose, `minSdk` 31, `compileSdk` 36 |
+| `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
+| `docs/` | Protocol implementation notes, architecture, contribution guide |
+
+The lwIP / TUN / routing layer is inherited from `NodePassProject/Anywhere-Android`
+(GPL-3.0) at L1; it is not present yet.
+
+## Conventions
+
+- Every protocol implementation detail must be traceable to a specific section of
+  the upstream `docs/protocol.md`.
+- New protocol code lands with a matching known-answer or behavioural case.
+  Protocol-layer coverage gate: 90%.
+- Keep `conformance/PROTOCOL_BASELINE` current: upstream commit plus the KAT
+  snapshot it corresponds to. A scheduled CI job diffs upstream and opens an issue
+  on normative change.
+- Run `conformance/scripts/drift-check.sh` before touching protocol code.
+- **Never hardcode deployment-specific protocol parameters** — ALPN values,
+  padding curves, jitter parameters, key derivation labels or salts. The client
+  implements mechanisms and embeds no values; parameters are delivered by the
+  server at runtime.
+
+## Facts that are easy to get wrong (all verified on the ground)
+
+1. **The client import scheme is `nowhere://`, not `vector://`.**
+   Form: `nowhere://<pct-encoded shared key>@<host>:<port>?up=..&down=..[&mux=1][&alpn=..]#<name>`
+   `vector://` is the command URL used to start the upstream Rust process — a
+   different thing.
+2. **The `pool` parameter was removed in 1.8**, replaced by `mux=0|1` (default 0).
+   NowhereDash still emits 1.7-era URLs and appends `pool=5` for `tcp/tcp`. The
+   client must ignore unknown and deprecated parameters.
+3. **The TLS exporter has two sources, and `minSdk` is 26.**
+   `android.net.ssl.SSLSockets.exportKeyingMaterial()` is **public API from API 31**
+   (verified by `javap`: absent at 28, class-without-method at 29). Below 31,
+   Conscrypt provides the same call. Both sit behind `KeyingMaterialExporter`;
+   see `docs/adr-0001-tls-exporter.md`. The class `SSLSessions` does not exist.
+   **Neither helps for QUIC** — ngtcp2 needs a C-level TLS backend supplying
+   crypto callbacks.
+4. **The donor's hand-written TLS has no exporter.** Its
+   `vpn/protocol/tls/` package is 4,159 lines across 7 files and was written for
+   custom ClientHello construction; searching it for `exporter` /
+   `exportKeyingMaterial` returns zero hits. Porting it does not give you the one
+   thing Nowhere's authentication needs.
+5. **`Anywhere-Android/app/src/main/jni/blake3/CTLSKeyDerivation.c` and `CX25519.c`
+   are dead Apple code** — they `#include <CommonCrypto/...>` and are not in the
+   `CMakeLists.txt` source list. Do not port them.
+6. **If porting the donor's TLS layer**: an exporter must go inside
+   `TlsClient.finishHandshake()`, before `clearHandshakeState()`. That method
+   nulls `handshakeTranscript`, `handshakeSecret` and `keyDerivation`, and
+   `deriveApplicationKeys` discards the master secret as soon as it is computed.
+7. **Authentication and FlowHeader are bit-identical between 1.7 and 1.8.**
+   The fixed vector `derive_auth_key("secret")` →
+   `1076221669fa28bcf70aa8545bddd6f760dcefbe279c3f38a5ff5d925708f867` holds, and
+   is transcribed into the conformance suite.
+8. **Neither `sni` nor `pin` means upstream skips certificate verification
+   entirely.** With `pin` alone, fingerprint verification still happens and takes
+   priority over the sni chain path. NowhereDash currently emits neither.
+9. **NowhereDash meters at Portal granularity, not per user.** It observes the
+   Portal's total traffic counter and attributes the delta to every subscription
+   linked to that Portal. The protocol has no user identity.
+10. **Nowhere is not an anti-censorship protocol, and does not claim to be.** The
+   words obfuscation, censorship, active probing and DPI appear zero times in the
+   upstream `docs/security.md` and `docs/protocol.md`.
+11. **Keep both ABIs, for different reasons**: physical devices and local
+    emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
+    The donor project ships only the former.
+
+## Already verified — do not redo
+
+- The donor project `Anywhere-Android` **builds clean** on this toolchain
+  (JDK 21 / android-36 / NDK 28.2 / CMake 3.22.1), 1m50s cold, one harmless lwIP
+  macro warning. Inheriting its shell is not a risk.
+- `cargo build --release --locked` succeeds on macOS/aarch64 at Nowhere v1.8.0.
+- **End-to-end works**: SOCKS5 → Vector → Nowhere (tcp/tcp) → Portal → target,
+  payload returned intact. Re-run `conformance/scripts/smoke-local.sh`.
+- **Authentication derivation agrees three ways** — spec prose, an independent
+  implementation, and upstream Rust fixed vectors, byte for byte.
+  Re-run `python3 conformance/scripts/verify-vectors.py` (43 checks).
+- Sending a TLS handshake to a Portal that ends at `TLS alert, no application
+  protocol` is **correct** — the Portal rejecting an ALPN other than `now/1` —
+  and is usable as a connectivity check.

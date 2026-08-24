@@ -1,0 +1,47 @@
+# Protocol baseline
+#
+# The upstream snapshot this client implementation is written against. Every
+# protocol-layer change must be traceable to the version recorded here.
+# Drift detection (scripts/drift-check.sh) reads this file.
+
+UPSTREAM_REPO=NodePassProject/Nowhere
+UPSTREAM_BRANCH=main
+UPSTREAM_TAG=v1.8.0
+UPSTREAM_COMMIT=7720311b
+UPSTREAM_COMMIT_DATE=2026-08-24
+BINARY_VERSION_STRING=nowhere-v1.8.0
+
+# Normative files watched for change
+SPEC_FILES=docs/protocol.md docs/configuration.md docs/compatibility.md docs/security.md
+
+# Known state
+# - v1.8.0 was released on 2026-08-24; the feat/mux branch was merged into main
+#   and deleted. Compared with the feat/mux@820b0c5 snapshot this suite was first
+#   built from, v1.8.0 differs only in the version number, Cargo.lock and one test
+#   file - no normative file and no implementation code changed, so all earlier
+#   analysis holds unchanged.
+# - Relative to 1.7: adds the TLS Mux carrier; removes the pool parameter
+#   (replaced by mux=0|1, default 0); drops the Linux-only gate and adds
+#   cross-platform CI plus GHCR container images.
+# - Authentication (spec section 2) and FlowHeader (section 4) are unchanged since
+#   1.7, so the byte-level vectors carry across versions.
+# - Verified: cargo build --release --locked succeeds on macOS/aarch64, and the
+#   end-to-end smoke test passes against the resulting binary.
+#
+# Tracking policy (decided 2026-08-24)
+#
+# The baseline stays pinned at v1.8.0 for the whole of M0 and L1. It is NOT
+# advanced just because upstream moved: a moving target during the first
+# implementation of the protocol layer costs more than it buys, and the vectors
+# in this suite were derived against exactly this snapshot.
+#
+# Upstream has already advanced past this pin (89750106 as of 2026-08-24) with
+# no normative change. That is the expected steady state: drift-check.sh reports
+# the distance and passes. Only a normative change - one of the SPEC_FILES above
+# - should interrupt development, and it exits non-zero so a scheduled CI job can
+# open an issue.
+#
+# Revisit the pin at the L1 exit, or immediately on a normative change.
+#
+# When advancing the baseline: run scripts/drift-check.sh first, then update this
+# file, then re-run scripts/verify-vectors.py and scripts/smoke-local.sh.

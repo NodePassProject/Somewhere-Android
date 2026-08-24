@@ -1,0 +1,28 @@
+# ── Never commit ────────────────────────────────────────────────────────────
+
+# Signing material and machine-local SDK paths
+local.properties
+*.jks
+*.keystore
+
+# Runtime output and logs - may contain node addresses, tokens, real traffic data
+*.log
+
+# Claude project context and local drafts
+.claude/
+CLAUDE.local.md
+*.local.md
+
+# ── Build output ────────────────────────────────────────────────────────────
+.gradle/
+build/
+.kotlin/
+*.apk
+*.aab
+
+# ── Ordinary ────────────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+.idea/
+__pycache__/
+*.pyc
