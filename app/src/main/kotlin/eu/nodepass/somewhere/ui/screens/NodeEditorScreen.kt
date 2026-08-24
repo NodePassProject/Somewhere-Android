@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
@@ -76,6 +77,10 @@ fun NodeEditorScreen(
             if (edited != editing) nodes.replace(editing, edited)
             onBack()
         },
+        onRemove = {
+            nodes.remove(editing)
+            onBack()
+        },
         onBack = onBack,
     )
 }
@@ -88,6 +93,7 @@ internal fun NodeEditor(
     node: NowhereUrl,
     onSave: (NowhereUrl) -> Unit,
     onBack: () -> Unit,
+    onRemove: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
     var up by remember { mutableStateOf(node.up) }
@@ -215,6 +221,26 @@ internal fun NodeEditor(
             Labelled(stringResource(R.string.field_certificate)) {
                 UnverifiedPanel()
             }
+
+            // Not in the design canvas, which draws every screen populated and
+            // never drawn being undone. An app that can add a node and cannot
+            // remove one is not finished, so this is added in the system's own
+            // vocabulary rather than left as a gap: a plain text action, in the
+            // critical colour, at the end where destructive things belong.
+            Text(
+                text = stringResource(R.string.editor_remove),
+                fontFamily = SomewhereType.Body,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.5.sp,
+                color = colors.critical,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onRemove)
+                        .padding(vertical = 14.dp),
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

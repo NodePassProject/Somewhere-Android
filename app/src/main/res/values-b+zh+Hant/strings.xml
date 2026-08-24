@@ -153,4 +153,7 @@
     <string name="subscription_http_status">訂閱回傳了 HTTP %1$d。</string>
     <string name="subscription_exhausted">這個訂閱已到期或流量超量 — 服務商已移除它的節點。</string>
     <string name="subscription_unreadable">無法讀取訂閱的回應內容。</string>
+
+    <string name="editor_remove">刪除這個節點</string>
+    <string name="editor_removed">已刪除。</string>
 </resources>

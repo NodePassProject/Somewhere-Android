@@ -190,4 +190,7 @@
     <string name="subscription_http_status">The subscription returned HTTP %1$d.</string>
     <string name="subscription_exhausted">This subscription has expired or is out of quota — your provider has removed its nodes.</string>
     <string name="subscription_unreadable">The subscription\'s response could not be read.</string>
+
+    <string name="editor_remove">Remove this node</string>
+    <string name="editor_removed">Removed.</string>
 </resources>

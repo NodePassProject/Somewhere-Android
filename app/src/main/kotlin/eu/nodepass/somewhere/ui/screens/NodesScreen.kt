@@ -24,6 +24,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -57,6 +60,7 @@ import eu.nodepass.somewhere.ui.state.NodeEntry
 import eu.nodepass.somewhere.ui.state.NodeStatus
 import eu.nodepass.somewhere.ui.state.SubscriptionState
 import eu.nodepass.somewhere.ui.state.asMessage
+import eu.nodepass.somewhere.ui.state.switchedToTcp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import java.time.Instant
@@ -80,6 +84,12 @@ fun NodesScreen(
     val probes by nodes.probes.collectAsState()
     val record by nodes.subscription.collectAsState()
     val refreshFailure by nodes.lastRefreshFailure.collectAsState()
+
+    // Dismissals are deliberately not persisted. NW-P-25's "Keep as is" is the
+    // user saying "not now", not "never" — and a node that still cannot connect
+    // should say why again next time the list is opened rather than going quiet
+    // forever on the strength of one tap.
+    var dismissedNotices by remember { mutableStateOf(emptySet<String>()) }
 
     val entries =
         stored.map { entry ->
@@ -145,7 +155,14 @@ fun NodesScreen(
             // that could not be reached looked exactly like one that had
             // nothing to say.
             refreshFailure = refreshFailure?.asMessage(),
+            dismissedNotices = dismissedNotices,
             onEdit = onEdit,
+            // NW-P-25: the rewrite happens here, on the user's instruction, and
+            // nowhere else. The requirement is not that the app avoid changing
+            // the configuration — it is that the app never changes it without
+            // being told to.
+            onSwitchToTcp = { entry -> nodes.replace(entry.url, entry.url.switchedToTcp()) },
+            onKeepAsIs = { entry -> dismissedNotices = dismissedNotices + entry.url.toUrl() },
         )
     }
 }
@@ -160,7 +177,10 @@ internal fun NodeList(
     entries: List<NodeEntry>,
     subscription: SubscriptionState? = null,
     refreshFailure: String? = null,
+    dismissedNotices: Set<String> = emptySet(),
     onEdit: (NodeEntry) -> Unit = {},
+    onSwitchToTcp: (NodeEntry) -> Unit = {},
+    onKeepAsIs: (NodeEntry) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -179,7 +199,15 @@ internal fun NodeList(
                 SectionLabel(pluralStringResource(R.plurals.nodes_count, entries.size, entries.size))
             }
         }
-        items(entries, key = { it.url.toUrl() }) { node -> NodeCard(node, onClick = { onEdit(node) }) }
+        items(entries, key = { it.url.toUrl() }) { node ->
+            NodeCard(
+                node = node,
+                onClick = { onEdit(node) },
+                onSwitchToTcp = { onSwitchToTcp(node) },
+                onKeepAsIs = { onKeepAsIs(node) },
+                dismissed = node.url.toUrl() in dismissedNotices,
+            )
+        }
     }
 }
 
@@ -388,6 +416,9 @@ private fun quotaText(usage: SubscriptionUsage): AnnotatedString {
 private fun NodeCard(
     node: NodeEntry,
     onClick: () -> Unit,
+    onSwitchToTcp: () -> Unit = {},
+    onKeepAsIs: () -> Unit = {},
+    dismissed: Boolean = false,
 ) {
     val colors = SomewhereTheme.colors
 
@@ -499,8 +530,11 @@ private fun NodeCard(
             )
         }
 
-        if (node.url.requiresQuic) {
-            NeedsQuicNotice()
+        if (node.url.requiresQuic && !dismissed) {
+            NeedsQuicNotice(
+                onSwitchToTcp = onSwitchToTcp,
+                onKeepAsIs = onKeepAsIs,
+            )
         }
     }
 }
@@ -527,7 +561,10 @@ private fun CarrierChip(
  * their behalf is exactly what the requirement forbids.
  */
 @Composable
-private fun NeedsQuicNotice() {
+private fun NeedsQuicNotice(
+    onSwitchToTcp: () -> Unit,
+    onKeepAsIs: () -> Unit,
+) {
     val colors = SomewhereTheme.colors
     Row(
         modifier =
@@ -560,14 +597,14 @@ private fun NeedsQuicNotice() {
             ) {
                 SmallButton(
                     label = stringResource(R.string.node_switch_to_tcp),
-                    onClick = {},
+                    onClick = onSwitchToTcp,
                     fill = colors.warnAction,
                     contentColor = colors.onWarnAction,
                 )
                 Box(
                     Modifier
                         .height(30.dp)
-                        .clickable {}
+                        .clickable(onClick = onKeepAsIs)
                         .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
