@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Matched by script rather than by region: values-zh-rCN would leave a
+     Simplified-reading user in Singapore on English. See docs/i18n.md. -->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="zh-Hans" />
+    <locale android:name="zh-Hant" />
+</locale-config>

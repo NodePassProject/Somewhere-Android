@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="setup_ready">已连接。</string>
+    <string name="setup_invalid_request">Portal 认为这个请求格式有误，拒绝了它。</string>
+    <string name="setup_metadata_conflict">这个连接的两端对建立方式的理解不一致。</string>
+    <string name="setup_pair_timeout">这个连接的另一半始终没有到达。</string>
+    <string name="setup_flow_limit">这个 Portal 的连接数已满。你的配置没有问题 — 它只是忙。</string>
+    <string name="setup_dial_failed">Portal 无法连接 %1$s。</string>
+    <string name="setup_session_replaced">另一台设备用同一个密钥连接，接管了这个会话。</string>
+    <string name="setup_internal_error">Portal 出错了，但没有说明原因。</string>
+
+    <string name="cert_unverified_short">证书未验证</string>
+    <string name="cert_unverified_detail">这个节点既没有可校验的名称，也没有可固定的指纹，因此证书未经检查即被接受。</string>
+    <string name="cert_unverified_confirm">我知道这个节点的证书不会被检查。</string>
+
+    <string name="node_needs_quic">这个节点需要 QUIC，当前版本还不支持。</string>
+    <string name="node_switch_to_tcp">改用 TCP</string>
+    <string name="node_keep_as_is">保持原样</string>
+
+    <string name="quota_counted">已计 %1$s，共 %2$s</string>
+    <string name="quota_per_portal_note">你的服务商按 Portal 计量流量，因此这个数字可能与你的实际用量不同。</string>
+    <string name="quota_exhausted">已被服务商移除 — 订阅已到期或流量超限</string>
+
+    <plurals name="active_flows">
+        <item quantity="other">%d 条活动连接</item>
+    </plurals>
+</resources>

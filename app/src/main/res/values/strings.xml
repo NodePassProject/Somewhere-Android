@@ -1,4 +1,46 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Somewhere</string>
+    <!-- The brand name is not translated: Chrome is Chrome in every locale, and
+         so is this. Marked explicitly so lint does not ask for a translation
+         that should never exist. -->
+    <string name="app_name" translatable="false">Somewhere</string>
+
+    <!-- Protocol identifiers. Never translated: a user pasting one of these into
+         an issue must match the specification, the source, and another user's
+         log from a different locale. See docs/i18n.md. -->
+    <string name="alpn_default" translatable="false">now/1</string>
+    <string name="scheme_client" translatable="false">nowhere</string>
+
+    <!-- SetupResult explanations. The identifier sits beside these in the layout,
+         never inside them, so it cannot be localised by accident. NW-P-06
+         requires all seven to reach the user distinctly. -->
+    <string name="setup_ready">Connected.</string>
+    <string name="setup_invalid_request">The Portal rejected the request as malformed.</string>
+    <string name="setup_metadata_conflict">The two halves of this connection disagreed about how it was set up.</string>
+    <string name="setup_pair_timeout">The other half of this connection never arrived.</string>
+    <string name="setup_flow_limit">This Portal is at its connection limit. Nothing is wrong with your setup — it is busy.</string>
+    <string name="setup_dial_failed">The Portal could not reach %1$s.</string>
+    <string name="setup_session_replaced">Another device connected with this key and took over the session.</string>
+    <string name="setup_internal_error">The Portal failed for a reason it did not explain.</string>
+
+    <!-- Certificate verification, D-11. Persistent, never dismissible. -->
+    <string name="cert_unverified_short">Certificate not verified</string>
+    <string name="cert_unverified_detail">This node carries neither a name to verify nor a fingerprint to pin, so the certificate is accepted without checking.</string>
+    <string name="cert_unverified_confirm">I understand this node\'s certificate will not be checked.</string>
+
+    <!-- NW-P-25: say so, offer the fix, never rewrite what was pasted. -->
+    <string name="node_needs_quic">This node needs QUIC, which this version does not support yet.</string>
+    <string name="node_switch_to_tcp">Switch to TCP</string>
+    <string name="node_keep_as_is">Keep as is</string>
+
+    <!-- Quota. NW-D-02: upload is never shown, upstream does not meter it.
+         NW-D-05: "counted", not "used" — metering is per Portal. -->
+    <string name="quota_counted">%1$s of %2$s counted</string>
+    <string name="quota_per_portal_note">Your provider counts traffic per Portal, so this may differ from what you actually used.</string>
+    <string name="quota_exhausted">Removed by your provider — subscription expired or out of quota</string>
+
+    <plurals name="active_flows">
+        <item quantity="one">%d active flow</item>
+        <item quantity="other">%d active flows</item>
+    </plurals>
 </resources>

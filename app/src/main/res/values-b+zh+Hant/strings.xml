@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Taiwan vocabulary, per docs/i18n.md. Not generated from Simplified by
+     character conversion: the words differ, not just the glyphs. -->
+<resources>
+    <string name="setup_ready">已連線。</string>
+    <string name="setup_invalid_request">Portal 認為這個請求格式有誤，拒絕了它。</string>
+    <string name="setup_metadata_conflict">這個連線的兩端對建立方式的認知不一致。</string>
+    <string name="setup_pair_timeout">這個連線的另一半始終沒有抵達。</string>
+    <string name="setup_flow_limit">這個 Portal 的連線數已滿。你的設定沒有問題 — 它只是忙。</string>
+    <string name="setup_dial_failed">Portal 無法連線 %1$s。</string>
+    <string name="setup_session_replaced">另一台裝置用同一把金鑰連線，接管了這個工作階段。</string>
+    <string name="setup_internal_error">Portal 發生錯誤，但沒有說明原因。</string>
+
+    <string name="cert_unverified_short">憑證未驗證</string>
+    <string name="cert_unverified_detail">這個節點既沒有可驗證的名稱，也沒有可釘選的指紋，因此憑證未經檢查即被接受。</string>
+    <string name="cert_unverified_confirm">我了解這個節點的憑證不會被檢查。</string>
+
+    <string name="node_needs_quic">這個節點需要 QUIC，目前版本尚未支援。</string>
+    <string name="node_switch_to_tcp">改用 TCP</string>
+    <string name="node_keep_as_is">維持原樣</string>
+
+    <string name="quota_counted">已計 %1$s，共 %2$s</string>
+    <string name="quota_per_portal_note">你的服務商按 Portal 計量流量，因此這個數字可能與你的實際用量不同。</string>
+    <string name="quota_exhausted">已被服務商移除 — 訂閱已到期或流量超量</string>
+
+    <plurals name="active_flows">
+        <item quantity="other">%d 條連線</item>
+    </plurals>
+</resources>
