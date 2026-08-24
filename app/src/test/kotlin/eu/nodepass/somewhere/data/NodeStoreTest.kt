@@ -212,6 +212,72 @@ class NodeStoreTest {
     }
 
     @Test
+    fun aFeedThatListsTheSameNodeTwiceStillProducesOneNode() {
+        // Dashboards do repeat themselves — the same Portal under two names, or
+        // a feed concatenated from two sources. A list that grows by one every
+        // refresh is the kind of bug nobody reports until they have forty.
+        val store = store()
+        val after = store.reconcileWithFeed(listOf(node(frankfurt), node(frankfurt), node(singapore)))
+        assertEquals(2, after.size)
+    }
+
+    @Test
+    fun refreshingRepeatedlyWithTheSameFeedIsIdempotent() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt), node(singapore)))
+        store.reconcileWithFeed(listOf(node(frankfurt), node(singapore)))
+        val after = store.reconcileWithFeed(listOf(node(frankfurt), node(singapore)))
+        assertEquals(2, after.size)
+        assertTrue(after.all { it.origin == NodeStore.Origin.Subscription })
+    }
+
+    @Test
+    fun aFeedNodeThatDuplicatesAManualOneDoesNotCreateASecond() {
+        // And the manual one stays manual: the user added it, so a feed that
+        // happens to also list it does not acquire the right to remove it.
+        val store = store()
+        store.add(node(frankfurt), NodeStore.Origin.Manual)
+        val after = store.reconcileWithFeed(listOf(node(frankfurt)))
+        assertEquals(1, after.size)
+        assertEquals(NodeStore.Origin.Manual, after.single().origin)
+    }
+
+    @Test
+    fun aFileWithWindowsLineEndingsStillParses() {
+        // A subscription pasted through a desktop editor, or a store file moved
+        // between machines. A stray carriage return at the end of a URL makes it
+        // a different URL, and the node silently disappears.
+        val file = File(folder.root, "nodes/nodes.txt")
+        file.parentFile.mkdirs()
+        file.writeText("$frankfurt\r\n$singapore\r\n")
+        val loaded = NodeStore(file).load()
+        assertEquals(2, loaded.size)
+        assertEquals("fra04.example.net", loaded.first().url.host)
+    }
+
+    @Test
+    fun aNodeNameCannotInjectALineOrAnOriginMarker() {
+        // The store is line-based with a tab-separated origin marker, and a
+        // node's display name arrives from whoever wrote the URL. If a name
+        // could carry a tab or a newline it could forge an origin — a manual
+        // node claiming to be from a feed, or a second node entirely.
+        //
+        // It cannot, because toUrl() percent-encodes everything outside the
+        // unreserved set. This asserts that rather than trusting it: the
+        // property lives in the encoder, and the store depends on it.
+        val hostile = "A\tsub\tnowhere://x@evil.example.net:443?up=tcp&down=tcp\nB"
+        val original =
+            node("nowhere://k@h.example.net:443?up=tcp&down=tcp#" + java.net.URLEncoder.encode(hostile, "UTF-8"))
+        val store = store()
+        store.add(original, NodeStore.Origin.Manual)
+
+        val loaded = store.load()
+        assertEquals("one node in, one node out", 1, loaded.size)
+        assertEquals(NodeStore.Origin.Manual, loaded.single().origin)
+        assertEquals("h.example.net", loaded.single().url.host)
+    }
+
+    @Test
     fun replaceKeepsThePositionInTheList() {
         // The node editor edits in place. A node that jumped to the end of the
         // list every time it was saved would be its own bug report.

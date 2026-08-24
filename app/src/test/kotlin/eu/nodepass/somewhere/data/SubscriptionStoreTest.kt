@@ -86,6 +86,34 @@ class SubscriptionStoreTest {
     }
 
     @Test
+    fun aTitleCannotInjectAnotherFieldIntoTheRecord() {
+        // The title comes from the profile-title response header, which is the
+        // dashboard's to set — and the storage format is line-based. A title
+        // carrying a newline and a url= line would rewrite the credential to
+        // point wherever the dashboard liked, and the next refresh would send
+        // the real token there.
+        val store = store()
+        store.save(
+            SubscriptionStore.Record(
+                url = url,
+                title = "Aurora\nurl=https://attacker.example.net/collect",
+                usage = null,
+                fetchedAtEpochMillis = null,
+            ),
+        )
+        assertEquals("the credential must be untouched", url, store.load()!!.url)
+    }
+
+    @Test
+    fun aTitleWithControlCharactersDoesNotCorruptTheRecord() {
+        val store = store()
+        store.save(SubscriptionStore.Record(url, "a\r\nb\u0000c", null, 42))
+        val loaded = store.load()!!
+        assertEquals(url, loaded.url)
+        assertEquals(42L, loaded.fetchedAtEpochMillis)
+    }
+
+    @Test
     fun forgettingRemovesTheCredentialFromDisk() {
         // Not "clears the field" — removes the file. A credential the user has
         // asked the app to forget must not survive in a file with an empty

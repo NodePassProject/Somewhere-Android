@@ -44,13 +44,16 @@ class SubscriptionStore(
     fun load(): Record? {
         if (!file.exists()) return null
         return try {
-            val fields =
-                file
-                    .readLines()
-                    .mapNotNull { line ->
-                        val index = line.indexOf('=')
-                        if (index <= 0) null else line.take(index) to line.substring(index + 1)
-                    }.toMap()
+            // First occurrence wins, not last. `toMap()` keeps the last value
+            // for a repeated key, which is precisely what a field-injection
+            // attempt needs: append a second `url=` line and the real one is
+            // discarded. Taking the first is the second half of the defence,
+            // the first being that values are stripped on write.
+            val fields = LinkedHashMap<String, String>()
+            file.readLines().forEach { line ->
+                val index = line.indexOf('=')
+                if (index > 0) fields.putIfAbsent(line.take(index), line.substring(index + 1))
+            }
 
             val url = fields["url"]?.takeIf { it.isNotBlank() } ?: return null
             val download = fields["download"]?.toLongOrNull()
@@ -72,13 +75,24 @@ class SubscriptionStore(
         }
     }
 
+    /**
+     * Strips anything that could end a line or a field.
+     *
+     * **The title arrives in the `profile-title` response header**, which is the
+     * dashboard's to set, and this format is line-based. A title carrying a
+     * newline and a `url=` line rewrote the stored credential to point wherever
+     * the dashboard liked — and the next refresh would have sent the real token
+     * there. Found by fuzzing the store rather than by review.
+     */
+    private fun oneLine(value: String): String = value.filterNot { it == '\n' || it == '\r' || it.isISOControl() }
+
     fun save(record: Record): Boolean =
         write(
             buildList {
                 // The URL goes first and on its own line so that a truncated
                 // write loses the figures rather than the credential.
-                add("url=${record.url}")
-                record.title?.let { add("title=$it") }
+                add("url=${oneLine(record.url)}")
+                record.title?.let { add("title=${oneLine(it)}") }
                 record.usage?.let { usage ->
                     add("download=${usage.downloadBytes}")
                     usage.totalBytes?.let { add("total=$it") }

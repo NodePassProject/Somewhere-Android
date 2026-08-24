@@ -178,7 +178,13 @@ class NodeStore(
      *   which is the outcome the requirement exists to prevent.
      */
     fun reconcileWithFeed(feed: List<NowhereUrl>): List<Entry> {
-        val fresh = feed.associateBy { it.toUrl() }
+        // Deduplicated first, because dashboards do repeat themselves — the
+        // same Portal under two names, or a feed concatenated from two sources.
+        // Without this a duplicated entry was added twice on the refresh that
+        // introduced it, and a list that grows on its own is the kind of bug
+        // nobody reports until they have forty nodes.
+        val deduplicated = feed.distinctBy { it.toUrl() }
+        val fresh = deduplicated.associateBy { it.toUrl() }
         val existing = load()
         val kept =
             existing.map { entry ->
@@ -189,7 +195,7 @@ class NodeStore(
                 }
             }
         val known = kept.map { it.url.toUrl() }.toSet()
-        val added = feed.filter { it.toUrl() !in known }.map { Entry(it, it.toUrl(), Origin.Subscription) }
+        val added = deduplicated.filter { it.toUrl() !in known }.map { Entry(it, it.toUrl(), Origin.Subscription) }
         saveEntries(kept + added)
         return load()
     }
