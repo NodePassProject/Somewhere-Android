@@ -1,6 +1,7 @@
 # ADR-0001 · How the TLS exporter is obtained
 
-**Status:** accepted, 2026-08-24 · **Decides:** D-03 (`minSdk`)
+**Status:** accepted and **verified against a live Portal**, 2026-08-24 ·
+**Decides:** D-03 (`minSdk`)
 
 ## Context
 
@@ -60,6 +61,43 @@ construction, not for RFC 8446 §7.5. Porting it would therefore mean inheriting
 inserted into `TlsClient.finishHandshake()` before `clearHandshakeState()` nulls
 the transcript and the handshake secret. Conscrypt buys the same capability for
 roughly 2.9 MB per ABI, maintained by Google on top of BoringSSL. Rejected.
+
+## Verification
+
+The decision rested on one unverified claim: that Conscrypt exports the bytes
+Nowhere's authentication actually needs. Inspecting the published AAR proved the
+*method exists*. It could not prove the method produces the right 32 bytes for a
+real handshake — and nothing short of a Portal accepting a real AuthFrame can.
+
+`ExporterAgainstPortalTest` now does that, end to end:
+
+1. A real TLS 1.3 handshake to a real Portal, through Conscrypt, ALPN `now/1`.
+2. Export with Nowhere's label and an **empty but present** context.
+3. Build the 32-byte AuthFrame from those bytes and send it.
+4. Send a FlowHeader and Target, and read the Portal's setup byte.
+
+Step 4 is the proof. Authentication has no response frame — a Portal that
+rejects a tag closes with nothing written, precisely so that failure is not an
+oracle for active probing. So **receiving any valid setup byte at all means the
+AuthFrame was accepted**, which means the exporter was right.
+
+Three further properties are asserted on the same live connection, because each
+is load-bearing and none is visible from the API signature:
+
+- **Two connections produce different exporters.** Without this a captured
+  AuthFrame would replay onto another connection, and the binding that makes
+  Nowhere's authentication worth anything would be absent.
+- **The label participates in the derivation.** A different label yields
+  different bytes.
+- **The context participates.** An empty context and a non-empty one differ,
+  which is what makes "present but empty" a meaningful specification and not a
+  distinction without a difference.
+
+Run them with a Portal from `conformance/scripts/portal-for-tests.sh`. Without
+one they skip rather than fail, so an environment with no Portal reports honestly
+instead of going green on nothing.
+
+**Result: the Conscrypt path works, and `minSdk` 26 stands.**
 
 ## Costs accepted
 

@@ -106,7 +106,15 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coroutines.android)
 
+    // Nowhere's authentication is bound to a TLS exporter, and the platform only
+    // exposes one from API 31. Conscrypt carries the same call down to our
+    // minSdk. See docs/adr-0001-tls-exporter.md.
+    implementation(libs.conscrypt.android)
+
     testImplementation(libs.junit)
+    // The JVM build of the same library, so the exporter can be checked against
+    // a real TLS handshake on the host rather than only on a device.
+    testImplementation(libs.conscrypt.openjdk)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
