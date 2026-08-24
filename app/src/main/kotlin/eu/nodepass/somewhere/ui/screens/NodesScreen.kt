@@ -33,6 +33,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -84,6 +86,7 @@ fun NodesScreen(
     val probes by nodes.probes.collectAsState()
     val record by nodes.subscription.collectAsState()
     val refreshFailure by nodes.lastRefreshFailure.collectAsState()
+    val refreshing by nodes.refreshing.collectAsState()
 
     // Dismissals are deliberately not persisted. NW-P-25's "Keep as is" is the
     // user saying "not now", not "never" — and a node that still cannot connect
@@ -156,6 +159,11 @@ fun NodesScreen(
             // nothing to say.
             refreshFailure = refreshFailure?.asMessage(),
             dismissedNotices = dismissedNotices,
+            refreshing = refreshing,
+            // The header already says how old the figures are. Making that the
+            // control means the affordance sits on the thing it acts on, and
+            // costs no new furniture on a screen the design drew without any.
+            onRefresh = nodes::refreshInBackground,
             onEdit = onEdit,
             // NW-P-25: the rewrite happens here, on the user's instruction, and
             // nowhere else. The requirement is not that the app avoid changing
@@ -178,6 +186,8 @@ internal fun NodeList(
     subscription: SubscriptionState? = null,
     refreshFailure: String? = null,
     dismissedNotices: Set<String> = emptySet(),
+    refreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     onEdit: (NodeEntry) -> Unit = {},
     onSwitchToTcp: (NodeEntry) -> Unit = {},
     onKeepAsIs: (NodeEntry) -> Unit = {},
@@ -188,7 +198,7 @@ internal fun NodeList(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (subscription != null) {
-            item { SubscriptionHeader(subscription) }
+            item { SubscriptionHeader(subscription, refreshing, onRefresh) }
             item { SubscriptionCard(subscription) }
         }
         if (refreshFailure != null) {
@@ -309,7 +319,15 @@ private fun RefreshFailure(message: String) {
 }
 
 @Composable
-private fun SubscriptionHeader(subscription: SubscriptionState) {
+private fun SubscriptionHeader(
+    subscription: SubscriptionState,
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    // The label a screen reader announces, which is the action rather than the
+    // age — "refreshed 4 min ago" describes what it says, not what it does.
+    val refreshLabel = stringResource(R.string.nodes_refresh_now)
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -317,13 +335,23 @@ private fun SubscriptionHeader(subscription: SubscriptionState) {
         SectionLabel(stringResource(R.string.nodes_subscription), Modifier.weight(1f))
         MonoText(
             text =
-                pluralStringResource(
-                    R.plurals.nodes_refreshed_minutes,
-                    subscription.refreshedMinutesAgo,
-                    subscription.refreshedMinutesAgo,
-                ),
-            color = SomewhereTheme.colors.faint,
+                if (refreshing) {
+                    stringResource(R.string.nodes_refreshing)
+                } else {
+                    pluralStringResource(
+                        R.plurals.nodes_refreshed_minutes,
+                        subscription.refreshedMinutesAgo,
+                        subscription.refreshedMinutesAgo,
+                    )
+                },
+            color = if (refreshing) colors.upstream else colors.faint,
             fontSize = 10.5.sp,
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = !refreshing, onClick = onRefresh)
+                    .semantics { contentDescription = refreshLabel }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
         )
     }
 }

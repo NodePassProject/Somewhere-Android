@@ -159,4 +159,7 @@
 
     <string name="diagnostics_empty_title">尚無記錄</string>
     <string name="diagnostics_empty_detail">工作階段執行後，連線結果會出現在這裡。</string>
+
+    <string name="nodes_refreshing">正在重新整理…</string>
+    <string name="nodes_refresh_now">重新整理訂閱</string>
 </resources>

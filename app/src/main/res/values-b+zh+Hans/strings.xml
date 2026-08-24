@@ -157,4 +157,7 @@
 
     <string name="diagnostics_empty_title">还没有记录</string>
     <string name="diagnostics_empty_detail">会话运行后，连接结果会出现在这里。</string>
+
+    <string name="nodes_refreshing">正在刷新…</string>
+    <string name="nodes_refresh_now">刷新订阅</string>
 </resources>

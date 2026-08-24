@@ -196,4 +196,7 @@
 
     <string name="diagnostics_empty_title">Nothing logged yet</string>
     <string name="diagnostics_empty_detail">Connection outcomes appear here once a session has run.</string>
+
+    <string name="nodes_refreshing">refreshing…</string>
+    <string name="nodes_refresh_now">Refresh subscription</string>
 </resources>
