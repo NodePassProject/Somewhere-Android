@@ -102,6 +102,10 @@ crashes when they are violated:
   keep. Copy values from there rather than from a mockup.
 - [`docs/i18n.md`](docs/i18n.md) — English, Simplified and Traditional Chinese,
   matched by script (`values-b+zh+Hans`) rather than by region.
+- [`docs/brand.md`](docs/brand.md) — the brand hue, which carries no protocol
+  meaning and is derived rather than chosen: 280° is what remains once the five
+  meaning-bearing hues each claim 60° of separation. Nothing in the app reads it
+  yet; see D-13.
 
 Two rules from those documents that reach into protocol code:
 

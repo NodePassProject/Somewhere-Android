@@ -76,6 +76,36 @@ data class SomewhereColors(
     val onWarnAction: Color,
     val criticalAction: Color,
     val onCriticalAction: Color,
+    /**
+     * The brand.
+     *
+     * **Not a sixth state colour.** It carries no protocol meaning at all,
+     * which is exactly why it exists: `upstream` was doing double duty as both
+     * "traffic goes this way" and "this is the app's accent", and on the node
+     * list the two appear in one viewport — a teal `UP TCP` chip beside a teal
+     * selected border. A reader can fairly conclude the border means upstream.
+     *
+     * Its hue was not chosen, it was what remained. Five hues already carry
+     * meaning (upstream 185°, good 144°, warn 41°, downstream 30°, critical
+     * 6°), and requiring 60° of separation from every one of them leaves
+     * exactly one window: **245°–306°**. `NowhereDash` owns blue at 217°, so
+     * the low end of that window would read as the dashboard's colour. 280°
+     * clears everything — 95° from upstream, 63° from the dashboard.
+     *
+     * **It never outshouts the protocol state**, and that is asserted rather
+     * than intended. Dark theme puts it at 5.85:1 where `upstream` sits at
+     * 9.15:1; light theme puts it at 5.54:1, which is `upstream`'s figure
+     * exactly. A purple bright enough to match teal in the dark, or dark enough
+     * to beat it on white, would pull the eye away from the one thing a screen
+     * showing protocol state exists to show. The brand is loud on the icon and
+     * the website, not on the node list.
+     *
+     * See `docs/brand.md`.
+     */
+    val brand: Color,
+    val brandTint: Color,
+    val brandLine: Color,
+    val onBrand: Color,
     val isDark: Boolean,
 )
 
@@ -111,6 +141,10 @@ val LightColors: SomewhereColors =
         onWarnAction = Color(0xFFFFFFFF), // 5.37:1
         criticalAction = Color(0xFFA33228),
         onCriticalAction = Color(0xFFFFFFFF), // 6.90:1
+        brand = Color(0xFF991FD6), // 5.54:1 — deliberately the same as upstream's
+        brandTint = Color(0xFFF4E9F9),
+        brandLine = Color(0xFFD4B4E4),
+        onBrand = Color(0xFFFFFFFF), // 5.96:1 on a solid brand fill
         isDark = false,
     )
 
@@ -146,5 +180,9 @@ val DarkColors: SomewhereColors =
         onWarnAction = Color(0xFFD9AC4A), // 6.28:1
         criticalAction = Color(0xFF4A2A26),
         onCriticalAction = Color(0xFFE7EFEF), // 10.90:1
+        brand = Color(0xFFB477D2), // 5.85:1
+        brandTint = Color(0xFF22112B),
+        brandLine = Color(0xFF48235A),
+        onBrand = Color(0xFFE7EFEF), // 10.81:1 on a solid brandLine fill
         isDark = true,
     )

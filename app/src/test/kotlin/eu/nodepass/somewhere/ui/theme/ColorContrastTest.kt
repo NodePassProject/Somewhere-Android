@@ -172,6 +172,56 @@ class ColorContrastTest {
     }
 
     @Test
+    fun theBrandIsReadableOnEveryGroundAndOnItsOwnTint() {
+        eachTheme { theme, c ->
+            assertReadable("$theme brand on ground", c.brand, c.ground)
+            assertReadable("$theme brand on surface", c.brand, c.surface)
+            assertReadable("$theme brand on surfaceAlt", c.brand, c.surfaceAlt)
+            assertReadable("$theme brand on panel", c.brand, c.panel)
+            assertReadable("$theme brand on its tint", c.brand, c.brandTint, AA_LARGE)
+            assertReadable("$theme onBrand", c.onBrand, if (c.isDark) c.brandLine else c.brand)
+        }
+    }
+
+    @Test
+    fun theBrandIsFarEnoughFromEveryHueThatCarriesMeaning() {
+        // The constraint that chose the hue. Five colours already mean
+        // something, and a brand that sits near any of them will be read as
+        // meaning it — a teal-adjacent brand becomes "upstream", an amber one
+        // becomes "downstream". Sixty degrees is the same threshold the two
+        // directions are held to.
+        eachTheme { theme, c ->
+            listOf(
+                "upstream" to c.upstream,
+                "downstream" to c.downstream,
+                "good" to c.good,
+                "warn" to c.warn,
+                "critical" to c.critical,
+            ).forEach { (name, other) ->
+                val separation = hueSeparation(c.brand, other)
+                assertTrue(
+                    "$theme brand is only %.0f° from $name; 60° is the minimum".format(separation),
+                    separation >= 60.0,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun theBrandRecedesBehindTheProtocolState() {
+        // Deliberate, and the reason it is not simply "the loudest colour":
+        // on a screen that is showing which way traffic goes, the thing that
+        // should lead is which way traffic goes. If someone later brightens the
+        // brand past upstream, this says why not.
+        eachTheme { theme, c ->
+            assertTrue(
+                "$theme brand must not outshout upstream on the ground",
+                contrast(c.brand, c.ground) <= contrast(c.upstream, c.ground),
+            )
+        }
+    }
+
+    @Test
     fun theLightThemeIsNotAnInversionOfTheDark() {
         // The whole reason two palettes exist. If someone ever "simplifies" this
         // by reusing one set, this fails and says why.
