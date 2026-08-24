@@ -129,14 +129,15 @@ fun NodesScreen(
 }
 
 /**
- * The list itself, separated from its data source so a preview can render the
- * populated design without a repository behind it.
+ * The list itself, separated from its data source so a preview — and the
+ * design-rule instrumentation suite — can render the populated design without a
+ * repository behind it.
  */
 @Composable
-private fun NodeList(
+internal fun NodeList(
     entries: List<NodeEntry>,
-    subscription: SubscriptionState?,
-    onEdit: (NodeEntry) -> Unit,
+    subscription: SubscriptionState? = null,
+    onEdit: (NodeEntry) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
