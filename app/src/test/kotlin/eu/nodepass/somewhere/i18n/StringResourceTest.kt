@@ -141,7 +141,7 @@ class StringResourceTest {
     }
 
     @Test
-    fun everyDialFailureHasItsOwnTranslatedSentence() {
+    fun everyReachableFailureHasItsOwnTranslatedSentence() {
         // A probe that fails shows this to the user. The first wiring of the
         // node list put `DecodeReason.detail` on the card instead — an English
         // developer string, on a Chinese device, for every failure. These keys
@@ -154,6 +154,10 @@ class StringResourceTest {
                 "dial_pin_mismatch",
                 "dial_no_certificate",
                 "dial_unknown",
+                "subscription_unreachable",
+                "subscription_http_status",
+                "subscription_exhausted",
+                "subscription_unreadable",
             )
         LOCALES.forEach { locale ->
             val present = strings(locale)

@@ -11,10 +11,12 @@ import eu.nodepass.somewhere.subscription.Subscription
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import eu.nodepass.somewhere.subscription.SubscriptionReason
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -55,6 +57,17 @@ class NodeRepository(
     private val fetcher: SubscriptionFetcher,
     private val dialer: NowhereDialer = NowhereDialer(),
     private val io: CoroutineDispatcher,
+    /**
+     * Where work that outlives a screen runs.
+     *
+     * A subscription fetch must not be launched from `rememberCoroutineScope()`:
+     * that scope belongs to the composition, and the import screen closes the
+     * instant the user taps Subscribe. The first version did exactly that, and
+     * the fetch was cancelled before it reached the network — the screen closed,
+     * the node list stayed empty, and nothing anywhere reported a failure,
+     * because nothing had failed. It had been cancelled.
+     */
+    private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val _nodes = MutableStateFlow(store.load())
@@ -79,6 +92,21 @@ class NodeRepository(
     fun refresh() {
         _nodes.value = store.load()
         _subscription.value = subscriptions.load()
+    }
+
+    /** Fire-and-forget [setSubscription], for a caller that is about to go away. */
+    fun subscribe(url: String) {
+        scope.launch { setSubscription(url) }
+    }
+
+    /** Fire-and-forget [refreshSubscription]. */
+    fun refreshInBackground() {
+        scope.launch { refreshSubscription() }
+    }
+
+    /** Fire-and-forget [probe], for the same reason. */
+    fun probeInBackground(node: NowhereUrl) {
+        scope.launch { probe(node) }
     }
 
     /**

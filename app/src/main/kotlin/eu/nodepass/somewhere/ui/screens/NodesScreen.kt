@@ -24,7 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -40,7 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.ProbeResult
+import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.subscription.SubscriptionUsage
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.IconSquare
 import eu.nodepass.somewhere.ui.components.Meter
@@ -53,12 +55,10 @@ import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
 import eu.nodepass.somewhere.ui.state.NodeEntry
 import eu.nodepass.somewhere.ui.state.NodeStatus
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.state.SubscriptionState
 import eu.nodepass.somewhere.ui.state.asMessage
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -78,11 +78,22 @@ fun NodesScreen(
 ) {
     val stored by nodes.nodes.collectAsState()
     val probes by nodes.probes.collectAsState()
-    val scope = rememberCoroutineScope()
+    val record by nodes.subscription.collectAsState()
+    val refreshFailure by nodes.lastRefreshFailure.collectAsState()
 
     val entries =
         stored.map { entry ->
-            NodeEntry(entry.url, probes[entry.url.toUrl()].toStatus())
+            // A node the feed has stopped listing is not a node that failed to
+            // answer. NW-D-04: the reason is expiry or quota, and probing it
+            // would produce a network failure that sends the reader off to
+            // debug entirely the wrong thing.
+            val status =
+                if (entry.origin == NodeStore.Origin.RemovedFromFeed) {
+                    NodeStatus.RemovedByProvider
+                } else {
+                    probes[entry.url.toUrl()].toStatus()
+                }
+            NodeEntry(url = entry.url, status = status)
         }
 
     // Probing on arrival rather than behind a button: a list of nodes with no
@@ -90,11 +101,13 @@ fun NodesScreen(
     // Only nodes never probed in this process are dialled, so returning to the
     // tab does not re-dial the whole list.
     LaunchedEffect(stored) {
-        stored.forEach { entry ->
-            if (probes[entry.url.toUrl()] == null) {
-                scope.launch { nodes.probe(entry.url) }
+        stored
+            .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+            .forEach { entry ->
+                if (probes[entry.url.toUrl()] == null) {
+                    nodes.probeInBackground(entry.url)
+                }
             }
-        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -124,7 +137,16 @@ fun NodesScreen(
             return@Column
         }
 
-        NodeList(entries, subscription = null, onEdit = onEdit)
+        NodeList(
+            entries = entries,
+            subscription = record?.asState(clock = System::currentTimeMillis),
+            // A refresh that failed has to say so here. It was previously kept
+            // in the repository and shown nowhere, which meant a subscription
+            // that could not be reached looked exactly like one that had
+            // nothing to say.
+            refreshFailure = refreshFailure?.asMessage(),
+            onEdit = onEdit,
+        )
     }
 }
 
@@ -137,6 +159,7 @@ fun NodesScreen(
 internal fun NodeList(
     entries: List<NodeEntry>,
     subscription: SubscriptionState? = null,
+    refreshFailure: String? = null,
     onEdit: (NodeEntry) -> Unit = {},
 ) {
     LazyColumn(
@@ -147,6 +170,9 @@ internal fun NodeList(
         if (subscription != null) {
             item { SubscriptionHeader(subscription) }
             item { SubscriptionCard(subscription) }
+        }
+        if (refreshFailure != null) {
+            item { RefreshFailure(refreshFailure) }
         }
         item {
             Box(Modifier.padding(top = if (subscription != null) 8.dp else 0.dp)) {
@@ -196,6 +222,23 @@ private fun EmptyNodeList(onAdd: () -> Unit) {
     }
 }
 
+/**
+ * The stored subscription as the screen's own vocabulary.
+ *
+ * The age of the figures is carried, not dropped. A quota with its age attached
+ * is a measurement; the same quota presented as current is a claim — and this
+ * screen may well be showing numbers fetched before the device went offline.
+ */
+private fun SubscriptionStore.Record.asState(clock: () -> Long): SubscriptionState? {
+    val usage = usage ?: return null
+    val minutes = fetchedAtEpochMillis?.let { ((clock() - it) / 60_000L).coerceAtLeast(0).toInt() } ?: 0
+    return SubscriptionState(
+        title = title ?: "",
+        usage = usage,
+        refreshedMinutesAgo = minutes,
+    )
+}
+
 /** A probe result as the list's own vocabulary. Never probed is not a failure. */
 private fun ProbeResult?.toStatus(): NodeStatus =
     when (this) {
@@ -204,6 +247,38 @@ private fun ProbeResult?.toStatus(): NodeStatus =
         is ProbeResult.Reachable -> NodeStatus.Reachable(handshakeMillis)
         is ProbeResult.Unreachable -> NodeStatus.Unreachable(reason)
     }
+
+@Composable
+private fun RefreshFailure(message: String) {
+    val colors = SomewhereTheme.colors
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.criticalTint)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Icon(SomewhereIcons.AlertTriangle, null, Modifier.size(15.dp), tint = colors.critical)
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text = stringResource(R.string.subscription_refresh_failed),
+                fontFamily = SomewhereType.Body,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.5.sp,
+                color = colors.critical,
+            )
+            Text(
+                text = message,
+                fontFamily = SomewhereType.Body,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = colors.inkMuted,
+            )
+        }
+    }
+}
 
 @Composable
 private fun SubscriptionHeader(subscription: SubscriptionState) {
@@ -269,7 +344,7 @@ private fun SubscriptionCard(subscription: SubscriptionState) {
                 height = 5.dp,
             )
             Text(
-                text = quotaText(),
+                text = quotaText(usage),
                 fontFamily = SomewhereType.Mono,
                 fontSize = 12.sp,
                 color = colors.faint,
@@ -295,9 +370,8 @@ private fun SubscriptionCard(subscription: SubscriptionState) {
  * translation puts it in.
  */
 @Composable
-private fun quotaText(): AnnotatedString {
+private fun quotaText(usage: SubscriptionUsage): AnnotatedString {
     val colors = SomewhereTheme.colors
-    val usage = SampleState.subscription.usage
     val counted = Format.bytesText(usage.downloadBytes)
     val total = usage.totalBytes?.let { Format.bytesText(it) }.orEmpty()
     val full = stringResource(R.string.quota_counted, counted, total)

@@ -144,7 +144,7 @@
     <string name="import_scan_qr_detail">From your provider\'s dashboard</string>
     <string name="import_subscription_link">Subscription link</string>
     <string name="import_subscription_link_detail">Keeps your node list up to date</string>
-    <string name="import_paste_label">Or paste a node link</string>
+    <string name="import_paste_label">Or paste a link</string>
     <string name="import_add_node">Add node</string>
 
     <!-- Settings -->
@@ -177,4 +177,17 @@
     <string name="dial_pin_mismatch">The certificate does not match this node’s pinned fingerprint.</string>
     <string name="dial_no_certificate">The Portal presented no certificate to pin against.</string>
     <string name="dial_unknown">This node could not be reached.</string>
+
+    <string name="import_subscribe">Subscribe</string>
+    <string name="import_subscription_detected">This is a subscription link. Subscribing keeps the node list up to date.</string>
+    <string name="import_subscription_plaintext">This link is not encrypted. A subscription link is a password, and anyone on the network can read it.</string>
+    <string name="import_paste_hint">Paste a link</string>
+    <string name="subscription_refresh_failed">The subscription could not be refreshed.</string>
+
+    <string name="import_subscription_needs_https">A subscription link is a password, so it has to be https. Ask your provider for the https address.</string>
+
+    <string name="subscription_unreachable">The subscription could not be reached.</string>
+    <string name="subscription_http_status">The subscription returned HTTP %1$d.</string>
+    <string name="subscription_exhausted">This subscription has expired or is out of quota — your provider has removed its nodes.</string>
+    <string name="subscription_unreadable">The subscription\'s response could not be read.</string>
 </resources>

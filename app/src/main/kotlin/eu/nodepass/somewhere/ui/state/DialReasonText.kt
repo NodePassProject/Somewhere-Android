@@ -8,6 +8,7 @@ import androidx.compose.ui.res.stringResource
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.net.DialReason
 import eu.nodepass.somewhere.protocol.DecodeReason
+import eu.nodepass.somewhere.subscription.SubscriptionReason
 
 /**
  * A dial failure, as a sentence in the reader's language.
@@ -30,8 +31,18 @@ fun DecodeReason.asMessage(): String =
         is DialReason.AlpnRejected -> stringResource(R.string.dial_alpn_rejected, requested)
         is DialReason.PinMismatch -> stringResource(R.string.dial_pin_mismatch)
         is DialReason.NoCertificate -> stringResource(R.string.dial_no_certificate)
-        // Anything the dialer did not raise itself — a decode failure from
-        // deeper down. There is no honest sentence for a reason this layer does
-        // not know, so it says the one thing it does know.
+
+        // A subscription failure is not a node failure, and rendering it as one
+        // sends the reader to check a node that is fine. NW-D-04 in particular:
+        // an empty feed is an exhausted subscription far more often than it is
+        // a broken one, and it has to say so rather than "could not be reached".
+        is SubscriptionReason.Transport -> stringResource(R.string.subscription_unreachable)
+        is SubscriptionReason.HttpStatus -> stringResource(R.string.subscription_http_status, code)
+        is SubscriptionReason.NoNodes -> stringResource(R.string.subscription_exhausted)
+        is SubscriptionReason.Unusable -> stringResource(R.string.subscription_unreadable)
+
+        // Anything neither layer raised itself — a decode failure from deeper
+        // down. There is no honest sentence for a reason this layer does not
+        // know, so it says the one thing it does know.
         else -> stringResource(R.string.dial_unknown)
     }

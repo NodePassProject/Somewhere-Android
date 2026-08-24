@@ -8,7 +8,9 @@ import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.io.File
 
 /**
@@ -28,6 +30,9 @@ class SomewhereApplication : Application() {
             subscriptions = SubscriptionStore(File(filesDir, "subscription/subscription.txt")),
             fetcher = SubscriptionFetcher(clientVersion = BuildConfig.VERSION_NAME),
             io = Dispatchers.IO,
+            // Application-lifetime, and supervised so one failed fetch does not
+            // take the scope down with it.
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
 }

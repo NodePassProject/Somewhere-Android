@@ -106,7 +106,7 @@
     <string name="import_scan_qr_detail">来自你的服务商面板</string>
     <string name="import_subscription_link">订阅链接</string>
     <string name="import_subscription_link_detail">让节点列表保持最新</string>
-    <string name="import_paste_label">或粘贴一条节点链接</string>
+    <string name="import_paste_label">或粘贴一条链接</string>
     <string name="import_add_node">添加节点</string>
 
     <string name="settings_title">设置</string>
@@ -138,4 +138,17 @@
     <string name="dial_pin_mismatch">证书与这个节点固定的指纹不一致。</string>
     <string name="dial_no_certificate">Portal 没有提供可用于固定的证书。</string>
     <string name="dial_unknown">无法连接这个节点。</string>
+
+    <string name="import_subscribe">订阅</string>
+    <string name="import_subscription_detected">这是一条订阅链接。订阅后节点列表会保持最新。</string>
+    <string name="import_subscription_plaintext">这条链接没有加密。订阅链接等同于密码，网络上的任何人都能读到它。</string>
+    <string name="import_paste_hint">粘贴一条链接</string>
+    <string name="subscription_refresh_failed">订阅刷新失败。</string>
+
+    <string name="import_subscription_needs_https">订阅链接等同于密码，因此必须使用 https。请向你的服务商索取 https 地址。</string>
+
+    <string name="subscription_unreachable">无法连接到订阅。</string>
+    <string name="subscription_http_status">订阅返回了 HTTP %1$d。</string>
+    <string name="subscription_exhausted">这个订阅已到期或流量超限 — 服务商已移除它的节点。</string>
+    <string name="subscription_unreadable">无法读取订阅的响应内容。</string>
 </resources>

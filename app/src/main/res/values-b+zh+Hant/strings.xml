@@ -108,7 +108,7 @@
     <string name="import_scan_qr_detail">來自你的服務商後台</string>
     <string name="import_subscription_link">訂閱連結</string>
     <string name="import_subscription_link_detail">讓節點清單保持最新</string>
-    <string name="import_paste_label">或貼上一條節點連結</string>
+    <string name="import_paste_label">或貼上一條連結</string>
     <string name="import_add_node">新增節點</string>
 
     <string name="settings_title">設定</string>
@@ -140,4 +140,17 @@
     <string name="dial_pin_mismatch">憑證與這個節點釘選的指紋不一致。</string>
     <string name="dial_no_certificate">Portal 沒有提供可用於釘選的憑證。</string>
     <string name="dial_unknown">無法連線這個節點。</string>
+
+    <string name="import_subscribe">訂閱</string>
+    <string name="import_subscription_detected">這是一條訂閱連結。訂閱後節點清單會保持最新。</string>
+    <string name="import_subscription_plaintext">這條連結沒有加密。訂閱連結等同於密碼，網路上的任何人都能讀到它。</string>
+    <string name="import_paste_hint">貼上一條連結</string>
+    <string name="subscription_refresh_failed">訂閱重新整理失敗。</string>
+
+    <string name="import_subscription_needs_https">訂閱連結等同於密碼，因此必須使用 https。請向你的服務商索取 https 位址。</string>
+
+    <string name="subscription_unreachable">無法連線到訂閱。</string>
+    <string name="subscription_http_status">訂閱回傳了 HTTP %1$d。</string>
+    <string name="subscription_exhausted">這個訂閱已到期或流量超量 — 服務商已移除它的節點。</string>
+    <string name="subscription_unreadable">無法讀取訂閱的回應內容。</string>
 </resources>

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,10 +30,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -68,16 +71,20 @@ fun ImportScreen(
 ) {
     val colors = SomewhereTheme.colors
     var acknowledged by remember { mutableStateOf(false) }
+    var typed by remember(link) { mutableStateOf(link.orEmpty()) }
 
-    // The link is parsed once, by the real parser, and whatever it says is what
-    // the screen shows. A link that arrived through the deep link and one the
-    // user pasted go down the same path — there is no second, more forgiving
-    // reader for text the system handed us.
-    val parsed =
-        remember(link) {
-            link?.let { NowhereUrl.parse(it) }
-        }
+    // One field, two outcomes, and the parser decides which. A person holding a
+    // link does not necessarily know whether it is a node or a subscription —
+    // asking them to pick the right box first is asking them to answer a
+    // question the app can answer itself.
+    //
+    // A link that arrived through the deep link and one the user pasted go down
+    // exactly the same path. There is no second, more forgiving reader for text
+    // the system handed us.
+    val parsed = remember(typed) { typed.trim().takeIf { it.isNotEmpty() }?.let { NowhereUrl.parse(it) } }
     val node = (parsed as? DecodeResult.Ok)?.value
+    val subscriptionUrl = remember(typed) { typed.trim().takeIf { it.looksLikeSubscription() } }
+    val plaintext = subscriptionUrl?.startsWith("http://", ignoreCase = true) == true
     val verified = node?.certificateVerification?.isVerified ?: true
 
     Column(Modifier.fillMaxSize()) {
@@ -124,20 +131,83 @@ fun ImportScreen(
                             RoundedCornerShape(10.dp),
                         ).padding(horizontal = 14.dp, vertical = 13.dp),
                 ) {
-                    Text(
-                        text = if (node != null) maskedUrl(node) else AnnotatedString(link.orEmpty()),
-                        fontFamily = SomewhereType.Mono,
-                        fontSize = 12.sp,
-                        lineHeight = 19.2.sp,
-                        color = colors.inkMuted,
-                    )
+                    if (node != null) {
+                        // Once it parses, the key is masked. The field stops
+                        // being an input and becomes a statement of what was
+                        // understood — and a shared key must not sit on screen
+                        // waiting to be screenshotted.
+                        Text(
+                            text = maskedUrl(node),
+                            fontFamily = SomewhereType.Mono,
+                            fontSize = 12.sp,
+                            lineHeight = 19.2.sp,
+                            color = colors.inkMuted,
+                        )
+                    } else {
+                        BasicTextField(
+                            value = typed,
+                            onValueChange = { typed = it },
+                            textStyle =
+                                TextStyle(
+                                    fontFamily = SomewhereType.Mono,
+                                    fontSize = 12.sp,
+                                    lineHeight = 19.2.sp,
+                                    color = colors.inkMuted,
+                                ),
+                            cursorBrush = SolidColor(colors.upstream),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (typed.isEmpty()) {
+                                    Text(
+                                        text = stringResource(R.string.import_paste_hint),
+                                        fontFamily = SomewhereType.Mono,
+                                        fontSize = 12.sp,
+                                        color = colors.faint,
+                                    )
+                                }
+                                inner()
+                            },
+                        )
+                    }
                 }
 
                 // The parser's own reason, verbatim. It distinguishes a wrong
                 // scheme from a bad port from a key with a password component,
                 // and a screen that replaced all three with "invalid link"
                 // would be throwing away the only useful part.
-                (parsed as? DecodeResult.Invalid)?.let { failure ->
+                if (subscriptionUrl != null) {
+                    Text(
+                        text = stringResource(R.string.import_subscription_detected),
+                        fontFamily = SomewhereType.Body,
+                        fontSize = 12.5.sp,
+                        lineHeight = 18.sp,
+                        color = colors.inkMuted,
+                    )
+                    if (plaintext) {
+                        // Refused, not warned about. The URL is the credential:
+                        // over http it is handed to every device between here
+                        // and the dashboard, and the platform blocks the request
+                        // anyway on this target SDK. Warning and then leaving
+                        // the button enabled produced the worst outcome of the
+                        // three — a tap that silently did nothing at all.
+                        Text(
+                            text = stringResource(R.string.import_subscription_plaintext),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = colors.critical,
+                        )
+                        Text(
+                            text = stringResource(R.string.import_subscription_needs_https),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = colors.inkMuted,
+                        )
+                    }
+                }
+
+                (parsed as? DecodeResult.Invalid)?.takeIf { subscriptionUrl == null }?.let { failure ->
                     Text(
                         text = stringResource(R.string.import_invalid),
                         fontFamily = SomewhereType.Body,
@@ -234,7 +304,7 @@ fun ImportScreen(
         // Disabled until the certificate statement has been acknowledged. The
         // affordance stays visible rather than hidden, so the reason the button
         // does nothing is on the screen next to it.
-        val enabled = node != null && (verified || acknowledged)
+        val enabled = (node != null && (verified || acknowledged)) || (subscriptionUrl != null && !plaintext)
         Box(
             Modifier
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
@@ -243,13 +313,29 @@ fun ImportScreen(
                 .clip(RoundedCornerShape(12.dp))
                 .background(if (enabled) colors.primaryAction else colors.surfaceAlt)
                 .clickable(enabled = enabled) {
-                    node?.let(nodes::add)
-                    onClose()
+                    when {
+                        node != null -> {
+                            nodes.add(node)
+                            onClose()
+                        }
+
+                        subscriptionUrl != null -> {
+                            // Fire and leave, on the repository's scope rather
+                            // than the composition's. This screen is about to
+                            // close, and a fetch launched from a scope that
+                            // closes with it is a fetch that never happens.
+                            nodes.subscribe(subscriptionUrl)
+                            onClose()
+                        }
+                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = stringResource(R.string.import_add_node),
+                text =
+                    stringResource(
+                        if (subscriptionUrl != null) R.string.import_subscribe else R.string.import_add_node,
+                    ),
                 fontFamily = SomewhereType.Display,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp,
@@ -258,6 +344,16 @@ fun ImportScreen(
         }
     }
 }
+
+/**
+ * Anything `http`/`https` is treated as a subscription.
+ *
+ * Deliberately shallow: the real validation is `SubscriptionEndpoint.prepare`,
+ * which runs on fetch and has its own reasons for refusing. Duplicating that
+ * judgement here would give two definitions of a valid subscription URL that
+ * can disagree, and the one the user sees would be the weaker of the two.
+ */
+private fun String.looksLikeSubscription(): Boolean = startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)
 
 @Composable
 private fun RowLabel(

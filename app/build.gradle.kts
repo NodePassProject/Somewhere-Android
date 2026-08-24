@@ -112,6 +112,9 @@ dependencies {
     implementation(libs.conscrypt.android)
 
     testImplementation(libs.junit)
+    // Needed by the tests that drive the repository, which is suspend-shaped
+    // because a subscription fetch is a network call.
+    testImplementation(libs.coroutines.test)
     // The JVM build of the same library, so the exporter can be checked against
     // a real TLS handshake on the host rather than only on a device.
     testImplementation(libs.conscrypt.openjdk)
