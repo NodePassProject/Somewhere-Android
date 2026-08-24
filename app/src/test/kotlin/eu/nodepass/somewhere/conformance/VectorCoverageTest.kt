@@ -32,6 +32,7 @@ class VectorCoverageTest {
         val IMPLEMENTED: Map<String, String> =
             mapOf(
                 "auth" to "eu.nodepass.somewhere.protocol.auth.AuthVectorTest",
+                "flowHeader" to "eu.nodepass.somewhere.protocol.frame.FlowHeaderVectorTest",
             )
     }
 
