@@ -22,11 +22,20 @@ comments, everything. Do not emit Chinese in project files.
 | Path | Purpose |
 |---|---|
 | `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36 |
+| `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
 | `docs/` | Architecture, the design system, i18n, brand, and the TLS exporter ADR |
 
-The lwIP / TUN / routing layer is inherited from `NodePassProject/Anywhere-Android`
-(GPL-3.0) at L1; it is not present yet.
+The lwIP layer is inherited from `NodePassProject/Anywhere-Android` (GPL-3.0) at
+**e9a9274, 2026-04-28** — recorded because the donor is under active development
+and fixes landing there will not arrive on their own. The TUN and routing layers
+are not present yet.
+
+**BLAKE3 and libyaml were deliberately not inherited.** The donor's
+`CMakeLists.txt` builds both; BLAKE3 serves a protocol this client does not
+speak and libyaml parses Clash configuration this client does not accept.
+Vendored C is the most expensive code here to review and the least visible when
+it goes wrong.
 
 ## Conventions
 
@@ -170,7 +179,23 @@ Two rules from those documents that reach into protocol code:
     requested ALPN to the generic handshake failure rather than claiming to
     have identified it, and reserves `AlpnRejected` for the case that *is*
     observable: a handshake that completed carrying the wrong protocol.
-12. **Keep both ABIs, for different reasons**: physical devices and local
+12. **lwIP does not call the accept callback on a SYN.** `tcp_listen_input`
+    answers the SYN with a SYN-ACK and leaves the new pcb in `SYN_RCVD`;
+    `TCP_EVENT_ACCEPT` fires from `tcp_process` only when the final ACK
+    arrives. A test that sends a SYN and waits for `onTcpAccept` times out
+    against a working stack, and the timeout is indistinguishable from a
+    library that failed to load. `LwipStackIsAliveTest` therefore completes the
+    whole handshake.
+13. **The donor's patch inventory is incomplete, and its recovery instructions
+    do not work.** `ANYWHERE_PATCHES.md` documents two modifications and says
+    the full set can be found with `grep -rn "Anywhere Patch"`. There are
+    **seven** patch sites using two different markers — `Anywhere patch` with a
+    lowercase p, and `tun2socks patch` — and the documented grep finds three of
+    them. The undocumented four are the ones that make a TUN deployment work at
+    all: the catch-all netif accept in `ip4.c` and `ip6.c`, the wildcard TCP
+    listener in `tcp_in.c`, and the wildcard UDP pcb in `udp.c`. Use
+    `grep -rniE "anywhere patch|tun2socks patch"` instead.
+14. **Keep both ABIs, for different reasons**: physical devices and local
     emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
     The donor project ships only the former.
 

@@ -89,8 +89,18 @@ android {
         }
     }
 
-    // The lwIP / TUN native layer is inherited from Anywhere-Android at L1.
-    // Until then there is no JNI source set, so no externalNativeBuild block.
+    // The lwIP TCP/IP stack, inherited from Anywhere-Android at e9a9274.
+    //
+    // It is the peer stack for the device's own kernel: the VpnService TUN
+    // hands over IP packets, lwIP terminates them, and what comes out the far
+    // side is a stream with a destination — which is the shape the Nowhere
+    // flow layer takes as input.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/jni/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 }
 
 dependencies {

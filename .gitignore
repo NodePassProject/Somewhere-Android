@@ -26,3 +26,7 @@ build/
 .idea/
 __pycache__/
 *.pyc
+
+# CMake's per-ABI working tree. Survives `gradlew clean` by design, which is
+# exactly why it has to be ignored rather than relied on being cleaned.
+.cxx/
