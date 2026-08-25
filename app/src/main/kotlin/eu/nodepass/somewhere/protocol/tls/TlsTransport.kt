@@ -45,6 +45,10 @@ class TlsTransport private constructor(
         length: Int,
     ): Int = input.read(into, offset, length)
 
+    override fun setReadTimeout(millis: Int) {
+        runCatching { socket.soTimeout = millis }
+    }
+
     override fun close() {
         runCatching { socket.close() }
     }

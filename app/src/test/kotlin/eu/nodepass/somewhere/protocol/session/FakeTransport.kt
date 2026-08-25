@@ -29,6 +29,19 @@ class FakeTransport(
      */
     private val silentPeer: Boolean = false,
 ) : Transport {
+    /**
+     * Every read timeout the lane asked for, in order.
+     *
+     * Recorded rather than merely applied because the interesting assertion is
+     * *when* it changes: a deadline that protects setup and then never comes
+     * off closes healthy idle connections.
+     */
+    val readTimeouts: MutableList<Int> = mutableListOf()
+
+    override fun setReadTimeout(millis: Int) {
+        readTimeouts += millis
+    }
+
     private val written = ByteArrayOutputStream()
     private var peer = peerBytes
     private var peerOffset = 0

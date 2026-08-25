@@ -41,6 +41,24 @@ interface Transport : Closeable {
     ): Int
 
     val isOpen: Boolean
+
+    /**
+     * Sets how long a read may block, or zero to wait indefinitely.
+     *
+     * The setup phase needs a deadline: a Portal that accepts a connection and
+     * then says nothing must not hang the caller forever, and upstream answers
+     * a rejected authentication frame with exactly that silence.
+     *
+     * **The data phase needs the opposite.** A tunnel carrying an idle SSH
+     * session, a websocket or a long poll must not close it because nothing
+     * was said for a while; quiet is the normal state of most connections most
+     * of the time. So the deadline is lifted once the flow is open, and this
+     * is the seam that lifts it.
+     *
+     * Default is a no-op so that a fake transport in a test need not implement
+     * a timeout it does not have.
+     */
+    fun setReadTimeout(millis: Int) = Unit
 }
 
 enum class TransportKind {

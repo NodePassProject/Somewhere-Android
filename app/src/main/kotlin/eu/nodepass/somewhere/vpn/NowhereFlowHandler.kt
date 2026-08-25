@@ -90,6 +90,9 @@ class NowhereFlowHandler(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Datagrams, carried as UDP over stream. DNS lands here. */
+    private val udp = UdpRelay(session, pump, scope)
     private val nextId = AtomicLong(1)
     private val connections = ConcurrentHashMap<Long, Connection>()
 
@@ -158,16 +161,7 @@ class NowhereFlowHandler(
         destinationPort: Int,
         isIpv6: Boolean,
         data: ByteArray,
-    ) {
-        // UDP over stream is section 8 of the protocol and its codec is
-        // implemented and vector-checked, but nothing drives it yet. Dropping
-        // is stated rather than silent: a datagram that vanishes with no
-        // explanation is the hardest kind of failure to diagnose from a
-        // device, and DNS is the first thing that will land here.
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
-            Log.v(TAG, "dropping a UDP datagram to port $destinationPort: UoT is not wired yet")
-        }
-    }
+    ) = udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data)
 
     private suspend fun serve(connection: Connection) {
         // The device's first bytes usually arrive before the Portal answers.
@@ -331,6 +325,7 @@ class NowhereFlowHandler(
     }
 
     fun shutdown() {
+        udp.shutdown()
         connections.values.forEach { runCatching { it.flow?.close() } }
         connections.clear()
         scope.cancel()

@@ -137,6 +137,18 @@ class DedicatedTlsLane(
             }
         if (result.isRejection) return invalid(LaneReason.Rejected(result))
 
+        // Setup is over, so the deadline that protected it comes off.
+        //
+        // Until READY the timeout is the only thing between a wrong key and a
+        // hang, because a Portal answers a rejected AuthFrame with silence
+        // rather than a close. Afterwards it is the opposite: a tunnel that
+        // dropped a connection because nothing was said for fifteen seconds
+        // would break every idle SSH session, every websocket and every long
+        // poll — quiet is what most connections do most of the time. Observed
+        // as `downstream pump ended: Read timed out` on a device, on flows
+        // that were perfectly healthy.
+        transport.setReadTimeout(0)
+
         return LaneFlow(flowId, target, kind, result, transport).also { flow = it }.ok()
     }
 

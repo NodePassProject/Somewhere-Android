@@ -215,7 +215,17 @@ Two rules from those documents that reach into protocol code:
     the old pump keeps its 100 ms timer running against the same native stack.
     The symptom was a device that ignored our SYN-ACK and retransmitted its SYN
     forever, on and off, with correct checksums and a correct IP length field.
-17. **Keep both ABIs, for different reasons**: physical devices and local
+17. **The setup deadline must come off once a flow is open.** Before READY the
+    read timeout is the only thing between a wrong shared key and a hang,
+    because a Portal answers a rejected AuthFrame with silence rather than a
+    close (fact above). Afterwards the same deadline closes any connection that
+    goes quiet — which an idle SSH session, a websocket and a long poll all do
+    by design. Verified both ways on a device: with the deadline left in place
+    a target that says nothing for 25 seconds returns `HTTP=000` after 60 and
+    logs `Read timed out`; with it lifted the same request returns `HTTP=200`
+    in 25.0 seconds. `DedicatedTlsLane` calls `transport.setReadTimeout(0)`
+    after a successful setup and never after a rejected one.
+18. **Keep both ABIs, for different reasons**: physical devices and local
     emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
     The donor project ships only the former.
 

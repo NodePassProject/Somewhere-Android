@@ -160,4 +160,45 @@ class DedicatedTlsLaneTest {
     fun theBootstrapDeadlineIsRecorded() {
         assertEquals("NW-P-11", 40, DedicatedTlsLane.BOOTSTRAP_DEADLINE_SECONDS)
     }
+
+    @Test
+    fun theSetupDeadlineIsLiftedOnceTheFlowIsOpen() {
+        // Two opposite requirements, one connection.
+        //
+        // Before READY the read timeout is the only thing between a wrong
+        // shared key and a hang: upstream answers a rejected AuthFrame with
+        // silence rather than a close. After READY the same deadline is a
+        // defect — it closes any connection that goes quiet, which is what an
+        // idle SSH session, a websocket and a long poll all do by design.
+        //
+        // Observed on a device as `downstream pump ended: Read timed out` on
+        // flows that were working perfectly.
+        val (transport, lane) = lane()
+        assertTrue(
+            "no timeout should be touched before the flow opens",
+            transport.readTimeouts.isEmpty(),
+        )
+
+        val opened = lane.open(target, FlowKind.Tcp, flowId = 1u)
+        assertTrue("open should succeed", opened is DecodeResult.Ok)
+        assertEquals(
+            "the lane must clear the read deadline exactly once, after setup",
+            listOf(0),
+            transport.readTimeouts,
+        )
+    }
+
+    @Test
+    fun aRejectedOpenLeavesTheDeadlineInPlace() {
+        // The mirror of the rule above: a lane that never reached READY has no
+        // business relaxing anything, and the connection it holds is about to
+        // be closed anyway.
+        val (transport, lane) = lane(peer = byteArrayOf(SetupResult.FlowLimit.byte.toByte()))
+        val opened = lane.open(target, FlowKind.Tcp, flowId = 1u)
+        assertTrue("open should be rejected", opened is DecodeResult.Invalid)
+        assertTrue(
+            "a rejected open must not clear the deadline: ${transport.readTimeouts}",
+            transport.readTimeouts.isEmpty(),
+        )
+    }
 }
