@@ -77,6 +77,7 @@ fun SomewhereApp(
     nodes: NodeRepository,
     pendingLink: String? = null,
     onLinkHandled: () -> Unit = {},
+    onToggleTunnel: (NowhereUrl) -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -109,6 +110,7 @@ fun SomewhereApp(
                         nodes = nodes,
                         onOpenNodes = { navController.navigate(Tab.Nodes.route) },
                         onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                        onToggleTunnel = onToggleTunnel,
                     )
                 }
                 composable(Tab.Nodes.route) {

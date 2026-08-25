@@ -195,7 +195,27 @@ Two rules from those documents that reach into protocol code:
     all: the catch-all netif accept in `ip4.c` and `ip6.c`, the wildcard TCP
     listener in `tcp_in.c`, and the wildcard UDP pcb in `udp.c`. Use
     `grep -rniE "anywhere patch|tun2socks patch"` instead.
-14. **Keep both ABIs, for different reasons**: physical devices and local
+14. **`nativeTcpWrite` refuses when lwIP's send buffer is full**, and the
+    refusal must be respected. A pump that writes unconditionally loses every
+    refused chunk silently: a 20 MB download arrived **8.8% complete at
+    15 KB/s**, and the tunnel looked like it was working the whole time.
+    Writing only as much as `nativeTcpSndbuf` reports, and waiting on
+    `onTcpSent` when it reports none, takes the same transfer to 20 MB/s with
+    a matching SHA-256. Pinned by
+    `LwipStackIsAliveTest.theSendBufferIsFiniteAndAFullWriteIsRefused`.
+15. **`Socket()` has no file descriptor until it is bound or connected**, so
+    `VpnService.protect()` on a fresh socket protects nothing and returns
+    false. Bind to an ephemeral local address first, protect, then connect —
+    in that order, because after `connect` the routing decision is already
+    made. A JVM test cannot see this: there is no VpnService, `protect` is the
+    default no-op, and the socket connects perfectly well unbound.
+16. **Two threads must never drive lwIP.** It is built `NO_SYS=1`: no locks, no
+    complaint, and the damage shows up somewhere else much later. Starting the
+    tunnel a second time without tearing the first down does exactly that —
+    the old pump keeps its 100 ms timer running against the same native stack.
+    The symptom was a device that ignored our SYN-ACK and retransmitted its SYN
+    forever, on and off, with correct checksums and a correct IP length field.
+17. **Keep both ABIs, for different reasons**: physical devices and local
     emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
     The donor project ships only the former.
 

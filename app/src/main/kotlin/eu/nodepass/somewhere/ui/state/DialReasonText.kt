@@ -31,6 +31,7 @@ fun DecodeReason.asMessage(): String =
         is DialReason.AlpnRejected -> stringResource(R.string.dial_alpn_rejected, requested)
         is DialReason.PinMismatch -> stringResource(R.string.dial_pin_mismatch)
         is DialReason.NoCertificate -> stringResource(R.string.dial_no_certificate)
+        is DialReason.Unprotected -> stringResource(R.string.dial_unprotected)
 
         // A subscription failure is not a node failure, and rendering it as one
         // sends the reader to check a node that is fine. NW-D-04 in particular:

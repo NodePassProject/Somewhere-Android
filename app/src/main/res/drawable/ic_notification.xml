@@ -1,0 +1,25 @@
+<!--
+  The status-bar icon.
+
+  Deliberately not the launcher icon: Android renders a notification's small
+  icon as a silhouette, taking only the alpha channel and tinting the rest, so
+  anything with colour in it arrives as a white blob. This is a single stroke
+  in white on transparent for that reason.
+
+  It is provisional. The brand mark is being drawn separately; when it exists,
+  its silhouette replaces the path below and nothing else here changes.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <!-- One arrow out, one back: the two directions the home screen is built around. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,7h11.2l-2.6,-2.6 1.4,-1.4 5,5 -5,5 -1.4,-1.4 2.6,-2.6h-11.2z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M20,15h-11.2l2.6,-2.6 -1.4,-1.4 -5,5 5,5 1.4,-1.4 -2.6,-2.6h11.2z" />
+</vector>

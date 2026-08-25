@@ -54,6 +54,8 @@ import eu.nodepass.somewhere.ui.state.SessionSnapshot
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import eu.nodepass.somewhere.ui.theme.direction
+import eu.nodepass.somewhere.vpn.TunnelController
+import eu.nodepass.somewhere.vpn.TunnelState
 
 /**
  * Home — the node, the two directions, and the one action.
@@ -69,6 +71,7 @@ fun HomeScreen(
     nodes: NodeRepository,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleTunnel: (NowhereUrl) -> Unit = {},
 ) {
     val stored by nodes.nodes.collectAsState()
     val first = stored.firstOrNull()
@@ -78,10 +81,21 @@ fun HomeScreen(
         return
     }
 
-    // There is no session layer running yet, so the session is reported as
-    // disconnected rather than filled in. A screen that showed throughput
-    // nobody measured would be the one thing this design set out not to do.
-    Home(NodeEntry(first.url), SessionSnapshot.DISCONNECTED, onOpenNodes, onOpenSettings)
+    val tunnel by TunnelController.state.collectAsState()
+
+    // The session figures are still `DISCONNECTED` even when the tunnel is up.
+    // The tunnel carries bytes; nothing counts them yet, and a screen that
+    // showed throughput nobody measured would be the one thing this design set
+    // out not to do. What the button reports is the tunnel's state, which is
+    // measured.
+    Home(
+        node = NodeEntry(first.url),
+        session = SessionSnapshot.DISCONNECTED,
+        tunnel = tunnel,
+        onOpenNodes = onOpenNodes,
+        onOpenSettings = onOpenSettings,
+        onToggleTunnel = { onToggleTunnel(first.url) },
+    )
 }
 
 /** No node to connect to. The one thing to do from here is add one. */
@@ -126,6 +140,8 @@ internal fun Home(
     session: SessionSnapshot,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
+    tunnel: TunnelState = TunnelState.Disconnected,
+    onToggleTunnel: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
     Column(Modifier.fillMaxSize()) {
@@ -230,7 +246,7 @@ internal fun Home(
                     fontSize = 12.sp,
                 )
             }
-            PrimaryAction(connected = session.connected, onClick = onOpenNodes)
+            PrimaryAction(tunnel = tunnel, onClick = onToggleTunnel)
         }
     }
 }
@@ -415,10 +431,16 @@ private fun Fact(
  */
 @Composable
 private fun PrimaryAction(
-    connected: Boolean,
+    tunnel: TunnelState,
     onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
+    val label =
+        when (tunnel) {
+            is TunnelState.Connected -> R.string.action_disconnect
+            is TunnelState.Connecting -> R.string.home_connecting
+            else -> R.string.action_connect
+        }
     Row(
         modifier =
             Modifier
@@ -433,7 +455,7 @@ private fun PrimaryAction(
     ) {
         Icon(SomewhereIcons.Power, null, Modifier.size(19.dp), tint = colors.onPrimaryAction)
         Text(
-            text = stringResource(if (connected) R.string.action_disconnect else R.string.action_connect),
+            text = stringResource(label),
             fontFamily = SomewhereType.Display,
             fontWeight = FontWeight.SemiBold,
             fontSize = 15.sp,

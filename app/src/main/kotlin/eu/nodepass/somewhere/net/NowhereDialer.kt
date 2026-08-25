@@ -73,6 +73,18 @@ sealed interface DialReason : DecodeReason {
                 (negotiated?.let { "'$it'" } ?: "none")
     }
 
+    /**
+     * The socket could not be kept out of our own tunnel.
+     *
+     * Only reachable with a VpnService running. It is a distinct reason rather
+     * than folded into [Unreachable] because the two need opposite responses:
+     * an unreachable Portal is worth retrying, and a Portal that cannot be
+     * dialled without looping through our own TUN is not.
+     */
+    data object Unprotected : DialReason {
+        override val detail: String = "the connection to the Portal could not be kept outside the tunnel"
+    }
+
     data class PinMismatch(
         val expected: String,
         val actual: String,
@@ -118,6 +130,7 @@ sealed interface DialReason : DecodeReason {
 class NowhereDialer(
     private val connectTimeoutMillis: Int = 10_000,
     private val readTimeoutMillis: Int = 15_000,
+    private val protect: (Socket) -> Boolean = { true },
 ) {
     /**
      * One TLS stack, and everything that has to come from the same one.
@@ -244,6 +257,38 @@ class NowhereDialer(
 
         return try {
             val raw = Socket()
+
+            // Bind before protecting, and protect before connecting.
+            //
+            // `Socket()` in Java does not create the underlying file
+            // descriptor: it is materialised on the first bind or connect. And
+            // `VpnService.protect` protects a *descriptor*, so calling it on a
+            // fresh socket protects nothing and returns false. Binding to an
+            // ephemeral local address is the cheapest way to make the
+            // descriptor exist without choosing a destination yet.
+            //
+            // Found on a device, and it presented as the tunnel refusing every
+            // flow the moment it came up. Nothing else could have found it: on
+            // a JVM there is no VpnService, so `protect` is the default no-op
+            // and the socket connects perfectly well unbound.
+            raw.bind(InetSocketAddress(0))
+
+            // Keep this socket out of our own tunnel.
+            //
+            // With a VpnService up and a default route into it, an unprotected
+            // socket to the Portal is routed into the TUN, arrives back at
+            // lwIP, and is dialled again — a loop that presents as a hang
+            // rather than as an error, because every layer involved is working
+            // exactly as told. `protect` must be called here, before `connect`:
+            // afterwards the routing decision has already been made.
+            //
+            // Outside a VpnService the default is a no-op, which is why the
+            // unit tests dial normally.
+            if (!protect(raw)) {
+                raw.close()
+                return DecodeResult.Invalid(DialReason.Unprotected)
+            }
+
             raw.connect(InetSocketAddress(node.host, node.port), connectTimeoutMillis)
             val socket = context.socketFactory.createSocket(raw, verifyAs, node.port, true) as SSLSocket
             socket.soTimeout = readTimeoutMillis

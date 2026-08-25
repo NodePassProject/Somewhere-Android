@@ -176,6 +176,7 @@
     <string name="dial_alpn_rejected">The Portal did not accept ALPN %1$s.</string>
     <string name="dial_pin_mismatch">The certificate does not match this node’s pinned fingerprint.</string>
     <string name="dial_no_certificate">The Portal presented no certificate to pin against.</string>
+    <string name="dial_unprotected">The connection to this node could not be kept outside the tunnel.</string>
     <string name="dial_unknown">This node could not be reached.</string>
 
     <string name="import_subscribe">Subscribe</string>
@@ -199,4 +200,11 @@
 
     <string name="nodes_refreshing">refreshing…</string>
     <string name="nodes_refresh_now">Refresh subscription</string>
+    <string name="notification_channel">Tunnel</string>
+    <string name="notification_connected">Connected</string>
+    <string name="tunnel_no_node">No node was given to connect to.</string>
+    <string name="tunnel_bad_node">This node could not be read.</string>
+    <string name="tunnel_unresolved">This node’s address could not be looked up.</string>
+    <string name="tunnel_no_consent">Android did not grant permission to create a tunnel.</string>
+    <string name="home_connecting">Connecting…</string>
 </resources>

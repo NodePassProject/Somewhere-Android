@@ -224,7 +224,35 @@ class LwipStackIsAliveTest {
                         "lwIP dropped the SYN — a wrong checksum looks identical to a stack that " +
                         "never came up.",
                 )
+        android.util.Log.i("LwipTest", "SYN-ACK ${synAck.joinToString("") { "%02x".format(it) }}")
         assertEquals("the answer is not TCP", 0x06.toByte(), synAck[9])
+
+        // The IP header's own length field agrees with how many bytes the
+        // bridge handed over. A packet whose header claims a different size is
+        // discarded by the receiving kernel without a word, and every other
+        // check here would still pass.
+        val declared = ((synAck[2].toInt() and 0xFF) shl 8) or (synAck[3].toInt() and 0xFF)
+        assertEquals("the IP total-length field disagrees with the packet handed to the TUN", synAck.size, declared)
+
+        // Both checksums, verified the way a kernel verifies them: recomputing
+        // over a packet that already carries its checksum yields zero.
+        //
+        // This is not paranoia about lwIP. It is the one property of an
+        // outgoing packet that nothing else here can see — the test supplies
+        // its own ACK, so a wrong checksum would complete the handshake in
+        // this test and be silently dropped by a real device, which presents
+        // as a connection that retransmits its SYN forever against a tunnel
+        // that looks like it is working.
+        assertEquals("the IP header checksum is wrong", 0, onesComplement(synAck.copyOf(20)))
+        val pseudo =
+            synAck.copyOfRange(12, 20) +
+                byteArrayOf(0x00, 0x06) +
+                byteArrayOf(((synAck.size - 20) shr 8).toByte(), (synAck.size - 20).toByte())
+        assertEquals(
+            "the TCP checksum is wrong",
+            0,
+            onesComplement(pseudo + synAck.copyOfRange(20, synAck.size)),
+        )
         assertEquals(
             "expected SYN|ACK from the listener, got flags 0x%02X".format(synAck[33].toInt() and 0xFF),
             0x12,
@@ -265,5 +293,74 @@ class LwipStackIsAliveTest {
     fun addressFormattingCrossesTheBridge() {
         assertEquals("10.0.0.2", NativeBridge.nativeIpToString(CLIENT, false))
         assertEquals("93.184.216.34", NativeBridge.nativeIpToString(SERVER, false))
+    }
+
+    @Test
+    fun theSendBufferIsFiniteAndAFullWriteIsRefused() {
+        // The property the downstream pump is built on.
+        //
+        // `NowhereFlowHandler.deliver` writes only as much as
+        // `nativeTcpSndbuf` reports and waits when the answer is none. That is
+        // only correct if lwIP actually refuses a write past the buffer rather
+        // than silently truncating or accepting it. The first version of that
+        // pump assumed writes always succeed: a 20 MB download arrived 8.8%
+        // complete at 15 KB/s, every refused write having been a hole in the
+        // stream. Nothing detected it — the tunnel looked like it was working
+        // and the file simply never finished.
+        val accepted = CountDownLatch(1)
+        var connectionPcb = 0L
+
+        NativeBridge.callback =
+            recordingCallback { _, _, _, _ -> accepted.countDown() }
+        NativeBridge.nativeInit()
+        started = true
+
+        // Reuse the handshake, capturing the pcb this time.
+        NativeBridge.callback =
+            object : NativeBridge.LwipCallback by recordingCallback({ _, _, _, _ -> }) {
+                override fun onTcpAccept(
+                    srcIp: ByteArray,
+                    srcPort: Int,
+                    dstIp: ByteArray,
+                    dstPort: Int,
+                    isIpv6: Boolean,
+                    pcb: Long,
+                ): Long {
+                    connectionPcb = pcb
+                    accepted.countDown()
+                    return 1L
+                }
+            }
+
+        send(segment(flags = 0x02, sequence = CLIENT_ISN.toLong(), acknowledgement = 0))
+        val synAck = fromStack.poll(5, TimeUnit.SECONDS) ?: error("no SYN-ACK")
+        send(
+            segment(
+                flags = 0x10,
+                sequence = CLIENT_ISN + 1L,
+                acknowledgement = synAck.readUInt32(24) + 1L,
+            ),
+        )
+        assertTrue("the handshake did not complete", accepted.await(5, TimeUnit.SECONDS))
+
+        val room = NativeBridge.nativeTcpSndbuf(connectionPcb)
+        assertTrue("the send buffer reports no room on a fresh connection: $room", room > 0)
+
+        // Nothing acknowledges anything here, so the buffer only fills. Writing
+        // past it must be refused rather than accepted.
+        val block = ByteArray(4096)
+        var refused = false
+        repeat(2000) {
+            if (!refused && NativeBridge.nativeTcpWrite(connectionPcb, block, 0, block.size) != 0) {
+                refused = true
+            }
+        }
+        assertTrue(
+            "lwIP accepted every write with nothing draining the connection. If that is now " +
+                "genuinely true, NowhereFlowHandler.deliver can stop waiting on sndbuf — but " +
+                "until then it must, and this test is the reason why.",
+            refused,
+        )
+        assertEquals("the send buffer should be exhausted", 0, NativeBridge.nativeTcpSndbuf(connectionPcb))
     }
 }

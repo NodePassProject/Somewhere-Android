@@ -9,6 +9,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- The tunnel has to survive the app being backgrounded, which is the
+         normal case: nobody watches a VPN. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- API 34 requires the permission that matches the declared service type.
+         There is no VPN type in the platform — `ServiceInfo` has sixteen
+         FOREGROUND_SERVICE_TYPE_* constants and none of them is one — so the
+         type is `specialUse` with the subtype named in a property below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- API 33 and up. Without it the service still runs, but its ongoing
+         notification is not shown — leaving a tunnel carrying every packet
+         the device sends with nothing on screen saying so. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".SomewhereApplication"
         android:allowBackup="false"
@@ -42,5 +57,31 @@
                 <data android:scheme="anywhere" />
             </intent-filter>
         </activity>
+        <!-- The tunnel.
+
+             `BIND_VPN_SERVICE` is what makes this a VPN as far as the system is
+             concerned: only a service holding it may call `establish()`, and
+             the permission is enforced against the *system*, which is why it
+             sits here rather than in a uses-permission. Without the
+             intent-filter the consent dialog cannot find the service.
+
+             `specialUse` because the platform has no VPN foreground service
+             type. The subtype property below is the required justification.
+             The donor suppresses lint's ForegroundServiceType check here; that
+             turned out to be unnecessary — with the property present lint is
+             satisfied, and a suppression nobody needs is one nobody questions
+             later. -->
+        <service
+            android:name=".vpn.SomewhereVpnService"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+        </service>
     </application>
 </manifest>

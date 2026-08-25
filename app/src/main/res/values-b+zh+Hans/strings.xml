@@ -137,6 +137,7 @@
     <string name="dial_alpn_rejected">Portal 不接受 ALPN %1$s。</string>
     <string name="dial_pin_mismatch">证书与这个节点固定的指纹不一致。</string>
     <string name="dial_no_certificate">Portal 没有提供可用于固定的证书。</string>
+    <string name="dial_unprotected">到该节点的连接无法保持在隧道之外。</string>
     <string name="dial_unknown">无法连接这个节点。</string>
 
     <string name="import_subscribe">订阅</string>
@@ -160,4 +161,11 @@
 
     <string name="nodes_refreshing">正在刷新…</string>
     <string name="nodes_refresh_now">刷新订阅</string>
+    <string name="notification_channel">隧道</string>
+    <string name="notification_connected">已连接</string>
+    <string name="tunnel_no_node">没有指定要连接的节点。</string>
+    <string name="tunnel_bad_node">无法读取该节点。</string>
+    <string name="tunnel_unresolved">无法解析该节点的地址。</string>
+    <string name="tunnel_no_consent">Android 未授予创建隧道的权限。</string>
+    <string name="home_connecting">连接中…</string>
 </resources>
