@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.ui.screens
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,8 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +61,7 @@ import eu.nodepass.somewhere.ui.theme.SomewhereType
 import eu.nodepass.somewhere.ui.theme.direction
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
+import kotlinx.coroutines.delay
 
 /**
  * Home — the node, the two directions, and the one action.
@@ -83,15 +89,35 @@ fun HomeScreen(
 
     val tunnel by TunnelController.state.collectAsState()
 
-    // The session figures are still `DISCONNECTED` even when the tunnel is up.
-    // The tunnel carries bytes; nothing counts them yet, and a screen that
-    // showed throughput nobody measured would be the one thing this design set
-    // out not to do. What the button reports is the tunnel's state, which is
-    // measured.
+    // The one figure on this screen that is genuinely measurable today, so it
+    // is measured rather than dashed out. Re-read once a second: a duration
+    // that only advances when something else recomposes is a stopped clock
+    // that looks like a running one.
+    var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(tunnel) {
+        val connected = tunnel as? TunnelState.Connected
+        if (connected == null) {
+            elapsedSeconds = 0
+            return@LaunchedEffect
+        }
+        while (true) {
+            elapsedSeconds = (SystemClock.elapsedRealtime() - connected.sinceElapsedRealtime) / 1000
+            delay(1_000)
+        }
+    }
+
+    // The tunnel's state is known; its throughput is not. Nothing counts bytes
+    // yet, so `measured` stays false and every figure renders as an em dash —
+    // rather than as zero, which would claim a measurement that was never
+    // taken. `connected` is real, and the whole screen now agrees about it.
     Home(
         node = NodeEntry(first.url),
-        session = SessionSnapshot.DISCONNECTED,
-        tunnel = tunnel,
+        session =
+            SessionSnapshot.DISCONNECTED.copy(
+                connected = tunnel is TunnelState.Connected,
+                connecting = tunnel is TunnelState.Connecting,
+                connectedSeconds = elapsedSeconds,
+            ),
         onOpenNodes = onOpenNodes,
         onOpenSettings = onOpenSettings,
         onToggleTunnel = { onToggleTunnel(first.url) },
@@ -140,7 +166,6 @@ internal fun Home(
     session: SessionSnapshot,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
-    tunnel: TunnelState = TunnelState.Disconnected,
     onToggleTunnel: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
@@ -197,8 +222,8 @@ internal fun Home(
                 color = colors.direction(upstream = true).figure,
                 tint = colors.direction(upstream = true).tint,
                 carrier = carrierLabel(node.url.up, node.url.mux),
-                bytesPerSecond = session.upstreamBytesPerSecond,
-                ofPeak = session.upstreamOfPeak,
+                bytesPerSecond = session.upstreamBytesPerSecond.takeIf { session.measured },
+                ofPeak = if (session.measured) session.upstreamOfPeak else 0f,
             )
             DirectionCard(
                 label = stringResource(R.string.direction_downstream),
@@ -206,8 +231,8 @@ internal fun Home(
                 color = colors.direction(upstream = false).figure,
                 tint = colors.direction(upstream = false).tint,
                 carrier = carrierLabel(node.url.down, node.url.mux),
-                bytesPerSecond = session.downstreamBytesPerSecond,
-                ofPeak = session.downstreamOfPeak,
+                bytesPerSecond = session.downstreamBytesPerSecond.takeIf { session.measured },
+                ofPeak = if (session.measured) session.downstreamOfPeak else 0f,
             )
         }
 
@@ -246,7 +271,7 @@ internal fun Home(
                     fontSize = 12.sp,
                 )
             }
-            PrimaryAction(tunnel = tunnel, onClick = onToggleTunnel)
+            PrimaryAction(session = session, onClick = onToggleTunnel)
         }
     }
 }
@@ -302,11 +327,12 @@ private fun DirectionCard(
     color: Color,
     tint: Color,
     carrier: String,
-    bytesPerSecond: Long,
+    /** Null when nothing has measured this direction yet — not the same as zero. */
+    bytesPerSecond: Long?,
     ofPeak: Float,
 ) {
     val colors = SomewhereTheme.colors
-    val measured = Format.throughput(bytesPerSecond)
+    val reading = bytesPerSecond?.let(Format::throughput)
     Card(
         padding = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -328,15 +354,15 @@ private fun DirectionCard(
         }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(
-                text = measured.value,
+                text = reading?.value ?: "\u2014",
                 fontFamily = SomewhereType.Mono,
                 fontWeight = FontWeight.Medium,
                 fontSize = 33.sp,
                 lineHeight = 33.sp,
-                color = colors.ink,
+                color = if (reading == null) colors.faint else colors.ink,
             )
             Text(
-                text = measured.unit,
+                text = reading?.unit.orEmpty(),
                 fontFamily = SomewhereType.Mono,
                 fontSize = 13.sp,
                 color = colors.muted,
@@ -360,6 +386,7 @@ private fun SessionFacts(
 ) {
     val colors = SomewhereTheme.colors
     val sessionBytes = Format.bytes(session.sessionBytes)
+    val unmeasured = "\u2014"
     Row(
         modifier =
             modifier
@@ -369,12 +396,22 @@ private fun SessionFacts(
                 .border(1.dp, colors.line, RoundedCornerShape(12.dp)),
         horizontalArrangement = Arrangement.spacedBy(1.dp),
     ) {
-        Fact(Modifier.weight(1f), session.activeFlows.toString(), null, stringResource(R.string.home_stat_active_flows))
-        Fact(Modifier.weight(1f), sessionBytes.value, sessionBytes.unit, stringResource(R.string.home_stat_session))
         Fact(
             Modifier.weight(1f),
-            session.handshakeMillis.toString(),
-            "ms",
+            if (session.measured) session.activeFlows.toString() else unmeasured,
+            null,
+            stringResource(R.string.home_stat_active_flows),
+        )
+        Fact(
+            Modifier.weight(1f),
+            if (session.measured) sessionBytes.value else unmeasured,
+            sessionBytes.unit.takeIf { session.measured },
+            stringResource(R.string.home_stat_session),
+        )
+        Fact(
+            Modifier.weight(1f),
+            if (session.measured) session.handshakeMillis.toString() else unmeasured,
+            "ms".takeIf { session.measured },
             stringResource(R.string.home_stat_handshake),
         )
     }
@@ -431,14 +468,14 @@ private fun Fact(
  */
 @Composable
 private fun PrimaryAction(
-    tunnel: TunnelState,
+    session: SessionSnapshot,
     onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
     val label =
-        when (tunnel) {
-            is TunnelState.Connected -> R.string.action_disconnect
-            is TunnelState.Connecting -> R.string.home_connecting
+        when {
+            session.connected -> R.string.action_disconnect
+            session.connecting -> R.string.home_connecting
             else -> R.string.action_connect
         }
     Row(

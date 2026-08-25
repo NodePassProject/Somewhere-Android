@@ -26,6 +26,15 @@ sealed interface TunnelState {
 
     data class Connected(
         val node: String,
+        /**
+         * When the TUN came up, on the monotonic clock.
+         *
+         * Monotonic rather than wall-clock because this is a duration: a
+         * device that adjusts its clock, or crosses a daylight-saving
+         * boundary, must not make a session appear to have lasted an hour
+         * longer or to have started in the future.
+         */
+        val sinceElapsedRealtime: Long,
     ) : TunnelState
 
     /**

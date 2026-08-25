@@ -76,6 +76,8 @@ object SampleState {
     val session: SessionSnapshot =
         SessionSnapshot(
             connected = true,
+            connecting = false,
+            measured = true,
             upstreamBytesPerSecond = 1_929_379,
             downstreamBytesPerSecond = 13_212_057,
             upstreamOfPeak = 0.62f,

@@ -81,7 +81,30 @@ data class NodeEntry(
 
 @Immutable
 data class SessionSnapshot(
+    /**
+     * The single source of truth for whether the tunnel is up.
+     *
+     * Single deliberately. The home screen once read this for its header and
+     * status dot while its button read the tunnel state directly, and the two
+     * disagreed on screen: "Not connected" above a button offering to
+     * disconnect. One fact needs one field, or a screen can contradict itself
+     * without any code being wrong on its own.
+     */
     val connected: Boolean,
+    /** Between the tap and the TUN. Not [connected], and not disconnected either. */
+    val connecting: Boolean,
+    /**
+     * Whether the figures below were measured.
+     *
+     * Separate from [connected] because the two really are different, and
+     * conflating them produced a screen that contradicted itself: the button
+     * read "Disconnect" while the header read "Not connected" and every figure
+     * read zero. A tunnel can be up with nothing counting its bytes yet, and
+     * "0 B/s" in that state claims a measurement of zero rather than admitting
+     * there is none — which is what `docs/design-system.md` rule 4 forbids.
+     * When false, the screen shows an em dash in place of every figure.
+     */
+    val measured: Boolean,
     val upstreamBytesPerSecond: Long,
     val downstreamBytesPerSecond: Long,
     /** Each direction against its own recent peak. Never against the other's. */
@@ -96,6 +119,8 @@ data class SessionSnapshot(
         val DISCONNECTED =
             SessionSnapshot(
                 connected = false,
+                connecting = false,
+                measured = false,
                 upstreamBytesPerSecond = 0,
                 downstreamBytesPerSecond = 0,
                 upstreamOfPeak = 0f,

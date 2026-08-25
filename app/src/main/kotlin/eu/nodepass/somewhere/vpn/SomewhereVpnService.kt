@@ -220,7 +220,12 @@ class SomewhereVpnService : VpnService() {
         // any flow has reached the Portal. A probe proved the address, the
         // port, TLS and the ALPN; the shared key is only tested when a flow
         // opens, and the Portal answers a wrong key with silence.
-        TunnelController.report(TunnelState.Connected(node.displayName ?: "${node.host}:${node.port}"))
+        TunnelController.report(
+            TunnelState.Connected(
+                node = node.displayName ?: "${node.host}:${node.port}",
+                sinceElapsedRealtime = android.os.SystemClock.elapsedRealtime(),
+            ),
+        )
         Log.i(TAG, "tunnel up via ${node.host}:${node.port}")
     }
 

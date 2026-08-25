@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.ui
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
@@ -178,5 +179,34 @@ class DesignRuleUiTest {
             }
         }
         compose.onNodeWithText(string(R.string.quota_per_portal_note), substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun anUnmeasuredFigureIsADashAndNeverAZero() {
+        // Rule 4 of docs/design-system.md, in the place it was actually broken.
+        //
+        // The tunnel came up before anything counted its bytes, and the home
+        // screen rendered "0 B/s" beside a green "Connected" — a measurement of
+        // zero throughput on a working link, which is a different and worse
+        // claim than "not measured". The same screen simultaneously said "Not
+        // connected" in its header while its button said "Disconnect".
+        //
+        // So this asserts both halves: a connected session with nothing
+        // measured shows dashes, and the screen agrees with itself about being
+        // connected.
+        compose.setContent {
+            SomewhereTheme {
+                Home(
+                    node = SampleState.frankfurt,
+                    session = SampleState.session.copy(connected = true, measured = false),
+                    onOpenNodes = {},
+                    onOpenSettings = {},
+                )
+            }
+        }
+
+        compose.onAllNodesWithText("\u2014").assertCountEquals(5)
+        compose.onNodeWithText(string(R.string.home_connected_to)).assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.action_disconnect)).assertIsDisplayed()
     }
 }
