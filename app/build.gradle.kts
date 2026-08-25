@@ -23,6 +23,12 @@ android {
             }
     }
 
+    // Pinned rather than left to AGP's default, because the default moves with
+    // the plugin and a CI runner carries whatever NDKs its image happened to
+    // ship. An unpinned toolchain is a native build that compiles differently
+    // on two machines and is discovered when one of them crashes.
+    ndkVersion = "28.2.13676358"
+
     defaultConfig {
         applicationId = "eu.nodepass.somewhere"
 
@@ -44,6 +50,13 @@ android {
             // devices and local emulators need, x86_64 is what AVDs on x86 CI
             // runners need. The donor project ships only the former.
             abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+
+        externalNativeBuild {
+            cmake {
+                // lwIP is built NO_SYS: no threads, no locks, one caller.
+                arguments += "-DANDROID_STL=none"
+            }
         }
     }
 

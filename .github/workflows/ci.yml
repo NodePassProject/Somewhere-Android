@@ -27,6 +27,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      # Pinned in app/build.gradle.kts. Runner images carry whatever NDKs they
+      # happened to ship, so relying on one being present is relying on the
+      # image; this makes the requirement explicit and the failure legible.
+      - name: Install the pinned NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;28.2.13676358" "cmake;3.22.1"
+
       - name: Style
         run: ./gradlew ktlintCheck
 
@@ -74,13 +82,17 @@ jobs:
       - name: Verify protocol vectors
         run: python3 conformance/scripts/verify-vectors.py
 
-  ui-rules:
-    name: Design rules on a device
+  on-device:
+    name: Design rules and the native stack, on a device
     runs-on: ubuntu-latest
-    # These assert the rules from docs/design-system.md that nothing crashes
-    # when violated — the certificate marker, the seven distinct rejections,
-    # the two-button QUIC notice, the absence of an upload figure. A unit test
-    # cannot reach them, so the only place they can be checked is on a device.
+    # Two things that a JVM cannot check.
+    #
+    # The design rules from docs/design-system.md — the certificate marker, the
+    # seven distinct rejections, the two-button QUIC notice, the absence of an
+    # upload figure — because nothing crashes when they are violated.
+    #
+    # And the lwIP layer, because a JVM cannot load an .so built for Android:
+    # until this job runs, the whole C layer is code that merely compiled.
     #
     # This is what the x86_64 ABI in app/build.gradle.kts is for: physical
     # devices and local emulators want arm64-v8a, CI runners want x86_64.
@@ -94,6 +106,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      # Pinned in app/build.gradle.kts. Runner images carry whatever NDKs they
+      # happened to ship, so relying on one being present is relying on the
+      # image; this makes the requirement explicit and the failure legible.
+      - name: Install the pinned NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "ndk;28.2.13676358" "cmake;3.22.1"
+
       # KVM has to be enabled explicitly on ubuntu-latest, or the emulator
       # falls back to software rendering and takes long enough to time out.
       - name: Enable KVM
@@ -103,7 +123,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Design rules
+      - name: Device tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 31
