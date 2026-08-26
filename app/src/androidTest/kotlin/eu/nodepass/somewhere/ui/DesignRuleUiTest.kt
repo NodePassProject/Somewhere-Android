@@ -47,6 +47,16 @@ class DesignRuleUiTest {
 
     private fun string(id: Int) = context.getString(id)
 
+    /**
+     * What a `SectionLabel` actually renders: the string, uppercased.
+     *
+     * Asserting the raw resource instead is a test that passes on a Chinese
+     * device — where `uppercase()` is a no-op — and fails on an English one.
+     * That has now cost two red builds, so the rendered form has a name and
+     * every section-label assertion goes through it.
+     */
+    private fun sectionLabel(id: Int) = string(id).uppercase()
+
     @Test
     fun theCertificateMarkerIsOnTheHomeScreenAndCannotBeDismissed() {
         // D-11 / NW-P-09. Every URL a current dashboard emits has neither `sni`
@@ -84,12 +94,10 @@ class DesignRuleUiTest {
                 Home(SampleState.frankfurt, SampleState.session, {}, {})
             }
         }
-        // Uppercased, because that is what a section label renders as. Asserting
-        // the raw string passed on a Chinese device — where uppercase() is a
-        // no-op — and failed on an English one. The rendered form is the thing
-        // under test, so it is the thing asserted.
-        compose.onNodeWithText(string(R.string.direction_upstream).uppercase()).assertIsDisplayed()
-        compose.onNodeWithText(string(R.string.direction_downstream).uppercase()).assertIsDisplayed()
+        // The rendered form is the thing under test, so it is the thing
+        // asserted; see sectionLabel().
+        compose.onNodeWithText(sectionLabel(R.string.direction_upstream)).assertIsDisplayed()
+        compose.onNodeWithText(sectionLabel(R.string.direction_downstream)).assertIsDisplayed()
     }
 
     @Test
@@ -206,7 +214,7 @@ class DesignRuleUiTest {
         }
 
         compose.onAllNodesWithText("\u2014").assertCountEquals(5)
-        compose.onNodeWithText(string(R.string.home_connected_to)).assertIsDisplayed()
+        compose.onNodeWithText(sectionLabel(R.string.home_connected_to)).assertIsDisplayed()
         compose.onNodeWithText(string(R.string.action_disconnect)).assertIsDisplayed()
     }
 }
