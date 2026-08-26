@@ -115,7 +115,7 @@ class MuxShardSetTest {
         assertEquals(MuxHeader.SHARD_FLOW_THRESHOLD - 1, first.activeFlowCount)
         assertEquals(1, second.activeFlowCount)
 
-        val chosen = (shards.place() as DecodeResult.Ok).value
+        val chosen = (shards.place() as DecodeResult.Ok).value.carrier
         assertNotSame("the busiest carrier with room must not be chosen", first, chosen)
         assertEquals("the least-loaded one is", 1, chosen.activeFlowCount)
         assertEquals("and nothing new was opened", 3, shards.liveShardCount)
@@ -185,7 +185,7 @@ class MuxShardSetTest {
         val (carrier, _) = openOne(shards)
         carrier.close()
 
-        val next = (shards.place() as DecodeResult.Ok).value
+        val next = (shards.place() as DecodeResult.Ok).value.carrier
         assertNotSame("a dead carrier must not be handed out", carrier, next)
         assertTrue(next.isOpen)
         assertEquals("and the dead one is gone", 1, shards.liveShardCount)
@@ -201,6 +201,26 @@ class MuxShardSetTest {
         carriers.forEach { assertTrue("every carrier closes with the set", !it.isOpen) }
         assertEquals(0, shards.liveShardCount)
         assertTrue(shards.place() is DecodeResult.Invalid)
+    }
+
+    @Test
+    fun aPlacementReservesItsSlotBeforeItReturnsRatherThanAfterTheLockIsReleased() {
+        // `place` promises "the carrier a new flow should open on, with a slot
+        // reserved on it". It did not: the reservation happened in `placing`,
+        // after the lock had been released, so two threads could be handed the
+        // same carrier at the same load and both count as the flow that filled
+        // it. The burst test above only fails when the interleaving is unlucky;
+        // this one states the invariant, so it fails every time.
+        //
+        // The placements are deliberately never released: a reservation is
+        // held until its flow is open or has failed, and holding four is
+        // exactly the state a fifth flow arrives into.
+        val shards = shardSet()
+        repeat(MuxHeader.SHARD_FLOW_THRESHOLD) { shards.place() }
+        assertEquals("four placements fill one shard", 1, shards.liveShardCount)
+
+        shards.place()
+        assertEquals("the fifth does not fit on a full shard", 2, shards.liveShardCount)
     }
 
     @Test

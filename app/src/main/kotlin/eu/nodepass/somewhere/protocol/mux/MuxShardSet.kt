@@ -108,20 +108,32 @@ class MuxShardSet(
      * than it is, forever, and nothing reports it.
      */
     fun <T : Any> placing(open: (MuxCarrier, MuxCarrier.Slot) -> DecodeResult<T>): DecodeResult<T> {
-        val carrier =
+        val placement =
             when (val placed = place()) {
                 is DecodeResult.Ok -> placed.value
                 is DecodeResult.Invalid -> return placed
             }
-        val slot = carrier.reserve()
         return try {
-            open(carrier, slot)
+            open(placement.carrier, placement.slot)
         } finally {
             // A no-op when `open` already released it at registration, which is
             // the ordinary case. This is for the paths that never got there.
-            carrier.release(slot)
+            placement.carrier.release(placement.slot)
         }
     }
+
+    /**
+     * A carrier chosen for a flow, with that flow's slot already held on it.
+     *
+     * The slot is part of the return value rather than something the caller
+     * takes afterwards, because "afterwards" is outside the lock: two callers
+     * would read the same load, both be handed the same carrier, and both count
+     * as the flow that filled it.
+     */
+    data class Placement(
+        val carrier: MuxCarrier,
+        val slot: MuxCarrier.Slot,
+    )
 
     /**
      * The carrier a new flow should open on, with a slot reserved on it.
@@ -132,10 +144,18 @@ class MuxShardSet(
      * four has room, and first-fit would leave it idle while opening another
      * connection.
      *
-     * Every call must be paired with [release]. Prefer [placing], which cannot
-     * be called out of balance.
+     * The slot is taken **under the same lock** that chose the carrier. It was
+     * not, once: the choice was made under the lock and the reservation was
+     * taken after it was released, so between the two any number of other
+     * placements could read the carrier at its old load and pick it as well.
+     * The burst test only caught that when the interleaving was unlucky;
+     * `aPlacementReservesItsSlotBeforeItReturnsRatherThanAfterTheLockIsReleased`
+     * states the invariant directly and caught it every time.
+     *
+     * Every returned [Placement] must reach [MuxCarrier.release]. Prefer
+     * [placing], which cannot be called out of balance.
      */
-    fun place(): DecodeResult<MuxCarrier> {
+    fun place(): DecodeResult<Placement> {
         while (true) {
             // A flag rather than an early exit from the `synchronized` lambda:
             // `return@synchronized` leaves the lambda and then carries straight
@@ -150,7 +170,7 @@ class MuxShardSet(
                     shards
                         .filter { it.load < MuxHeader.SHARD_FLOW_THRESHOLD }
                         .minByOrNull { it.load }
-                if (candidate != null) return candidate.ok()
+                if (candidate != null) return Placement(candidate, candidate.reserve()).ok()
 
                 // Somebody else is already opening one. Wait for them rather
                 // than opening a second: without this, a burst of flows opens a
@@ -180,7 +200,7 @@ class MuxShardSet(
                             return invalid(MuxShardReason.SetClosed)
                         }
                         shards += opened.value
-                        return opened
+                        return Placement(opened.value, opened.value.reserve()).ok()
                     }
                 }
             }
