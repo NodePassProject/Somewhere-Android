@@ -59,9 +59,11 @@ import java.net.InetAddress
  * The fake-IP layer does not help here — the Portal is where the names go, so
  * its own name cannot be one of them.
  *
- * **Every flow is a fresh TLS connection.** That is what L1 is: mux is L2. A
- * page with forty subresources opens forty connections to the Portal, which
- * works and is slow.
+ * **Whether a flow gets its own TLS connection is the node's choice.** A node
+ * carrying `mux=1` multiplexes: a page with forty subresources costs ten
+ * connections rather than forty. Without it, every flow is its own connection,
+ * which works and is slow. The parameter is the user's — or their dashboard's —
+ * and this client does not override it in either direction.
  */
 class SomewhereVpnService : VpnService() {
     companion object {
@@ -239,6 +241,7 @@ class SomewhereVpnService : VpnService() {
         val nowhere =
             NowhereSession(
                 sharedKey = node.sharedKey,
+                mux = node.mux,
                 connect = {
                     when (val transport = dialer.connect(resolved)) {
                         is DecodeResult.Ok -> transport.value
@@ -266,7 +269,7 @@ class SomewhereVpnService : VpnService() {
                 sinceElapsedRealtime = android.os.SystemClock.elapsedRealtime(),
             ),
         )
-        Log.i(TAG, "tunnel up via ${node.host}:${node.port}")
+        Log.i(TAG, "tunnel up via ${node.host}:${node.port}${if (node.mux) " (mux)" else ""}")
     }
 
     /**

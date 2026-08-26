@@ -53,9 +53,18 @@ android {
         // These were being passed on the command line and read by nobody: the
         // script has always set -PnowhereE2ePortal, and until this existed the
         // value went into the build and stopped there.
-        listOf("nowhereE2ePortal", "nowhereE2eKey", "nowhereE2eTarget", "nowhereE2eOrigin").forEach { name ->
-            testInstrumentationRunnerArguments[name] = (project.findProperty(name) as String? ?: "")
-        }
+        // Only when actually supplied. Baking an empty value in would override
+        // the same argument passed at run time as
+        // `-Pandroid.testInstrumentationRunnerArguments.<name>=…`, which is the
+        // form a script uses when it varies a setting between runs — that form
+        // reaches `am instrument` without changing the APK, so it does not
+        // trigger a reinstall, and a reinstall clears the VPN consent grant.
+        listOf("nowhereE2ePortal", "nowhereE2eKey", "nowhereE2eTarget", "nowhereE2eOrigin", "nowhereE2eMux")
+            .forEach { name ->
+                (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }?.let {
+                    testInstrumentationRunnerArguments[name] = it
+                }
+            }
 
         ndk {
             // Two ABIs, for two different reasons: arm64-v8a is what physical

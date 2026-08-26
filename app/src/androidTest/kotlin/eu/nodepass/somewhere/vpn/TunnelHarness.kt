@@ -22,7 +22,17 @@ import java.security.MessageDigest
  * the copy that drifts is the one that stops proving anything.
  */
 object TunnelHarness {
+    /** The large payload, where the size is the point. */
     const val PATH = "/blob.bin"
+
+    /**
+     * A small payload, for the cases that are about counting flows.
+     *
+     * Sixteen concurrent 20 MB fetches saturate an emulator and time out, which
+     * says nothing about how many connections they used — the figure the test
+     * exists to produce.
+     */
+    const val SMALL_PATH = "/small.bin"
 
     private const val STATE_TIMEOUT_MILLIS = 30_000L
     private const val HTTP_TIMEOUT_MILLIS = 60_000
@@ -33,7 +43,8 @@ object TunnelHarness {
         val portal = E2eEnvironment.requirePortal()
         val host = portal.substringBeforeLast(':')
         val port = portal.substringAfterLast(':').toInt()
-        val url = "nowhere://${E2eEnvironment.sharedKey}@$host:$port?up=tcp&down=tcp"
+        val mux = if (E2eEnvironment.mux) "&mux=1" else ""
+        val url = "nowhere://${E2eEnvironment.sharedKey}@$host:$port?up=tcp&down=tcp$mux"
         val node =
             when (val parsed = NowhereUrl.parse(url)) {
                 is DecodeResult.Ok -> parsed.value

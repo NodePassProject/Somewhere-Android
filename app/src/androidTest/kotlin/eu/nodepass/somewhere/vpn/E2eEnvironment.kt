@@ -27,6 +27,15 @@ object E2eEnvironment {
 
     val sharedKey: String get() = argument("nowhereE2eKey") ?: "conformance-smoke-key"
 
+    /**
+     * Whether the tunnel should multiplex.
+     *
+     * The A-phase device cases run under both settings, which is rule 2 of the
+     * run stated as a test: turning Mux on must not have changed what happens
+     * when it is off. Absent means off, matching the protocol's own default.
+     */
+    val mux: Boolean get() = argument("nowhereE2eMux") == "1"
+
     /** `host:port` of a plain HTTP service the Portal can reach. */
     val target: String? get() = argument("nowhereE2eTarget")
 

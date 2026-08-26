@@ -75,21 +75,37 @@ import hashlib, os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SIZE = int(os.environ.get("BLOB_BYTES", "20971520"))
-BLOB = os.urandom(SIZE)
-DIGEST = hashlib.sha256(BLOB).hexdigest()
-print("serving %d bytes, sha256=%s" % (SIZE, DIGEST), flush=True)
+SMALL = int(os.environ.get("SMALL_BYTES", "65536"))
+
+# Two payloads, because the two claims need different sizes. The large one is
+# for "a transfer survives the tunnel intact", where the size is the point. The
+# small one is for "sixteen flows cost four connections", where the size is
+# only a cost — sixteen concurrent 20 MB fetches saturate an emulator and time
+# out, proving nothing about connection counts.
+BODIES = {
+    "/blob.bin": os.urandom(SIZE),
+    "/small.bin": os.urandom(SMALL),
+}
+DIGESTS = {path: hashlib.sha256(body).hexdigest() for path, body in BODIES.items()}
+print("serving %d bytes, sha256=%s" % (SIZE, DIGESTS["/blob.bin"]), flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def do_GET(self):
+        body = BODIES.get(self.path)
+        if body is None:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Length", str(len(BLOB)))
-        self.send_header("X-Content-Sha256", DIGEST)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Sha256", DIGESTS[self.path])
         self.end_headers()
-        self.wfile.write(BLOB)
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass
@@ -180,29 +196,88 @@ grant_vpn_consent || true
 if [ -n "${ALL_CLASSES:-}" ]; then
     CLASSES=""
 else
-    CLASSES="eu.nodepass.somewhere.vpn.FakeIpTunnelTest,eu.nodepass.somewhere.vpn.ThroughputOnDeviceTest"
+    CLASSES="eu.nodepass.somewhere.vpn.FakeIpTunnelTest,eu.nodepass.somewhere.vpn.ThroughputOnDeviceTest,eu.nodepass.somewhere.vpn.ConcurrentFlowsTest"
 fi
 
-( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
-    -PnowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
-    -PnowhereE2eKey="$KEY" \
-    -PnowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
-    -PnowhereE2eTarget="${ORIGIN_IP}:${ORIGIN_PORT}" \
-    ${CLASSES:+-Pandroid.testInstrumentationRunnerArguments.class=$CLASSES} \
-    ) 2>&1 | tail -30
-STATUS=${PIPESTATUS[0]}
+# MUX=0 and MUX=1 are the same case set over the two carriers. Both are run by
+# default: rule 2 of the overnight run is that engaging Mux must not change what
+# happens when it is off, and the only way to know is to run both every time.
+MODES="${MUX_MODES:-0 1}"
+STATUS=0
+
+for MODE in $MODES; do
+    echo
+    echo "--- mux=$MODE ---"
+    # Reinstall before granting, not after. The instrumentation task uninstalls
+    # both APKs when it finishes, so the second mode used to start with no app
+    # on the device at all — the grant then failed against a package that was
+    # not there, and the run reported a missing consent rather than a missing
+    # install. `leaveApksInstalledAfterRun` below stops the uninstall; this
+    # covers the first pass and anything else that removes the app.
+    ( cd "$PROJECT" && ./gradlew --no-daemon installDebug ) >/dev/null 2>&1 \
+        || fail "could not install the app for mux=$MODE"
+    grant_vpn_consent || fail "could not pre-grant VPN consent for mux=$MODE"
+    BEFORE="$(docker logs "$PORTAL_CONTAINER" 2>&1 | wc -l | tr -d ' ')"
+
+    # Runtime arguments rather than -PnowhereE2e*: these reach `am instrument`
+    # without entering the APK, so switching mux mode between runs does not
+    # rebuild and reinstall — and a reinstall clears the consent grant, which is
+    # exactly what happened the first time this loop ran.
+    ARGS="android.testInstrumentationRunnerArguments"
+    ( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
+        -P$ARGS.nowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
+        -P$ARGS.nowhereE2eKey="$KEY" \
+        -P$ARGS.nowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
+        -P$ARGS.nowhereE2eTarget="${ORIGIN_IP}:${ORIGIN_PORT}" \
+        -P$ARGS.nowhereE2eMux="$MODE" \
+        -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
+        ${CLASSES:+-P$ARGS.class=$CLASSES} \
+        ) 2>&1 | tail -25
+    MODE_STATUS=${PIPESTATUS[0]}
+    [ "$MODE_STATUS" -eq 0 ] || STATUS=$MODE_STATUS
+
+    # How many TLS connections the Portal really accepted, counted from the
+    # source ports in its own exchange lines. Neither side can fake this: the
+    # addresses are the ones the Portal's own accept() returned.
+    #
+    #   UP[TCP] 192.168.65.1:57188 -> 172.24.0.3:22077 -> ...
+    #
+    # With Mux, flows share a port; without, each flow has its own.
+    LINES="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$BEFORE" | grep -c "exchange starting" || true)"
+    PORTS="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$BEFORE" \
+        | grep -o "UP\[TCP\] [0-9.]*:[0-9]*" | sort -u | wc -l | tr -d ' ')"
+    echo "mux=$MODE: the Portal served $LINES flow(s) over $PORTS TLS connection(s)"
+    eval "FLOWS_$MODE=$LINES"
+    eval "PORTS_$MODE=$PORTS"
+done
 
 # --- What the Portal saw ---------------------------------------------------
 # The device-side half of the claim is asserted in the test. This is the other
 # half, and it is the one that cannot be faked from the device: a client that
 # resolved the name locally would appear here as an address.
 step "what the Portal was asked to dial"
-DIALLED="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$BEFORE" \
-    | grep -o -- "-> ${ORIGIN_NAME}:${ORIGIN_PORT}" | head -1)"
-docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$BEFORE" | grep "exchange starting" | head -3
+DIALLED="$(docker logs "$PORTAL_CONTAINER" 2>&1 | grep -o -- "-> ${ORIGIN_NAME}:${ORIGIN_PORT}" | head -1)"
+docker logs "$PORTAL_CONTAINER" 2>&1 | grep "exchange starting" | tail -2
 
 [ "$STATUS" -eq 0 ] || fail "the instrumentation test failed (exit $STATUS)"
 [ -n "$DIALLED" ] || fail "the Portal was never asked to dial ${ORIGIN_NAME} — the name did not survive the client"
 
+# --- Did multiplexing actually multiplex? ----------------------------------
+# The arithmetic L2 exists for. Asserted rather than printed, because "fewer
+# connections" is the entire claim and a run that quietly stopped multiplexing
+# would otherwise pass every other check in this script.
+if [ "$MODES" = "0 1" ]; then
+    step "connections per flow"
+    printf '  mux=0: %s flows over %s connections\n' "${FLOWS_0:-?}" "${PORTS_0:-?}"
+    printf '  mux=1: %s flows over %s connections\n' "${FLOWS_1:-?}" "${PORTS_1:-?}"
+
+    [ "${PORTS_1:-0}" -gt 0 ] || fail "no Mux connections were observed at all"
+    [ "${PORTS_1:-0}" -lt "${PORTS_0:-0}" ] \
+        || fail "mux=1 used ${PORTS_1} connections and mux=0 used ${PORTS_0} — multiplexing did nothing"
+    [ "${PORTS_1:-0}" -lt "${FLOWS_1:-0}" ] \
+        || fail "mux=1 opened ${PORTS_1} connections for ${FLOWS_1} flows — that is one per flow"
+fi
+
 echo
-echo "PASS: the device asked for a name, and the Portal was asked to dial that name"
+echo "PASS: the device asked for a name, the Portal was asked to dial that name,"
+echo "      and mux=1 carried the same case set over fewer connections than flows"
