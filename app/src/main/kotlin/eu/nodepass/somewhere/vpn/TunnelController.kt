@@ -59,13 +59,36 @@ sealed interface TunnelState {
  */
 object TunnelController {
     private val mutable = MutableStateFlow<TunnelState>(TunnelState.Disconnected)
+    private val mutableTraffic = MutableStateFlow(TrafficSample.NONE)
 
     val state: StateFlow<TunnelState> = mutable.asStateFlow()
+
+    /**
+     * What the tunnel has carried, published on the same terms as [state].
+     *
+     * Separate from [state] because the two change at different rates — the
+     * state changes a handful of times per session and this changes every
+     * second — and because a screen must be able to say "connected, nothing
+     * measured yet" without either half being wrong.
+     */
+    val traffic: StateFlow<TrafficSample> = mutableTraffic.asStateFlow()
 
     val isEngaged: Boolean
         get() = state.value is TunnelState.Connected || state.value is TunnelState.Connecting
 
     internal fun report(next: TunnelState) {
         mutable.value = next
+        // Anything that is not Connected has carried nothing *yet*, and last
+        // session's figures are not this session's. Cleared here rather than at
+        // each call site, and cleared for Connecting as well as for the two
+        // ends: a reconnect passes through Connecting, and a rate left over
+        // from the previous attempt would be attributed to this one.
+        if (next !is TunnelState.Connected) {
+            mutableTraffic.value = TrafficSample.NONE
+        }
+    }
+
+    internal fun reportTraffic(sample: TrafficSample) {
+        mutableTraffic.value = sample
     }
 }

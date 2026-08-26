@@ -175,7 +175,7 @@ BEFORE="$(docker logs "$PORTAL_CONTAINER" 2>&1 | wc -l | tr -d ' ')"
     -PnowhereE2eKey="$KEY" \
     -PnowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
     -PnowhereE2eTarget="${ORIGIN_IP}:${ORIGIN_PORT}" \
-    -Pandroid.testInstrumentationRunnerArguments.class=eu.nodepass.somewhere.vpn.FakeIpTunnelTest \
+    -Pandroid.testInstrumentationRunnerArguments.class=eu.nodepass.somewhere.vpn.FakeIpTunnelTest,eu.nodepass.somewhere.vpn.ThroughputOnDeviceTest \
     ) 2>&1 | tail -30
 STATUS=${PIPESTATUS[0]}
 

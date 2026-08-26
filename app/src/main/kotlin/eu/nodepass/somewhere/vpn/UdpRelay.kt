@@ -56,6 +56,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class UdpRelay(
     private val session: NowhereSession,
     private val fakeIp: FakeIpPool,
+    /** Shared with the TCP path: one session's throughput is one figure. */
+    private val meter: TrafficMeter,
     private val pump: () -> TunPump?,
     private val scope: CoroutineScope,
 ) {
@@ -202,6 +204,8 @@ class UdpRelay(
             }
 
         relay.flow = flow
+        // The opening write carried this one; the pump never sees it.
+        meter.recordUpstream(framed.size)
         val up = scope.launch { pumpUp(relay, flow) }
         val down = scope.launch { pumpDown(relay, flow) }
         val reaper = scope.launch { reap(relay) }
@@ -232,6 +236,7 @@ class UdpRelay(
                     flow.write(framed)
                     flow.flush()
                 }
+                meter.recordUpstream(framed.size)
                 relay.lastUsed = now()
             }
         } catch (error: Exception) {
@@ -257,6 +262,7 @@ class UdpRelay(
                 val payload = ByteArray(length)
                 if (length > 0 && !readFully(flow, payload, length)) break
 
+                meter.recordDownstream(prefix.size + payload.size)
                 relay.lastUsed = now()
                 // Back to the device from the address it wrote to.
                 pump()?.writeToDevice {

@@ -89,10 +89,11 @@ fun HomeScreen(
 
     val tunnel by TunnelController.state.collectAsState()
 
-    // The one figure on this screen that is genuinely measurable today, so it
-    // is measured rather than dashed out. Re-read once a second: a duration
-    // that only advances when something else recomposes is a stopped clock
-    // that looks like a running one.
+    // Re-read once a second: a duration that only advances when something else
+    // recomposes is a stopped clock that looks like a running one. It is kept
+    // separate from the traffic reading below because it is a different kind of
+    // fact — how long the tunnel has been up is known the moment it comes up,
+    // while a rate needs an interval before it exists at all.
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
     LaunchedEffect(tunnel) {
         val connected = tunnel as? TunnelState.Connected
@@ -106,16 +107,26 @@ fun HomeScreen(
         }
     }
 
-    // The tunnel's state is known; its throughput is not. Nothing counts bytes
-    // yet, so `measured` stays false and every figure renders as an em dash —
-    // rather than as zero, which would claim a measurement that was never
-    // taken. `connected` is real, and the whole screen now agrees about it.
+    // Both figures are measured now. `measured` still comes from the meter
+    // rather than from `connected`, because a tunnel can be up before it has
+    // carried anything, and a rate needs an interval before it is a rate at
+    // all — until then every figure renders as an em dash rather than as zero,
+    // which would claim a measurement that was never taken.
+    val traffic by TunnelController.traffic.collectAsState()
+
     Home(
         node = NodeEntry(first.url),
         session =
             SessionSnapshot.DISCONNECTED.copy(
                 connected = tunnel is TunnelState.Connected,
                 connecting = tunnel is TunnelState.Connecting,
+                measured = traffic.measured,
+                upstreamBytesPerSecond = traffic.upstreamBytesPerSecond,
+                downstreamBytesPerSecond = traffic.downstreamBytesPerSecond,
+                upstreamOfPeak = traffic.upstreamOfPeak,
+                downstreamOfPeak = traffic.downstreamOfPeak,
+                activeFlows = traffic.activeFlows,
+                sessionBytes = traffic.totalBytes,
                 connectedSeconds = elapsedSeconds,
             ),
         onOpenNodes = onOpenNodes,

@@ -19,6 +19,7 @@ import eu.nodepass.somewhere.ui.screens.Home
 import eu.nodepass.somewhere.ui.screens.NodeEditor
 import eu.nodepass.somewhere.ui.screens.NodeList
 import eu.nodepass.somewhere.ui.state.ConnectionLogEntry
+import eu.nodepass.somewhere.ui.state.Format
 import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.state.identifier
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
@@ -216,5 +217,48 @@ class DesignRuleUiTest {
         compose.onAllNodesWithText("\u2014").assertCountEquals(5)
         compose.onNodeWithText(sectionLabel(R.string.home_connected_to)).assertIsDisplayed()
         compose.onNodeWithText(string(R.string.action_disconnect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun aMeasuredFigureIsTheFigureAndNoLongerADash() {
+        // The other half of rule 4, and the half that was untestable until
+        // something counted bytes. A screen that dashes out a figure it *has*
+        // measured is the same defect facing the other way: it withholds a real
+        // measurement, and there is no way for the user to tell that apart from
+        // a tunnel that is not carrying anything.
+        //
+        // The values are the ones a 20 MB transfer produces, so the assertion is
+        // about a figure the screen will really be asked to render rather than a
+        // round number chosen to make formatting easy.
+        compose.setContent {
+            SomewhereTheme {
+                Home(
+                    node = SampleState.frankfurt,
+                    session =
+                        SampleState.session.copy(
+                            connected = true,
+                            measured = true,
+                            downstreamBytesPerSecond = 20L * 1024 * 1024,
+                            upstreamBytesPerSecond = 96 * 1024,
+                            activeFlows = 3,
+                            // Deliberately not the same figure as the rate: with
+                            // both at 20 MB the assertions below matched each
+                            // other's rendering and said nothing about either.
+                            sessionBytes = 37L * 1024 * 1024,
+                            handshakeMillis = 42,
+                        ),
+                    onOpenNodes = {},
+                    onOpenSettings = {},
+                )
+            }
+        }
+
+        compose.onAllNodesWithText("\u2014").assertCountEquals(0)
+        compose.onNodeWithText("3").assertIsDisplayed()
+        compose.onNodeWithText("42").assertIsDisplayed()
+        // 20 MB/s downstream and 96 KB/s upstream, each rendered as its own
+        // number: one averaged figure is the thing this screen exists not to do.
+        compose.onAllNodesWithText(Format.throughput(20L * 1024 * 1024).value).assertCountEquals(1)
+        compose.onAllNodesWithText(Format.throughput(96L * 1024).value).assertCountEquals(1)
     }
 }

@@ -18,6 +18,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -88,6 +90,16 @@ class NowhereFlowHandler(
 
         /** Where a name lookup goes, whichever resolver the device happens to have. */
         const val DNS_PORT = 53
+
+        /**
+         * How often the screen gets a new reading.
+         *
+         * One second: fast enough that a transfer visibly starts and stops,
+         * slow enough that the figure can be read. Shorter intervals make the
+         * rate jitter with whatever the scheduler was doing, which reads as an
+         * unstable connection rather than as a stable measurement.
+         */
+        const val SAMPLE_INTERVAL_MILLIS = 1_000L
     }
 
     /**
@@ -126,6 +138,31 @@ class NowhereFlowHandler(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
+     * Bytes, counted where they actually move.
+     *
+     * At the pumps rather than at the socket: what the home screen is showing
+     * is the traffic this tunnel carried, and TLS record framing is not that.
+     * A monotonic clock, because a rate derived from wall-clock time is wrong
+     * whenever the device adjusts it.
+     */
+    private val meter = TrafficMeter { android.os.SystemClock.elapsedRealtime() }
+
+    /**
+     * Publishes a reading a second.
+     *
+     * One sampler, because sampling is what advances the interval a rate is
+     * measured over — two of them would each see half the traffic and both
+     * would be wrong.
+     */
+    private val sampler =
+        scope.launch {
+            while (isActive) {
+                TunnelController.reportTraffic(meter.sample(activeFlows = session.liveFlowCount))
+                delay(SAMPLE_INTERVAL_MILLIS)
+            }
+        }
+
+    /**
      * Answers name lookups locally, so that a name reaches the Portal.
      *
      * Runs on the lwIP thread, which is safe here in a way that dialling is
@@ -135,7 +172,7 @@ class NowhereFlowHandler(
     private val dns = DnsInterceptor(fakeIp)
 
     /** Datagrams, carried as UDP over stream. Everything DNS cannot answer lands here. */
-    private val udp = UdpRelay(session, fakeIp, pump, scope)
+    private val udp = UdpRelay(session, fakeIp, meter, pump, scope)
     private val nextId = AtomicLong(1)
     private val connections = ConcurrentHashMap<Long, Connection>()
 
@@ -328,7 +365,12 @@ class NowhereFlowHandler(
             }
 
         connection.flow = flow
-        if (first.isNotEmpty()) credit(connection, first.size)
+        if (first.isNotEmpty()) {
+            // Carried in the opening write rather than by the pump, so the pump
+            // never sees it and it would otherwise go uncounted.
+            meter.recordUpstream(first.size)
+            credit(connection, first.size)
+        }
 
         val upstream = scope.launch { pumpUpstream(connection, flow) }
         val downstream = scope.launch { pumpDownstream(connection, flow) }
@@ -348,6 +390,7 @@ class NowhereFlowHandler(
                     flow.write(chunk)
                     flow.flush()
                 }
+                meter.recordUpstream(chunk.size)
                 // Only now: the bytes are on the wire, so the window may reopen.
                 credit(connection, chunk.size)
             }
@@ -367,6 +410,7 @@ class NowhereFlowHandler(
                 val read = withContext(Dispatchers.IO) { flow.read(buffer) }
                 if (read < 0) break
                 if (read == 0) continue
+                meter.recordDownstream(read)
                 if (!deliver(connection, buffer, read)) break
             }
         } catch (error: Exception) {
@@ -465,6 +509,7 @@ class NowhereFlowHandler(
     }
 
     fun shutdown() {
+        sampler.cancel()
         udp.shutdown()
         connections.values.forEach {
             releaseFakeIp(it)
