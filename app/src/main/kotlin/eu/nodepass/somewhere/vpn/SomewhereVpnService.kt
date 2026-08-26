@@ -9,12 +9,14 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
 import eu.nodepass.somewhere.MainActivity
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
@@ -30,18 +32,32 @@ import java.net.InetAddress
  * routing configuration, which is the part that is easy to get subtly wrong and
  * impossible to unit test.
  *
- * ## What this version does not do
+ * ## Names
+ *
+ * The TUN announces **its own resolver**, at [TUN_DNS], and that is what makes
+ * the fake-IP layer work at all. Android's resolver does not simply emit a UDP
+ * packet and let the routing table decide: it asks `netd`, and `netd` queries
+ * the servers configured for the network the app is on. A tunnel that announces
+ * none leaves those queries on the underlying network, where this client never
+ * sees them — the names would be resolved on the device, and every flow would
+ * open to an address again.
+ *
+ * Announcing one has a cost, and it is paid two lines below. [TUN_DNS] exists
+ * nowhere but inside this TUN, so a query that the interceptor declines cannot
+ * simply be forwarded to where it was addressed. The device's **own** resolvers
+ * are therefore read off the underlying network before the tunnel replaces
+ * them, and the declined queries go there. Choosing a public resolver instead
+ * would be a policy decision a tunnel has no business making; the user's
+ * network already made it.
+ *
+ * ## What this version still does not do
  *
  * **The Portal address is resolved before the TUN comes up, and only once.**
  * Once a default route points into the tunnel, an ordinary `InetAddress` lookup
- * goes through it, reaching lwIP, which has nowhere to send a DNS query — the
- * lookup that would tell us where the Portal is needs the tunnel that needs the
- * Portal. Resolving first and reusing the address avoids the circle for as long
- * as the session lasts; it does not survive the Portal changing address, and it
- * is not a general answer. The general answer is the fake-IP DNS layer, which
- * is next.
- *
- * **UDP is dropped.** See [NowhereFlowHandler.onUdpDatagram].
+ * goes through it. Resolving first and reusing the address avoids the circle for
+ * as long as the session lasts; it does not survive the Portal changing address.
+ * The fake-IP layer does not help here — the Portal is where the names go, so
+ * its own name cannot be one of them.
  *
  * **Every flow is a fresh TLS connection.** That is what L1 is: mux is L2. A
  * page with forty subresources opens forty connections to the Portal, which
@@ -69,6 +85,16 @@ class SomewhereVpnService : VpnService() {
         private const val TUN_PREFIX = 24
         private const val TUN_MTU = 1500
 
+        /**
+         * The resolver this tunnel announces.
+         *
+         * Inside the TUN's own subnet, so a query to it is routed here rather
+         * than anywhere. Nothing listens on it in the ordinary sense — the
+         * packets arrive at lwIP and are answered by
+         * [NowhereFlowHandler.onUdpDatagram].
+         */
+        private const val TUN_DNS = "10.66.0.1"
+
         fun start(
             context: Context,
             node: NowhereUrl,
@@ -91,6 +117,15 @@ class SomewhereVpnService : VpnService() {
     private var pump: TunPump? = null
     private var handler: NowhereFlowHandler? = null
     private var session: NowhereSession? = null
+
+    /**
+     * Names, held for as long as the tunnel is up and no longer.
+     *
+     * Per tunnel rather than per process: a synthetic address means nothing
+     * outside the session that minted it, and a pool that outlived one would
+     * hand the next session mappings whose flows are gone.
+     */
+    private val fakeIp = FakeIpPool()
 
     override fun onStartCommand(
         intent: Intent?,
@@ -174,11 +209,16 @@ class SomewhereVpnService : VpnService() {
             return
         }
 
+        // Read before the tunnel takes DNS over, because afterwards the active
+        // network is this one and its only resolver is the one we announce.
+        val resolvers = underlyingResolvers()
+
         val descriptor =
             Builder()
                 .setSession(getString(R.string.app_name))
                 .addAddress(TUN_ADDRESS, TUN_PREFIX)
                 .addRoute("0.0.0.0", 0)
+                .addDnsServer(TUN_DNS)
                 .setMtu(TUN_MTU)
                 // Blocking reads: a non-blocking TUN returns 0 in a tight loop
                 // and burns a core doing nothing.
@@ -207,7 +247,7 @@ class SomewhereVpnService : VpnService() {
                 },
             )
 
-        val flows = NowhereFlowHandler(nowhere) { pump }
+        val flows = NowhereFlowHandler(nowhere, fakeIp, resolvers) { pump }
         val running = TunPump(descriptor, flows)
 
         session = nowhere
@@ -229,10 +269,29 @@ class SomewhereVpnService : VpnService() {
         Log.i(TAG, "tunnel up via ${node.host}:${node.port}")
     }
 
+    /**
+     * The resolvers the device was using before this tunnel existed.
+     *
+     * Reported as raw octets because that is the shape the relay path needs; an
+     * empty list is an ordinary outcome on a network that advertised none, and
+     * the caller says SERVFAIL rather than pretending otherwise.
+     */
+    private fun underlyingResolvers(): List<ByteArray> {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        val network = manager.activeNetwork ?: return emptyList()
+        val properties = manager.getLinkProperties(network) ?: return emptyList()
+        val servers = properties.dnsServers.mapNotNull { it.address }
+        Log.i(TAG, "${servers.size} resolver(s) will carry the queries we do not answer")
+        return servers
+    }
+
     private fun teardown() {
         pump?.stop()
         handler?.shutdown()
         runCatching { session?.close() }
+        // After the handlers, so that anything still releasing a hold releases
+        // it into a pool that is still there.
+        fakeIp.clear()
         pump = null
         handler = null
         session = null

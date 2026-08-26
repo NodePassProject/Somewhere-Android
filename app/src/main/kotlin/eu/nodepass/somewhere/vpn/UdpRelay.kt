@@ -4,6 +4,8 @@
 package eu.nodepass.somewhere.vpn
 
 import android.util.Log
+import eu.nodepass.somewhere.dns.FakeIpPool
+import eu.nodepass.somewhere.dns.FakeIpResolver
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
@@ -17,14 +19,20 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Datagrams from the device, carried as UDP over stream (NW-P-07).
  *
- * DNS is the reason this exists and the reason it has to be cheap. Nothing
- * resolves without it — a tunnel that carries TCP and drops UDP looks, from
- * the device, exactly like a network with no DNS server, which is to say like
- * a network that is broken in an unrelated way.
+ * DNS is why this had to exist before anything else, and it is now the part
+ * DNS mostly does not use: address lookups are answered on the device by
+ * [eu.nodepass.somewhere.dns.DnsInterceptor], and what arrives here is
+ * everything else — the query types that need a real resolver, and the
+ * ordinary UDP that QUIC and HTTP/3 are made of.
+ *
+ * What has not changed is why it must be cheap. A tunnel that carries TCP and
+ * drops UDP looks, from the device, exactly like a network that is broken in
+ * an unrelated way.
  *
  * ## One flow per four-tuple, and why that is not a choice
  *
@@ -47,6 +55,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class UdpRelay(
     private val session: NowhereSession,
+    private val fakeIp: FakeIpPool,
     private val pump: () -> TunPump?,
     private val scope: CoroutineScope,
 ) {
@@ -79,8 +88,12 @@ class UdpRelay(
     private class Relay(
         val key: Key,
         val isIpv6: Boolean,
+        /** The synthetic address this relay is holding, or null if it holds none. */
+        val heldAddress: ByteArray?,
     ) {
         val outbound = Channel<ByteArray>(capacity = Channel.BUFFERED)
+
+        val released = AtomicBoolean(false)
 
         @Volatile var flow: Flow? = null
 
@@ -93,6 +106,17 @@ class UdpRelay(
     /** Monotonic, because wall-clock time can step backwards and idle time cannot. */
     private fun now(): Long = android.os.SystemClock.elapsedRealtime()
 
+    /**
+     * Takes one datagram from the device.
+     *
+     * [dialAddress] separates *where this goes* from *what the device believes
+     * it is talking to*. They are the same address for ordinary traffic and are
+     * not for DNS: the tunnel announces a resolver inside its own subnet, so a
+     * query the interceptor cannot answer arrives addressed to an address that
+     * exists nowhere but here. It is dialled at a real resolver instead — while
+     * the reply still has to reach the device **from** the announced one, or the
+     * device discards it as an answer from a stranger.
+     */
     fun offer(
         source: ByteArray,
         sourcePort: Int,
@@ -100,6 +124,7 @@ class UdpRelay(
         destinationPort: Int,
         isIpv6: Boolean,
         data: ByteArray,
+        dialAddress: ByteArray = destination,
     ) {
         val key = Key(source.toList(), sourcePort, destination.toList(), destinationPort)
         val existing = relays[key]
@@ -117,15 +142,12 @@ class UdpRelay(
             return
         }
 
+        // A datagram to a synthetic address carries a name too: QUIC and
+        // HTTP/3 reach a host this way, and an address out of the fake range
+        // is one the Portal could not route even if it wanted to.
+        val resolved = FakeIpResolver.resolve(fakeIp, dialAddress, destinationPort)
         val target =
-            when (
-                val decoded =
-                    if (isIpv6) {
-                        Target.ofIpv6(destination, destinationPort)
-                    } else {
-                        Target.ofIpv4(destination, destinationPort)
-                    }
-            ) {
+            when (val decoded = resolved.target) {
                 is DecodeResult.Ok -> decoded.value
                 is DecodeResult.Invalid -> {
                     Log.w(TAG, "not a target: ${decoded.reason.detail}")
@@ -133,7 +155,7 @@ class UdpRelay(
                 }
             }
 
-        val relay = Relay(key, isIpv6)
+        val relay = Relay(key, isIpv6, if (resolved.retained) dialAddress.copyOf() else null)
         relay.lastUsed = now()
         relay.outbound.trySend(data)
         if (relays.putIfAbsent(key, relay) != null) {
@@ -290,12 +312,20 @@ class UdpRelay(
     private fun close(relay: Relay) {
         relays.remove(relay.key, relay)
         relay.outbound.close()
+        releaseFakeIp(relay)
         runCatching { relay.flow?.close() }
+    }
+
+    /** One release per hold, however the relay ends. */
+    private fun releaseFakeIp(relay: Relay) {
+        val address = relay.heldAddress ?: return
+        if (relay.released.compareAndSet(false, true)) fakeIp.release(address)
     }
 
     fun shutdown() {
         relays.values.forEach { relay ->
             relay.outbound.close()
+            releaseFakeIp(relay)
             runCatching { relay.flow?.close() }
         }
         relays.clear()

@@ -82,9 +82,15 @@ export NOWHERE_E2E_TARGET="10.0.2.2:${TARGET_PORT}"
 # VpnService shows a consent dialog. Instrumentation must pre-grant it, otherwise
 # the test hangs on the dialog.
 if [ -n "$APP_ID" ]; then
-    adb shell appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1 \
-        && echo "OK  pre-granted VPN consent for $APP_ID" \
-        || echo "NOTE: pre-grant failed (app may not be installed yet; retry after install)"
+    # `appops` is a standalone binary some images omit; `cmd appops` reaches
+    # the same service through the shell command dispatcher. Trying only the
+    # first was reported as a note and left the run to hang on a consent dialog.
+    if adb shell cmd appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1 ||
+        adb shell appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1; then
+        echo "OK  pre-granted VPN consent for $APP_ID"
+    else
+        echo "NOTE: pre-grant failed (app may not be installed yet; retry after install)"
+    fi
 fi
 
 # --- Run the tests ---------------------------------------------------------

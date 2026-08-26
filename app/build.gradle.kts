@@ -45,6 +45,18 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // Where the device-side end-to-end tests find their host. Passed as
+        // Gradle properties by `conformance/scripts/e2e-android.sh`, and empty
+        // otherwise — a test that needs a Portal skips itself rather than
+        // failing, so `connectedAndroidTest` stays runnable without one.
+        //
+        // These were being passed on the command line and read by nobody: the
+        // script has always set -PnowhereE2ePortal, and until this existed the
+        // value went into the build and stopped there.
+        listOf("nowhereE2ePortal", "nowhereE2eKey", "nowhereE2eTarget", "nowhereE2eOrigin").forEach { name ->
+            testInstrumentationRunnerArguments[name] = (project.findProperty(name) as String? ?: "")
+        }
+
         ndk {
             // Two ABIs, for two different reasons: arm64-v8a is what physical
             // devices and local emulators need, x86_64 is what AVDs on x86 CI
@@ -173,6 +185,11 @@ kover {
                 classes(
                     "eu.nodepass.somewhere.protocol.*",
                     "eu.nodepass.somewhere.subscription.*",
+                    // The DNS layer joins the protocol layer's gate rather than
+                    // the app's, because it is the same kind of code: a parser
+                    // of bytes an untrusted network chose, whose failures are
+                    // silent. It happens not to be Nowhere's own wire format.
+                    "eu.nodepass.somewhere.dns.*",
                 )
             }
             excludes {

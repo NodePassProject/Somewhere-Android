@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.protocol
 
+import eu.nodepass.somewhere.dns.DnsMessage
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
@@ -56,6 +57,7 @@ class DecoderFuzzTest {
             "DatagramFrame" to { bytes -> DatagramFrame.decode(bytes) },
             "UoT.encode" to { bytes -> UdpOverTcp.encode(bytes) },
             "SharedKey" to { bytes -> SharedKey.of(bytes) },
+            "DnsMessage.parseQuestion" to { bytes -> DnsMessage.parseQuestion(bytes) },
         )
 
     private fun eachInput(block: (ByteArray) -> Unit) {

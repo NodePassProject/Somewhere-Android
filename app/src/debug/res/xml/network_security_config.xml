@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Debug builds only. The release build keeps the platform default, which has
+    forbidden cleartext since API 28.
+
+    The end-to-end conformance runs fetch a known payload over plain HTTP from
+    an origin server that exists for the length of one test run. Giving it a
+    certificate would mean generating a CA, trusting it on the device and
+    keeping the key somewhere — machinery that tests the machinery rather than
+    the client, for a transfer whose only claim is that its SHA-256 survived
+    the tunnel.
+
+    This file lives in `src/debug/` rather than being switched on by a flag,
+    because a flag is something that can be set in the wrong build. A source
+    set cannot: `assembleRelease` never reads this directory.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
