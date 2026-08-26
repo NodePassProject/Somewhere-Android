@@ -47,6 +47,51 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The mirror image of the step below. An issue that is only ever opened
+      # stays open after the baseline has been advanced, and a marker that is
+      # permanently red is one nobody reads. The same check that raised it is
+      # the thing entitled to withdraw it.
+      - name: Close the drift issue once the baseline agrees again
+        if: steps.drift.outputs.code == '0'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const report = ${{ toJSON(steps.drift.outputs.report) }};
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream-drift',
+            });
+
+            const body = [
+              'The drift check passes again: `conformance/PROTOCOL_BASELINE` and',
+              'upstream agree. Closing automatically.',
+              '',
+              '```',
+              report,
+              '```',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            ].join('\n');
+
+            for (const issue of existing.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+            }
+
       - name: Open an issue on normative change
         if: steps.drift.outputs.code != '0'
         uses: actions/github-script@v9
