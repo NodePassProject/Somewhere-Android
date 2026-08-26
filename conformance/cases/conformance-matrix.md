@@ -1,6 +1,6 @@
 # Conformance test matrix
 
-Derived case by case from Nowhere `docs/protocol.md` (v1.8.0 @ 7720311b).
+Derived case by case from Nowhere `docs/protocol.md` (v1.8.2 @ 8807960c).
 The **Req** column references PRD requirement IDs. The **Layer** column is the
 earliest delivery layer that should cover the case.
 
@@ -112,7 +112,7 @@ Three case types:
 | Late WINDOW for a closed stream is ignored | Property | NW-P-15 | L2 |
 | A STREAM frame never exceeds 32 KiB of payload | Unit | NW-P-16 | L2 |
 | 256-stream cap and 512 outbound queue slots respected | Property | NW-P-16 | L2 |
-| A new shard opens at 12 active flows; a fully idle shard closes after 30 s | Unit | NW-P-17 | L2 |
+| A new shard opens at 4 active flows; a fully idle shard closes after 30 s | Unit | NW-P-17 | L2 |
 | Mux `flowId` matches the FlowHeader `flowId` | Property | NW-P-13 | L2 |
 | Closing the carrier fails every logical stream on it | E2E | NW-P-14 | L2 |
 | The same case set runs under both `mux=0` and `mux=1` | E2E | NW-P-12 | L2 |

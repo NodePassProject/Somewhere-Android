@@ -26,7 +26,7 @@ internal testing before the next one starts.
 ## Protocol baseline
 
 Pinned in [`conformance/PROTOCOL_BASELINE`](conformance/PROTOCOL_BASELINE):
-Nowhere **v1.8.0**. Every protocol implementation detail is traceable to a
+Nowhere **v1.8.2**. Every protocol implementation detail is traceable to a
 specific section of the upstream `docs/protocol.md`.
 
 ## Conformance suite
@@ -37,7 +37,7 @@ deliberately: third-party implementations need it to align, dashboard and Portal
 interop checks need it, and community bug reports need it to be meaningful.
 
 ```sh
-python3 conformance/scripts/verify-vectors.py      # 43 known-answer checks
+python3 conformance/scripts/verify-vectors.py      # 45 known-answer checks
 NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
 ```
 

@@ -69,8 +69,8 @@ python3 conformance/scripts/verify-vectors.py
 | `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*` and `.subscription.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
 | `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
-| `verify-vectors.py` | 43 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
-| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for why the baseline is held rather than advanced |
+| `verify-vectors.py` | 45 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
+| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired for the first time on 2026-08-26 and the pin moved to v1.8.2 |
 
 Both gates that can silently pass were verified to actually fail. The coverage
 gate: a protocol class with no tests produces `lines covered percentage is
@@ -234,12 +234,12 @@ Two rules from those documents that reach into protocol code:
 - The donor project `Anywhere-Android` **builds clean** on this toolchain
   (JDK 21 / android-36 / NDK 28.2 / CMake 3.22.1), 1m50s cold, one harmless lwIP
   macro warning. Inheriting its shell is not a risk.
-- `cargo build --release --locked` succeeds on macOS/aarch64 at Nowhere v1.8.0.
+- `cargo build --release --locked` succeeds on macOS/aarch64 at Nowhere v1.8.2.
 - **End-to-end works**: SOCKS5 → Vector → Nowhere (tcp/tcp) → Portal → target,
   payload returned intact. Re-run `conformance/scripts/smoke-local.sh`.
 - **Authentication derivation agrees three ways** — spec prose, an independent
   implementation, and upstream Rust fixed vectors, byte for byte.
-  Re-run `python3 conformance/scripts/verify-vectors.py` (43 checks).
+  Re-run `python3 conformance/scripts/verify-vectors.py` (45 checks).
 - Sending a TLS handshake to a Portal that ends at `TLS alert, no application
   protocol` is **correct** — the Portal rejecting an ALPN other than `now/1` —
   and is usable as a connectivity check. That wording is `openssl s_client`'s;

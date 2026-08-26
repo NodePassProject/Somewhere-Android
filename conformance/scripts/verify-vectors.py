@@ -183,6 +183,11 @@ def verify_mux(section: dict) -> None:
     check("mux / max 32 KiB per STREAM frame", bounds["maxPayloadPerStreamFrame"], 32 * 1024)
     check("mux / 512 KiB per-stream credit", bounds["perStreamReceiveCredit"], 512 * 1024)
     check("mux / 512 KiB connection credit", bounds["connectionReceiveCredit"], 512 * 1024)
+    # Shard density is the one number in this file upstream has actually moved
+    # (12 -> 4 at v1.8.2). It is runtime placement rather than wire format, so
+    # no vector catches a stale transcription - this literal does.
+    check("mux / 4-flow shard density", bounds["shardFlowThreshold"], 4)
+    check("mux / 30 s idle shard retirement", bounds["shardIdleCloseSeconds"], 30)
 
 
 def main() -> int:

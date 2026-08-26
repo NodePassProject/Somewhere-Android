@@ -49,8 +49,8 @@ class VectorFixtureTest {
         baselineFile?.close()
 
         assertEquals("NodePassProject/Nowhere", VectorFixture.Baseline.repository)
-        assertEquals("v1.8.0", VectorFixture.Baseline.tag)
-        assertEquals("7720311b", VectorFixture.Baseline.commit)
+        assertEquals("v1.8.2", VectorFixture.Baseline.tag)
+        assertEquals("8807960c", VectorFixture.Baseline.commit)
     }
 
     @Test

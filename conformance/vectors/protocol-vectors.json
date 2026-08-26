@@ -1,13 +1,13 @@
 {
-  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol, language-agnostic. Source: NodePassProject/Nowhere src/tests/protocol/*.rs (v1.8.0 @ 7720311b). The authentication section has additionally been recomputed by an independent implementation following docs/protocol.md section 2. All hex is lowercase and unseparated.",
+  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol, language-agnostic. Source: NodePassProject/Nowhere src/tests/protocol/*.rs (v1.8.2 @ 8807960c). The authentication section has additionally been recomputed by an independent implementation following docs/protocol.md section 2. All hex is lowercase and unseparated.",
   "baseline": {
     "upstreamRepo": "NodePassProject/Nowhere",
     "branch": "main",
-    "tag": "v1.8.0",
-    "commit": "7720311b",
+    "tag": "v1.8.2",
+    "commit": "8807960c",
     "specPath": "docs/protocol.md",
-    "binaryVersionString": "nowhere-v1.8.0",
-    "note": "v1.8.0 released 2026-08-24. Compared with the feat/mux@820b0c5 snapshot these vectors were first taken from, it differs only in the version number and one test file; no normative change. Authentication and FlowHeader are also unchanged since 1.7, so these vectors carry across versions."
+    "binaryVersionString": "nowhere-v1.8.2",
+    "note": "v1.8.2 released 2026-08-26. Advanced from v1.8.0 on the first normative change the drift check has reported: TLS Mux shard density 12 -> 4 flows, and a Portal-side QUIC memory-profile default. Both are runtime tuning; no wire field, layout, length, ordering or derivation moved, so every byte-level vector below carries across unchanged. Authentication and FlowHeader are additionally unchanged since 1.7. See conformance/PROTOCOL_BASELINE for the assessment."
   },
 
   "auth": {
@@ -201,7 +201,7 @@
       "connectionReceiveCredit": 524288,
       "maxActiveStreams": 256,
       "outboundQueueSlots": 512,
-      "shardFlowThreshold": 12,
+      "shardFlowThreshold": 4,
       "shardIdleCloseSeconds": 30
     },
     "rejects": [

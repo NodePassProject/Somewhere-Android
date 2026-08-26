@@ -37,13 +37,14 @@ scripts/smoke-local.sh
 scripts/drift-check.sh
 ```
 
-**Verified on 2026-08-24:**
+**Verified on 2026-08-26, at the baseline this file pins:**
 
-- `verify-vectors.py` — 43 checks pass, baseline v1.8.0 @ 7720311b.
+- `verify-vectors.py` — 45 checks pass, baseline v1.8.2 @ 8807960c.
 - `smoke-local.sh` — passes. Traffic really traverses
   SOCKS5 → Vector → Nowhere (tcp/tcp) → Portal → target.
-- `drift-check.sh` — passes, and correctly detected the disappearance of the
-  `feat/mux` branch on the day v1.8.0 was released.
+- `drift-check.sh` — passes. It has caught two real upstream events so far: the
+  disappearance of the `feat/mux` branch on the day v1.8.0 was released, and the
+  normative change that moved this pin to v1.8.2.
 - `cargo build --release --locked` succeeds on macOS/aarch64, which confirms the
   plan of building the Rust implementation only as a host-side oracle.
 

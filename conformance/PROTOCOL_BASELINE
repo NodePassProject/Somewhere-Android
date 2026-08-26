@@ -6,42 +6,57 @@
 
 UPSTREAM_REPO=NodePassProject/Nowhere
 UPSTREAM_BRANCH=main
-UPSTREAM_TAG=v1.8.0
-UPSTREAM_COMMIT=7720311b
-UPSTREAM_COMMIT_DATE=2026-08-24
-BINARY_VERSION_STRING=nowhere-v1.8.0
+UPSTREAM_TAG=v1.8.2
+UPSTREAM_COMMIT=8807960c
+UPSTREAM_COMMIT_DATE=2026-08-26
+BINARY_VERSION_STRING=nowhere-v1.8.2
 
 # Normative files watched for change
 SPEC_FILES=docs/protocol.md docs/configuration.md docs/compatibility.md docs/security.md
 
 # Known state
-# - v1.8.0 was released on 2026-08-24; the feat/mux branch was merged into main
-#   and deleted. Compared with the feat/mux@820b0c5 snapshot this suite was first
-#   built from, v1.8.0 differs only in the version number, Cargo.lock and one test
-#   file - no normative file and no implementation code changed, so all earlier
-#   analysis holds unchanged.
+# - Advanced from v1.8.0 to v1.8.2 on 2026-08-26, on the first normative change
+#   the drift check has ever reported. What changed, in full:
+#     * TLS Mux shard density 12 -> 4 active flows before another shard opens
+#       (protocol.md section 7, compatibility.md, configuration.md, operations.md);
+#     * the default NOW_QUIC_MEMORY_PROFILE moved from `balanced` to `throughput`,
+#       which is a Portal-side environment default with no client-visible effect.
+#   Both are runtime tuning. No wire field, frame layout, length, ordering or
+#   derivation changed anywhere: the diff over 4 commits touches one Rust
+#   constant, one env default, their tests, and the prose that quotes them.
+#   Every byte-level vector in this suite is unaffected, and re-running
+#   verify-vectors.py after the transcription fix confirms it.
+# - Sharding is client-side placement (protocol.md: "Sharding is runtime placement
+#   and does not add wire fields"), so a client using the old density would still
+#   interoperate. It is transcribed anyway because D-08 says this client follows
+#   upstream, and because L2 is where the number gets read.
+# - Relative to 1.8.0: no change to authentication (section 2), FlowHeader
+#   (section 4), Target (section 5), SetupResult, UoT, MuxHeader or the QUIC
+#   DATAGRAM header. The 59-vector fixture carries across unchanged.
 # - Relative to 1.7: adds the TLS Mux carrier; removes the pool parameter
 #   (replaced by mux=0|1, default 0); drops the Linux-only gate and adds
 #   cross-platform CI plus GHCR container images.
-# - Authentication (spec section 2) and FlowHeader (section 4) are unchanged since
-#   1.7, so the byte-level vectors carry across versions.
-# - Verified: cargo build --release --locked succeeds on macOS/aarch64, and the
-#   end-to-end smoke test passes against the resulting binary.
+# - Verified at v1.8.2: cargo build --release --locked succeeds on macOS/aarch64,
+#   and the end-to-end smoke test passes against the resulting binary.
 #
-# Tracking policy (decided 2026-08-24)
+# Tracking policy (decided 2026-08-24, applied 2026-08-26)
 #
-# The baseline stays pinned at v1.8.0 for the whole of M0 and L1. It is NOT
-# advanced just because upstream moved: a moving target during the first
-# implementation of the protocol layer costs more than it buys, and the vectors
-# in this suite were derived against exactly this snapshot.
+# The baseline is NOT advanced just because upstream moved: a moving target
+# during the first implementation of the protocol layer costs more than it buys,
+# and the vectors in this suite were derived against a specific snapshot. Only a
+# normative change - one of the SPEC_FILES above - interrupts development, and
+# drift-check.sh exits non-zero so a scheduled CI job can open an issue.
 #
-# Upstream has already advanced past this pin (89750106 as of 2026-08-24) with
-# no normative change. That is the expected steady state: drift-check.sh reports
-# the distance and passes. Only a normative change - one of the SPEC_FILES above
-# - should interrupt development, and it exits non-zero so a scheduled CI job can
-# open an issue.
+# The steady state is therefore: upstream ahead, drift-check reporting the
+# distance and passing.
 #
-# Revisit the pin at the L1 exit, or immediately on a normative change.
+# The 2026-08-26 advance is what that policy asks for on a normative change: read
+# the diff, decide whether it reaches the wire, and only then move the pin. It
+# reached two constants and no bytes, so moving the pin cost a rebuild of the
+# host-side oracle and a one-line transcription fix. Had it reached the wire, the
+# answer would have been to hold the pin and schedule the work.
+#
+# Revisit again at the L1 exit, or immediately on the next normative change.
 #
 # When advancing the baseline: run scripts/drift-check.sh first, then update this
 # file, then re-run scripts/verify-vectors.py and scripts/smoke-local.sh.
