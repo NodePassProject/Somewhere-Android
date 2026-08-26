@@ -21,6 +21,9 @@ scripts/drift-check.sh        upstream drift detection; only normative changes b
 scripts/device-connect.sh     best-effort discovery of one usable Android device
 scripts/emulator-setup.sh     one-time AVD preparation (only if you want an AVD)
 scripts/e2e-android.sh        host-side Portal + on-device connectedAndroidTest
+scripts/e2e-fakeip.sh         remote resolution on a device: a name only the Portal knows
+scripts/oracle-diff.sh        the same cases through both implementations, outcomes compared
+scripts/oracle-cases.py       the oracle's half of that comparison, over raw SOCKS5
 cases/conformance-matrix.md   test matrix derived from the spec, mapped to PRD IDs
 ```
 
@@ -35,6 +38,12 @@ scripts/smoke-local.sh
 
 # 3) Upstream drift detection
 scripts/drift-check.sh
+
+# 4) This implementation against the reference one, case by case
+scripts/oracle-diff.sh
+
+# 5) Remote resolution on a device (needs Docker and one Android device)
+scripts/e2e-fakeip.sh
 ```
 
 **Verified on 2026-08-26, at the baseline this file pins:**
@@ -47,6 +56,12 @@ scripts/drift-check.sh
   normative change that moved this pin to v1.8.2.
 - `cargo build --release --locked` succeeds on macOS/aarch64, which confirms the
   plan of building the Rust implementation only as a host-side oracle.
+- `oracle-diff.sh` — passes. Five cases, both implementations, identical
+  outcomes: payload by address, payload by name, `DIAL_FAILED`, a wrong key, and
+  a UDP-over-stream round trip. Verified to fail: encoding a domain target with
+  the IPv4 ATYP diverges on one case and the script exits non-zero.
+- `e2e-fakeip.sh` — passes on a local emulator (API 32, arm64-v8a). Verified to
+  fail: bypassing the DNS interceptor turns it red with an unknown host.
 
 ## Device side
 
@@ -82,9 +97,19 @@ QEMU-based emulators including the AOSP emulator. With a physical device, or an
 emulator using bridged networking, use the host's LAN address instead — the
 scripts accept an override through the environment.
 
-The full `e2e-android.sh` path has **not been run end to end yet**: what is
-missing is the client Gradle project. The device-side prerequisites above can be
-confirmed one by one in the meantime.
+`e2e-fakeip.sh` has been run end to end and passes; it installs the app, brings
+up a real TUN and moves 20 MB through it. `e2e-android.sh` predates the client
+project and has still not been run whole — the two now overlap, and the
+device-side path that is actually exercised is `e2e-fakeip.sh`.
+
+### Why `e2e-fakeip.sh` uses Docker
+
+It has to prove that a **name** reached the Portal, and that is only provable
+with a name the device cannot resolve for itself: a name both ends know would
+still fetch with the whole fake-IP layer removed. Docker gives the Portal and
+the origin server a private namespace, so the name resolves where the Portal
+runs and nowhere else. The alternative was editing `/etc/hosts` on somebody's
+machine or depending on a public wildcard DNS service.
 
 ## Why the vector file verifies itself
 
@@ -105,8 +130,9 @@ byte for byte.
 |---|---|
 | `verify-vectors.py` + vector file | NW-Q-02 byte-level KAT |
 | the "property/fuzz" rows in the matrix | NW-Q-03 decoder fuzzing |
-| `smoke-local.sh` | NW-Q-04 host half of the dual-implementation comparison |
-| `e2e-android.sh` | NW-Q-05 end-to-end instrumentation tests |
+| `smoke-local.sh` | NW-Q-04 the reference implementation talking to itself, as a health check |
+| `oracle-diff.sh` + `oracle-cases.py` | NW-Q-04 the dual-implementation comparison itself |
+| `e2e-android.sh`, `e2e-fakeip.sh` | NW-Q-05 end-to-end instrumentation tests |
 | `drift-check.sh` + `PROTOCOL_BASELINE` | NW-Q-08 drift detection, architecture decision D4 |
 
 ## Notes
@@ -114,6 +140,13 @@ byte for byte.
 - Values such as `sharedKeyUtf8: "secret"` come from upstream tests. They are
   public test data, not credentials. **No real key, token, or node address may
   ever enter this directory.**
+- `oracle-diff.sh` compares a SOCKS5 reply code, because that is the only view
+  the oracle has of a rejection: its front end maps the Portal's `SetupResult`
+  onto one. This implementation is put through the same mapping so that both
+  speak one alphabet, and each side's untranslated reason is printed beside the
+  verdict — which is where a difference the alphabet cannot express shows up.
+  Both reach reply 1 for a wrong key, one by observing silence and one by timing
+  out after five seconds, and only those two lines say so.
 - `smoke-local.sh` deliberately omits `sni` and `pin`. That is exactly the shape
   NowhereDash currently generates, i.e. the configuration for which upstream skips
   certificate verification entirely. The omission is an intentional reference
