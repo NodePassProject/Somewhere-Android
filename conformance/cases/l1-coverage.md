@@ -128,7 +128,7 @@ run by `./gradlew testDebugUnitTest`.
 | 59 | The smallest enclosing header is validated before variable-length data | covered | `DecoderFuzzTest.aHostileLengthFieldNeverDrivesAnUnboundedAllocation`, `TargetVectorTest.aHostileLengthByteCannotDriveAnUnboundedRead`, `UdpOverTcpVectorTest.aDeclaredLengthCannotDriveAnUnboundedRead`, `DnsMessageTest.a label length past the end of the message does not read past it` |
 | 60 | Network-provided lengths are checked before memory is reserved | covered | as row 59 — the same tests are the check, since an unchecked length shows up as an allocation and not as a wrong answer |
 | 61 | Client recovers automatically after a Portal restart | covered | `PortalLifecycleTest.aNewFlowSucceedsAfterThePortalHasRestarted` (`portal-lifecycle.sh`) — the same session, across a kill and a restart, with nothing asked of the user |
-| 62 | Kotlin and Rust behave identically against one Portal on the same case set | covered | `oracle-diff.sh` — five cases, both implementations, one Portal. Verified to fail: encoding a domain target with the IPv4 ATYP diverges on one case |
+| 62 | Kotlin and Rust behave identically against one Portal on the same case set | covered | `oracle-diff.sh` — thirteen cases, both implementations, one Portal, **each of the five run over both carriers**. Verified to fail twice: encoding a domain target with the IPv4 ATYP diverges on one case, and a client that stops multiplexing is caught by the carrier count. It has found one real defect — see the L2 note below |
 | 63 | Protocol-layer line coverage ≥ 90% | covered | `koverVerifyDebug`, over `protocol.*`, `subscription.*` and `dns.*`. Verified to fail: a protocol class with no tests reports `0.000000` against a minimum of 90 |
 
 ---
@@ -189,10 +189,10 @@ the same rule: no row is silent.
 | 14 | Late WINDOW for a closed stream is ignored | covered | `MuxCarrierCreditTest.aLateWindowForAClosedStreamIsIgnored` |
 | 15 | A STREAM frame never exceeds 32 KiB of payload | covered | `MuxCarrierCreditTest.noStreamFrameCarriesMoreThanThirtyTwoKilobytes` — a 200 KB write, every frame measured, and the payload reassembled by digest |
 | 16 | 256-stream cap and 512 outbound queue slots respected | covered | `MuxCarrierTest.theCarrierRefusesMoreThanItsStreamCap`; `MuxCarrierCreditTest.aSlowPeerSlowsTheWriterRatherThanGrowingAQueue` for the queue |
-| 17 | A new shard at 4 active flows; a fully idle shard closes after 30 s | covered | `MuxShardSetTest.aNewShardOpensOnlyOnceEveryLiveOneIsFull`, `.aFullyIdleShardClosesAfterThirtySeconds`, `.aFlowArrivingJustBeforeTheDeadlineKeepsTheShard`. The two constants are read from the pinned fixture by `MuxHeaderVectorTest.theFixtureBoundsMatchTheConstants` rather than retyped |
+| 17 | A new shard at 4 active flows; a fully idle shard closes after 30 s | covered | `MuxShardSetTest.aNewShardOpensOnlyOnceEveryLiveOneIsFull`, `.aFullyIdleShardClosesAfterThirtySeconds`, `.aFlowArrivingJustBeforeTheDeadlineKeepsTheShard`. The two constants are read from the pinned fixture by `MuxHeaderVectorTest.theFixtureBoundsMatchTheConstants` rather than retyped. The density is also **measured against the reference client**: `oracle-diff.sh` opens sixteen flows at once through each implementation and counts the connections the Portal accepted — four apiece. The idle half is still a fake clock only |
 | 18 | Mux `flowId` matches the FlowHeader `flowId` | covered | `MuxCarrierTest.theMuxFlowIdEqualsTheFlowHeaderFlowId` — the peer decodes the FlowHeader out of the SYN payload and the ids are compared there, which is the only place the rule is observable |
 | 19 | Closing the carrier fails every logical stream on it | covered | `MuxCarrierTest.closingTheCarrierFailsEveryStreamOnItWithAStatedReason`, and `MuxCarrierRefusalTest.everyRefusalSaysSomethingDifferent` for the "each with its own reason" half |
-| 20 | The same case set runs under both `mux=0` and `mux=1` | covered | `conformance/scripts/e2e-fakeip.sh` runs the device set under both by default, and asserts the connection counts differ. Measured: 20 flows over 20 connections at `mux=0`, over 11 at `mux=1` |
+| 20 | The same case set runs under both `mux=0` and `mux=1` | covered | `conformance/scripts/e2e-fakeip.sh` runs the device set under both by default, and asserts the connection counts differ. Measured: 20 flows over 20 connections at `mux=0`, over 11 at `mux=1`. On the host, `oracle-diff.sh` runs its whole case set under both carriers **and against the reference client**, which is the half a device cannot supply: it is what says the two carriers agree with somebody other than us |
 | 21 | Under queue pressure, packets are dropped rather than queued without bound | covered, with a correction | `MuxCarrierCreditTest.aSlowPeerSlowsTheWriterRatherThanGrowingAQueue`, and `UdpRelay`'s `MAX_FLOWS` for the datagram case. **Dropping is right for datagrams and wrong for stream bytes** — a dropped stream byte is a corrupt stream, not a lost packet. So the queue is bounded and a full one makes the writer wait, which on this client becomes back-pressure on the device's own TCP window. The row's wording is upstream's and is about the datagram plane |
 
 ## L2 summary
@@ -205,3 +205,27 @@ the same rule: no row is silent.
 Row 25 of L1 said five of the seven rejections were unreachable at that layer.
 One of them, `FLOW_LIMIT`, is reachable at L2 in principle and is still not
 provoked here, for the reason in row 2 above. The other four remain L3's.
+
+## What running the case set over both carriers found
+
+One defect, and it is the kind only a second implementation finds.
+
+`dial_failed` passed at `mux=0` and diverged at `mux=1`: the oracle reported a
+host it could not reach, this client an unclassifiable failure. Nothing on the
+wire differed — the Portal sent `DIAL_FAILED` both times and this client read
+it both times. What differed is that the two carriers reported it as two
+unrelated types, `LaneReason.Rejected` and `MuxCarrierReason.Rejected`, so a
+caller that recognised one saw a bare string from the other.
+
+Every Mux test was green because each asserted on the Mux carrier's own type,
+which is precisely the shape of mistake a differential exists to catch: both
+sides of the assertion moved together. The seven rejections this app renders as
+seven distinct explanations are matched on exactly that type, so a `mux=1` node
+would have quietly degraded all seven to a generic failure.
+
+`SetupResult` belongs to the protocol and not to whichever carrier fetched it,
+so both now implement one `FlowRejected` interface and a caller asks once.
+Carrier-specific failures — a lane used twice, a stream the peer reset — keep
+their own vocabularies, because those really are the carrier's own. Silence
+stays outside it: a Portal that answers nothing has named no `SetupResult`, and
+inventing one would be the same mistake facing the other way.

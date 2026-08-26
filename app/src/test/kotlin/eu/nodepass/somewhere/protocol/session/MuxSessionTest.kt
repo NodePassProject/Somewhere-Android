@@ -6,6 +6,7 @@ package eu.nodepass.somewhere.protocol.session
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.SharedKey
 import eu.nodepass.somewhere.protocol.frame.FlowKind
+import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.mux.FakeMuxPortal
 import eu.nodepass.somewhere.protocol.mux.LoopbackTransport
@@ -78,6 +79,46 @@ class MuxSessionTest {
             filled += read
         }
         assertEquals("ping", String(buffer, 0, filled))
+    }
+
+    @Test
+    fun aPortalRejectionIsNamedTheSameWayWhicheverCarrierCarriedIt() {
+        // The oracle differential found this, and nothing in this file could
+        // have: every Mux test asserted on the Mux carrier's own rejection
+        // type, so both sides of the assertion moved together. Run the same
+        // `dial_failed` case over both carriers against the reference client
+        // and the readings part company — `DIAL_FAILED` over a lane, an
+        // unclassifiable failure carrying the same words over a shard.
+        //
+        // What a caller of `openFlow` needs is the Portal's `SetupResult`, and
+        // it has no business knowing which carrier fetched it: `mux` is the
+        // session's private choice. Stated here over both carriers in one
+        // test, because a rule written down twice is a rule that gets
+        // half-changed.
+        val carriers =
+            listOf<Pair<Boolean, NowhereSession.TransportFactory>>(
+                false to
+                    NowhereSession.TransportFactory {
+                        FakeTransport(peerBytes = byteArrayOf(SetupResult.DialFailed.byte.toByte()))
+                    },
+                true to
+                    NowhereSession.TransportFactory {
+                        val (clientSide, portalSide) = LoopbackTransport.pair()
+                        portals += FakeMuxPortal(portalSide, { SetupResult.DialFailed }).also { it.start() }
+                        clientSide
+                    },
+            )
+
+        for ((mux, connect) in carriers) {
+            NowhereSession(sharedKey = key, mux = mux, connect = connect).use { built ->
+                val reason = (built.openFlow(target, FlowKind.Tcp) as DecodeResult.Invalid).reason
+                assertTrue(
+                    "mux=$mux surfaced ${reason::class.simpleName}, which no caller can read a SetupResult out of",
+                    reason is FlowRejected,
+                )
+                assertEquals("mux=$mux", SetupResult.DialFailed, (reason as FlowRejected).result)
+            }
+        }
     }
 
     @Test

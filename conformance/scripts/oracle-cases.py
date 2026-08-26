@@ -13,14 +13,32 @@ is the one place the oracle's view of a rejection is observable at all.
 
 Written against RFC 1928. No third-party dependency, because a conformance
 suite that needs a package index is one that stops running.
+
+## Two carriers, one case list
+
+Each case runs twice: once through a vector configured `mux=0` and once
+through one configured `mux=1`. The second set is prefixed `mux_`. Nothing
+about a case changes between the two — that *is* the claim being tested, since
+upstream's Mux carrier is a way of moving the same frames and not a different
+protocol.
+
+The `burst` cases are the exception, and they are the reason this file grew a
+thread pool: how many TLS connections a carrier uses is only observable when
+several flows are open **at the same moment**, and a sequence of fetches that
+happen to be fast is not that. The origin holds every request until all of
+them have arrived, so the overlap is a property of the harness rather than of
+how quickly this machine happens to run.
 """
 
+import argparse
 import hashlib
 import socket
 import struct
 import sys
+import threading
 
 BLOB_PATH = "/blob.bin"
+HOLD_PATH = "/hold"
 
 # RFC 1928 section 6.
 REPLY_SUCCEEDED = 0
@@ -77,8 +95,8 @@ def _command(socks, command, host, port, as_name, timeout):
     return sock, code, bound
 
 
-def http_case(socks, host, port, as_name, timeout):
-    """Fetches the blob and returns (reply code, sha256 of the body, note)."""
+def http_case(socks, host, port, as_name, timeout, path=BLOB_PATH):
+    """Fetches [path] and returns (reply code, sha256 of the body, note)."""
     try:
         sock, code, _ = _command(socks, COMMAND_CONNECT, host, port, as_name, timeout)
     except OSError as error:
@@ -89,7 +107,7 @@ def http_case(socks, host, port, as_name, timeout):
 
     try:
         request = (
-            "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % (BLOB_PATH, host)
+            "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % (path, host)
         ).encode("ascii")
         sock.sendall(request)
         received = b""
@@ -111,6 +129,44 @@ def http_case(socks, host, port, as_name, timeout):
         return REPLY_GENERAL_FAILURE, "", "no HTTP response (%d bytes)" % len(received)
     body = received[separator + 4:]
     return REPLY_SUCCEEDED, hashlib.sha256(body).hexdigest(), "%d bytes" % len(body)
+
+
+def burst_case(socks, host, port, width, timeout):
+    """[width] flows opened at once and held open together.
+
+    The origin at [port] answers nothing until all [width] requests have
+    reached it, so every flow is provably open at the same instant. What the
+    carrier did with them is counted at the Portal by `oracle-diff.sh`; this
+    half's job is only to prove that all [width] flows completed and carried
+    the same bytes, because a count of connections means nothing if some of
+    the flows it was supposed to carry never happened.
+    """
+    outcomes = [None] * width
+
+    def one(index):
+        outcomes[index] = http_case(socks, host, port, False, timeout, path=HOLD_PATH)
+
+    threads = [threading.Thread(target=one, args=(index,)) for index in range(width)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    failed = [outcome for outcome in outcomes if outcome[0] != REPLY_SUCCEEDED]
+    if failed:
+        return failed[0][0], "", "%d of %d flows failed: %s" % (
+            len(failed),
+            width,
+            failed[0][2],
+        )
+
+    digests = {outcome[1] for outcome in outcomes}
+    if len(digests) != 1:
+        return REPLY_GENERAL_FAILURE, "", "%d flows returned %d different payloads" % (
+            width,
+            len(digests),
+        )
+    return REPLY_SUCCEEDED, digests.pop(), "%d of %d flows held open together" % (width, width)
 
 
 def udp_case(socks, host, port, timeout):
@@ -154,51 +210,78 @@ def udp_case(socks, host, port, timeout):
     return REPLY_SUCCEEDED, hashlib.sha256(body).hexdigest(), "%d bytes back" % len(body)
 
 
+def endpoint(text):
+    host, _, port = text.rpartition(":")
+    return host, int(port)
+
+
 def main():
-    if len(sys.argv) != 8:
-        print(
-            "usage: oracle-cases.py SOCKS SOCKS_WRONG_KEY TARGET TARGET_NAME UDP CLOSED OUT",
-            file=sys.stderr,
-        )
-        return 2
+    parser = argparse.ArgumentParser(description=__doc__)
+    # Named rather than positional: there are twelve endpoints now, and a
+    # twelve-deep positional list is a defect waiting for somebody to insert an
+    # argument in the middle of it.
+    parser.add_argument("--socks", required=True, help="oracle SOCKS listener, mux=0")
+    parser.add_argument("--socks-wrong-key", required=True)
+    parser.add_argument("--socks-mux", required=True, help="oracle SOCKS listener, mux=1")
+    parser.add_argument("--socks-mux-wrong-key", required=True)
+    parser.add_argument("--target", required=True, help="blob origin, as an address")
+    parser.add_argument("--target-name", required=True, help="the same origin, as a name")
+    parser.add_argument("--udp", required=True)
+    parser.add_argument("--closed", required=True, help="a port with nothing behind it")
+    parser.add_argument("--hold-dedicated", required=True, help="burst origin for mux=0")
+    parser.add_argument("--hold-mux", required=True, help="burst origin for mux=1")
+    parser.add_argument("--width", type=int, default=16, help="flows opened at once")
+    parser.add_argument("--out", required=True)
+    options = parser.parse_args()
 
-    (
-        socks_text,
-        wrong_key_socks_text,
-        target_text,
-        name_text,
-        udp_text,
-        closed_text,
-        out_path,
-    ) = sys.argv[1:]
-
-    def endpoint(text):
-        host, _, port = text.rpartition(":")
-        return host, int(port)
-
-    socks = endpoint(socks_text)
-    wrong_key_socks = endpoint(wrong_key_socks_text)
-    target_host, target_port = endpoint(target_text)
-    name_host, name_port = endpoint(name_text)
-    udp_host, udp_port = endpoint(udp_text)
-    closed_host, closed_port = endpoint(closed_text)
+    socks = endpoint(options.socks)
+    wrong_key_socks = endpoint(options.socks_wrong_key)
+    mux_socks = endpoint(options.socks_mux)
+    mux_wrong_key_socks = endpoint(options.socks_mux_wrong_key)
+    target_host, target_port = endpoint(options.target)
+    name_host, name_port = endpoint(options.target_name)
+    udp_host, udp_port = endpoint(options.udp)
+    closed_host, closed_port = endpoint(options.closed)
+    hold_dedicated_host, hold_dedicated_port = endpoint(options.hold_dedicated)
+    hold_mux_host, hold_mux_port = endpoint(options.hold_mux)
 
     # Longer than the oracle's own five-second setup deadline, so a silent
     # Portal is observed as the oracle's answer rather than as our impatience.
     timeout = 30
 
-    verdicts = [
-        ("tcp_ip_payload", http_case(socks, target_host, target_port, False, timeout)),
-        ("tcp_domain_payload", http_case(socks, name_host, name_port, True, timeout)),
-        ("dial_failed", http_case(socks, closed_host, closed_port, False, timeout)),
-        ("wrong_key", http_case(wrong_key_socks, target_host, target_port, False, timeout)),
-        ("uot_round_trip", udp_case(socks, udp_host, udp_port, timeout)),
-    ]
+    def case_set(listener, wrong_key_listener, prefix):
+        return [
+            (prefix + "tcp_ip_payload", http_case(listener, target_host, target_port, False, timeout)),
+            (prefix + "tcp_domain_payload", http_case(listener, name_host, name_port, True, timeout)),
+            (prefix + "dial_failed", http_case(listener, closed_host, closed_port, False, timeout)),
+            (prefix + "wrong_key", http_case(wrong_key_listener, target_host, target_port, False, timeout)),
+            (prefix + "uot_round_trip", udp_case(listener, udp_host, udp_port, timeout)),
+        ]
+
+    verdicts = case_set(socks, wrong_key_socks, "")
+    verdicts += case_set(mux_socks, mux_wrong_key_socks, "mux_")
+
+    # Each burst has an origin of its own, and the port is what labels it. The
+    # Portal logs the address a flow was dialled to, so counting connections
+    # per origin port attributes every one of them to a carrier and a client
+    # without the harness having to reason about when each phase ran.
+    verdicts.append(
+        (
+            "dedicated_burst",
+            burst_case(socks, hold_dedicated_host, hold_dedicated_port, options.width, timeout),
+        )
+    )
+    verdicts.append(
+        (
+            "mux_burst",
+            burst_case(mux_socks, hold_mux_host, hold_mux_port, options.width, timeout),
+        )
+    )
 
     # "-" rather than an empty column. `read` with a whitespace IFS collapses
     # consecutive tabs, so an empty field shifts every column after it and the
     # comparison silently reads a note as a digest.
-    with open(out_path, "w") as handle:
+    with open(options.out, "w") as handle:
         for case, (code, digest, note) in verdicts:
             handle.write("%s\t%d\t%s\t%s\n" % (case, code, digest or "-", note or "-"))
     return 0

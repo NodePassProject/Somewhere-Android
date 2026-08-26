@@ -11,6 +11,7 @@ import eu.nodepass.somewhere.protocol.auth.SharedKey
 import eu.nodepass.somewhere.protocol.frame.FlowCarrier
 import eu.nodepass.somewhere.protocol.frame.FlowHeader
 import eu.nodepass.somewhere.protocol.frame.FlowKind
+import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.FlowRole
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.invalid
@@ -738,8 +739,9 @@ sealed interface MuxCarrierReason : DecodeReason {
     }
 
     data class Rejected(
-        val result: SetupResult,
-    ) : MuxCarrierReason {
+        override val result: SetupResult,
+    ) : MuxCarrierReason,
+        FlowRejected {
         override val detail: String = "the Portal refused the flow: ${result.name}"
     }
 }

@@ -22,7 +22,7 @@ scripts/device-connect.sh     best-effort discovery of one usable Android device
 scripts/emulator-setup.sh     one-time AVD preparation (only if you want an AVD)
 scripts/e2e-android.sh        host-side Portal + on-device connectedAndroidTest
 scripts/e2e-fakeip.sh         remote resolution on a device: a name only the Portal knows
-scripts/oracle-diff.sh        the same cases through both implementations, outcomes compared
+scripts/oracle-diff.sh        the same cases through both implementations and both carriers
 scripts/oracle-cases.py       the oracle's half of that comparison, over raw SOCKS5
 scripts/portal-lifecycle.sh   the two cases that need the Portal to stop being there
 cases/conformance-matrix.md   test matrix derived from the spec, mapped to PRD IDs
@@ -58,10 +58,19 @@ scripts/e2e-fakeip.sh
   normative change that moved this pin to v1.8.2.
 - `cargo build --release --locked` succeeds on macOS/aarch64, which confirms the
   plan of building the Rust implementation only as a host-side oracle.
-- `oracle-diff.sh` — passes. Five cases, both implementations, identical
-  outcomes: payload by address, payload by name, `DIAL_FAILED`, a wrong key, and
-  a UDP-over-stream round trip. Verified to fail: encoding a domain target with
-  the IPv4 ATYP diverges on one case and the script exits non-zero.
+- `oracle-diff.sh` — passes. Thirteen cases, both implementations, identical
+  outcomes. Five of them — payload by address, payload by name, `DIAL_FAILED`, a
+  wrong key, a UDP-over-stream round trip — run **twice**, once over dedicated
+  lanes and once over a Mux carrier, because Mux is supposed to change how the
+  frames travel and nothing else. The remaining three are the arithmetic: with
+  sixteen flows opened at once and held open together, the Portal accepted
+  sixteen connections from each implementation at `mux=0` and four from each at
+  `mux=1`, which is upstream's stated density of four active flows per shard.
+  Verified to fail twice: encoding a domain target with the IPv4 ATYP diverges
+  on one case, and a client that stops multiplexing is caught by the count
+  rather than passing on the outcomes. It has found one real defect — a Portal
+  rejection that only one of the two carriers reported in a form a caller could
+  read. See `cases/l1-coverage.md`.
 - `e2e-fakeip.sh` — passes on a local emulator (API 32, arm64-v8a). Verified to
   fail: bypassing the DNS interceptor turns it red with an unknown host.
 - `e2e-fakeip.sh` also runs the device set under **both** `mux=0` and `mux=1`
