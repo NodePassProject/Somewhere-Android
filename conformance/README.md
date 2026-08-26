@@ -24,7 +24,9 @@ scripts/e2e-android.sh        host-side Portal + on-device connectedAndroidTest
 scripts/e2e-fakeip.sh         remote resolution on a device: a name only the Portal knows
 scripts/oracle-diff.sh        the same cases through both implementations, outcomes compared
 scripts/oracle-cases.py       the oracle's half of that comparison, over raw SOCKS5
+scripts/portal-lifecycle.sh   the two cases that need the Portal to stop being there
 cases/conformance-matrix.md   test matrix derived from the spec, mapped to PRD IDs
+cases/l1-coverage.md          every L1 row and the test that covers it, or why it has none
 ```
 
 ## What you can run right now
@@ -62,6 +64,10 @@ scripts/e2e-fakeip.sh
   the IPv4 ATYP diverges on one case and the script exits non-zero.
 - `e2e-fakeip.sh` — passes on a local emulator (API 32, arm64-v8a). Verified to
   fail: bypassing the DNS interceptor turns it red with an unknown host.
+- `portal-lifecycle.sh` — passes. The Portal reclaimed a connection that
+  authenticated and then said nothing after **40004 ms**, which is NW-P-11's
+  forty seconds observed rather than transcribed; and a session kept working
+  across a Portal kill and restart with nothing asked of the user.
 
 ## Device side
 

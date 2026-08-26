@@ -4,6 +4,10 @@ Derived case by case from Nowhere `docs/protocol.md` (v1.8.2 @ 8807960c).
 The **Req** column references PRD requirement IDs. The **Layer** column is the
 earliest delivery layer that should cover the case.
 
+**Which of these are actually covered is in [`l1-coverage.md`](l1-coverage.md)**,
+row by row, for every L1 case. This file says what ought to be tested; that one
+says what is, and names the reason wherever the answer is "not automatically".
+
 Three case types:
 
 - **KAT** — byte-level fixed vector, pure unit test, no network needed. Fixtures

@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.url.ImportLink
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.MonoChip
@@ -82,9 +83,15 @@ fun ImportScreen(
     // A link that arrived through the deep link and one the user pasted go down
     // exactly the same path. There is no second, more forgiving reader for text
     // the system handed us.
-    val parsed = remember(typed) { typed.trim().takeIf { it.isNotEmpty() }?.let { NowhereUrl.parse(it) } }
+    // A dashboard's "add to app" button hands over a link wrapped in another
+    // link — `anywhere://add-proxy?link=…` — so the payload is unwrapped before
+    // either parser sees it. The field keeps showing what the user actually
+    // gave; what was understood is shown below it, which is the honest way
+    // round when the two differ.
+    val effective = remember(typed) { ImportLink.unwrap(typed.trim()) }
+    val parsed = remember(effective) { effective.takeIf { it.isNotEmpty() }?.let { NowhereUrl.parse(it) } }
     val node = (parsed as? DecodeResult.Ok)?.value
-    val subscriptionUrl = remember(typed) { typed.trim().takeIf { it.looksLikeSubscription() } }
+    val subscriptionUrl = remember(effective) { effective.takeIf { it.looksLikeSubscription() } }
     val plaintext = subscriptionUrl?.startsWith("http://", ignoreCase = true) == true
     val verified = node?.certificateVerification?.isVerified ?: true
 
