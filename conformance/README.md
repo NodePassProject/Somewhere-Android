@@ -64,6 +64,12 @@ scripts/e2e-fakeip.sh
   the IPv4 ATYP diverges on one case and the script exits non-zero.
 - `e2e-fakeip.sh` — passes on a local emulator (API 32, arm64-v8a). Verified to
   fail: bypassing the DNS interceptor turns it red with an unknown host.
+- `e2e-fakeip.sh` also runs the device set under **both** `mux=0` and `mux=1`
+  on every invocation, and asserts the arithmetic L2 exists for. Measured on a
+  local emulator: sixteen concurrent flows over **sixteen** TLS connections at
+  `mux=0` and over **four** at `mux=1`, counted from the source ports in the
+  Portal's own exchange lines. Verified to fail: the version of the client that
+  raced its placements used fifteen, and the assertion catches it.
 - `portal-lifecycle.sh` — passes. The Portal reclaimed a connection that
   authenticated and then said nothing after **40004 ms**, which is NW-P-11's
   forty seconds observed rather than transcribed; and a session kept working
