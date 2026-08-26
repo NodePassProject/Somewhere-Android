@@ -144,10 +144,36 @@ data class MuxHeader(
         const val FLAG_MASK: Int = FLAG_SYN or FLAG_FIN or FLAG_RST
 
         const val MAX_STREAM_PAYLOAD: Int = 32768
+
+        /**
+         * The most credit one WINDOW frame can return.
+         *
+         * Not a policy: `value` is a u16, so this is what the field holds. It
+         * matters because the receive windows are 512 KiB — eight times this —
+         * so credit for a window's worth of consumed bytes does not fit in one
+         * frame and has to be returned in several. Encoding it into one would
+         * truncate silently, and the peer would stall a long way from the end
+         * of a transfer that looked healthy.
+         */
+        const val MAX_WINDOW_CREDIT: Int = 0xFFFF
         const val DEFAULT_STREAM_CREDIT: Int = 524288
         const val DEFAULT_CONNECTION_CREDIT: Int = 524288
         const val MAX_ACTIVE_STREAMS: Int = 256
         const val OUTBOUND_QUEUE_SLOTS: Int = 512
+
+        /**
+         * A new Shard opens once every live one in the set holds this many
+         * active flows (`docs/protocol.md` section 3).
+         *
+         * Runtime placement, not a wire field: nothing on the connection says
+         * which Shard a flow landed on. It is here beside the other bounds
+         * because it is pinned by the same fixture and moved once already —
+         * v1.8.1 changed it, and nothing was reading it at the time.
+         */
+        const val SHARD_FLOW_THRESHOLD: Int = 4
+
+        /** A Shard with no flows at all closes after this long. */
+        const val SHARD_IDLE_CLOSE_SECONDS: Int = 30
 
         fun decode(
             input: ByteArray,

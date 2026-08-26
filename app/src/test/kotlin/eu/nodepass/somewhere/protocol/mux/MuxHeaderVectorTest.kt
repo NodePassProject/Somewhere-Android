@@ -86,6 +86,12 @@ class MuxHeaderVectorTest {
         assertEquals(bound("connectionReceiveCredit"), MuxHeader.DEFAULT_CONNECTION_CREDIT)
         assertEquals(bound("maxActiveStreams"), MuxHeader.MAX_ACTIVE_STREAMS)
         assertEquals(bound("outboundQueueSlots"), MuxHeader.OUTBOUND_QUEUE_SLOTS)
+        // The two the shard layer reads. They are pinned here rather than
+        // retyped in the placement code, because the density moved once
+        // already — v1.8.1 changed it while nothing was reading it, and it sat
+        // wrong in the fixture for a day without anything noticing.
+        assertEquals(bound("shardFlowThreshold"), MuxHeader.SHARD_FLOW_THRESHOLD)
+        assertEquals(bound("shardIdleCloseSeconds"), MuxHeader.SHARD_IDLE_CLOSE_SECONDS)
     }
 
     // ── Rejection vectors ───────────────────────────────────────────────────
