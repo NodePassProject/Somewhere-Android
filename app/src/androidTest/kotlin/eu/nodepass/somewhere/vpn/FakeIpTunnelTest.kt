@@ -3,7 +3,6 @@
 
 package eu.nodepass.somewhere.vpn
 
-import android.net.VpnService
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import eu.nodepass.somewhere.dns.FakeIpPool
 import org.junit.After
@@ -45,13 +44,12 @@ import java.net.InetAddress
 class FakeIpTunnelTest {
     @Before
     fun consentIsAlreadyGranted() {
-        // The script pre-grants it with `appops`. Without it `establish()`
-        // returns null and every assertion below fails for a reason that has
-        // nothing to do with what is under test.
-        assumeTrue(
-            "VPN consent was not pre-granted; see conformance/scripts/e2e-fakeip.sh",
-            VpnService.prepare(TunnelHarness.context) == null,
-        )
+        // A missing pre-grant is a skip on a bare device and a **failure** when
+        // a Portal was supplied — because at that point the script ran, the
+        // whole environment is standing, and a silent skip looks exactly like a
+        // pass. Four device cases skipped that way once, in a run whose summary
+        // said BUILD SUCCESSFUL.
+        E2eEnvironment.requireConsent(TunnelHarness.context)
     }
 
     @After

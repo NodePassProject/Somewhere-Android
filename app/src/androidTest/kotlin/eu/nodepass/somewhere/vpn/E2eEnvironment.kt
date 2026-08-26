@@ -3,6 +3,8 @@
 
 package eu.nodepass.somewhere.vpn
 
+import android.content.Context
+import android.net.VpnService
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assume.assumeTrue
 
@@ -44,6 +46,31 @@ object E2eEnvironment {
             value != null,
         )
         return value!!
+    }
+
+    /**
+     * VPN consent, pre-granted by the script with `appops`.
+     *
+     * A skip when nothing configured this run, and a **failure** when a Portal
+     * was supplied. The difference matters: with a Portal set, the script ran,
+     * the containers are up and the device is installed — a skip there is
+     * indistinguishable from a pass, and four device cases went that way once
+     * in a run that finished BUILD SUCCESSFUL. Reinstalling the app clears the
+     * grant, so this is a live failure mode rather than a defensive check.
+     */
+    fun requireConsent(context: Context) {
+        val granted = VpnService.prepare(context) == null
+        if (portal == null) {
+            assumeTrue("no Portal configured, so there is nothing to consent to", granted)
+            return
+        }
+        if (!granted) {
+            throw AssertionError(
+                "a Portal is configured but VPN consent is not granted — the app was most likely " +
+                    "reinstalled after the pre-grant. Re-run conformance/scripts/e2e-fakeip.sh, " +
+                    "which grants it with `cmd appops` immediately before the run.",
+            )
+        }
     }
 
     fun requireOrigin(): String {

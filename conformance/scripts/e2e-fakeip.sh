@@ -169,13 +169,26 @@ echo "OK  VPN consent pre-granted"
 
 # --- Run -------------------------------------------------------------------
 step "instrumentation"
+# The instrumentation task installs the app itself when the APK has changed,
+# and a reinstall clears the grant made above. Granting once more here costs
+# nothing and closes the window; the tests fail loudly rather than skipping if
+# it is somehow still missing.
 BEFORE="$(docker logs "$PORTAL_CONTAINER" 2>&1 | wc -l | tr -d ' ')"
+grant_vpn_consent || true
+# ALL_CLASSES=1 runs the whole instrumentation suite rather than the device
+# cases alone — what the end of a phase needs, under each locale in turn.
+if [ -n "${ALL_CLASSES:-}" ]; then
+    CLASSES=""
+else
+    CLASSES="eu.nodepass.somewhere.vpn.FakeIpTunnelTest,eu.nodepass.somewhere.vpn.ThroughputOnDeviceTest"
+fi
+
 ( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
     -PnowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
     -PnowhereE2eKey="$KEY" \
     -PnowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
     -PnowhereE2eTarget="${ORIGIN_IP}:${ORIGIN_PORT}" \
-    -Pandroid.testInstrumentationRunnerArguments.class=eu.nodepass.somewhere.vpn.FakeIpTunnelTest,eu.nodepass.somewhere.vpn.ThroughputOnDeviceTest \
+    ${CLASSES:+-Pandroid.testInstrumentationRunnerArguments.class=$CLASSES} \
     ) 2>&1 | tail -30
 STATUS=${PIPESTATUS[0]}
 
