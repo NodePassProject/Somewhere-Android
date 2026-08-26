@@ -263,11 +263,14 @@ class DesignRuleUiTest {
                 )
             compose.waitForIdle()
 
-            // Exact matches only, never substrings. In Chinese the connected
-            // status reads 已连接 and the heading above it reads 已连接到, so a
-            // substring assertion matches both and fails on a screen that is
-            // perfectly correct — the same class of locale trap that
-            // sectionLabel() exists for.
+            // Exact matches only, never substrings. In the Simplified Chinese
+            // translation the connected *status* is a strict prefix of the
+            // connected *heading* — one is the other with a preposition
+            // appended — so a substring assertion matches both nodes and fails
+            // on a screen that is perfectly correct. The English strings happen
+            // not to nest that way, which is what makes it a locale trap rather
+            // than a bug: it passes wherever it is written and fails elsewhere.
+            // The same class of thing sectionLabel() exists for.
             val heading = if (connected) R.string.home_connected_to else R.string.home_not_connected
             val otherHeading = if (connected) R.string.home_not_connected else R.string.home_connected_to
             compose.onNodeWithText(sectionLabel(heading)).assertIsDisplayed()
