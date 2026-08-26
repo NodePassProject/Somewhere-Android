@@ -262,6 +262,45 @@ docker logs "$PORTAL_CONTAINER" 2>&1 | grep "exchange starting" | tail -2
 [ "$STATUS" -eq 0 ] || fail "the instrumentation test failed (exit $STATUS)"
 [ -n "$DIALLED" ] || fail "the Portal was never asked to dial ${ORIGIN_NAME} — the name did not survive the client"
 
+# --- The shard arithmetic, measured on its own -----------------------------
+# The per-mode figures above cover whatever case set was run, and each case
+# stops the tunnel when it finishes — which closes that session's carriers, so
+# the totals mix several tunnels and the ratio drifts with the case list.
+#
+# This is the claim stated exactly: sixteen flows *in one tunnel, at the same
+# time*, over both carriers. At a shard density of four the answer is four.
+if [ "$MODES" = "0 1" ]; then
+    step "sixteen concurrent flows, one tunnel, each carrier"
+    for MODE in 0 1; do
+        grant_vpn_consent || fail "could not pre-grant VPN consent"
+        MARK="$(docker logs "$PORTAL_CONTAINER" 2>&1 | wc -l | tr -d ' ')"
+        ( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
+            -Pandroid.testInstrumentationRunnerArguments.nowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
+            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eKey="$KEY" \
+            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
+            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eMux="$MODE" \
+            -Pandroid.testInstrumentationRunnerArguments.class=eu.nodepass.somewhere.vpn.ConcurrentFlowsTest \
+            -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
+            ) >/dev/null 2>&1 || fail "the concurrent-flow case failed at mux=$MODE"
+        N="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$MARK" | grep -c "exchange starting" || true)"
+        C="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$MARK" \
+            | grep -o "UP\[TCP\] [0-9.]*:[0-9]*" | sort -u | wc -l | tr -d ' ')"
+        printf '  mux=%s: %s concurrent flows over %s TLS connection(s)\n' "$MODE" "$N" "$C"
+        eval "ONE_TUNNEL_FLOWS_$MODE=$N"
+        eval "ONE_TUNNEL_PORTS_$MODE=$C"
+    done
+
+    [ "${ONE_TUNNEL_PORTS_0:-0}" -eq "${ONE_TUNNEL_FLOWS_0:-0}" ] \
+        || fail "mux=0 used ${ONE_TUNNEL_PORTS_0} connections for ${ONE_TUNNEL_FLOWS_0} flows; L1 is one per flow"
+
+    # ceil(N / 4), with a little room: a flow that finishes before the last one
+    # starts frees a slot, so the true figure can be lower and never higher.
+    EXPECTED=$(( (${ONE_TUNNEL_FLOWS_1:-0} + 3) / 4 ))
+    [ "${ONE_TUNNEL_PORTS_1:-99}" -le "$EXPECTED" ] \
+        || fail "mux=1 used ${ONE_TUNNEL_PORTS_1} connections for ${ONE_TUNNEL_FLOWS_1} flows; a shard density of four allows $EXPECTED"
+    echo "  ceil(${ONE_TUNNEL_FLOWS_1}/4) = $EXPECTED, and mux=1 used ${ONE_TUNNEL_PORTS_1}"
+fi
+
 # --- Did multiplexing actually multiplex? ----------------------------------
 # The arithmetic L2 exists for. Asserted rather than printed, because "fewer
 # connections" is the entire claim and a run that quietly stopped multiplexing

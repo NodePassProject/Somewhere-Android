@@ -28,6 +28,19 @@ import java.util.concurrent.TimeUnit
  * upstream's numbers, and one of them moved in v1.8.1 while nothing here was
  * reading it.
  *
+ * ## Placement is a reservation, not a look
+ *
+ * The obvious implementation — read the loads, pick the least, return it —
+ * is wrong under exactly the load this layer exists for. Sixteen flows opening
+ * at once all read an empty set, all decide a carrier is needed, and all open
+ * one: sixteen connections for sixteen flows, which is what Mux was supposed
+ * to avoid. Measured on a device at fifteen of sixteen before this was fixed.
+ *
+ * So a placement *reserves* a slot on the carrier it picked, and the reservation
+ * counts toward that carrier's load until the flow is open or has failed. And
+ * only one carrier is opened at a time: a thread that finds nothing with room
+ * while another is already opening waits for it rather than opening a second.
+ *
  * ## Placed, never migrated
  *
  * A flow is bound to the carrier it opened on for its whole life. Moving it
@@ -54,7 +67,12 @@ class MuxShardSet(
     automaticReaping: Boolean = true,
 ) : AutoCloseable {
     private val shards = mutableListOf<MuxCarrier>()
-    private val lock = Any()
+
+    /** A plain monitor rather than `Any()`, because waiters need wait/notify. */
+    private val lock = Object()
+
+    /** Whether a carrier is being opened right now. At most one at a time. */
+    private var opening = false
 
     @Volatile private var closed = false
 
@@ -81,40 +99,90 @@ class MuxShardSet(
     val activeFlowCount: Int get() = synchronized(lock) { shards.sumOf { it.activeFlowCount } }
 
     /**
-     * The carrier a new flow should open on.
+     * Places one flow and opens it, holding the placement for as long as that
+     * takes.
+     *
+     * The lambda rather than a bare `place()` because the reservation has to be
+     * released however the open ends, and an API that can be called out of
+     * balance eventually is: a leaked reservation makes a carrier look busier
+     * than it is, forever, and nothing reports it.
+     */
+    fun <T : Any> placing(open: (MuxCarrier, MuxCarrier.Slot) -> DecodeResult<T>): DecodeResult<T> {
+        val carrier =
+            when (val placed = place()) {
+                is DecodeResult.Ok -> placed.value
+                is DecodeResult.Invalid -> return placed
+            }
+        val slot = carrier.reserve()
+        return try {
+            open(carrier, slot)
+        } finally {
+            // A no-op when `open` already released it at registration, which is
+            // the ordinary case. This is for the paths that never got there.
+            carrier.release(slot)
+        }
+    }
+
+    /**
+     * The carrier a new flow should open on, with a slot reserved on it.
      *
      * The least-loaded live one, or a new one when every live carrier already
      * holds the threshold. Least-loaded rather than first-fit because flows do
      * not end in the order they began: a carrier that has lost three of its
-     * four has room, and first-fit would leave it idle while opening a fifth
+     * four has room, and first-fit would leave it idle while opening another
      * connection.
+     *
+     * Every call must be paired with [release]. Prefer [placing], which cannot
+     * be called out of balance.
      */
     fun place(): DecodeResult<MuxCarrier> {
-        if (closed) return invalid(MuxShardReason.SetClosed)
+        while (true) {
+            // A flag rather than an early exit from the `synchronized` lambda:
+            // `return@synchronized` leaves the lambda and then carries straight
+            // on to the code below it, so every waiting thread opened a carrier
+            // anyway and the fix fixed nothing. The test that caught that is
+            // `aBurstOfSimultaneousFlowsDoesNotOpenACarrierEach`.
+            var mineToOpen = false
+            synchronized(lock) {
+                if (closed) return invalid(MuxShardReason.SetClosed)
+                dropDeadShards()
+                val candidate =
+                    shards
+                        .filter { it.load < MuxHeader.SHARD_FLOW_THRESHOLD }
+                        .minByOrNull { it.load }
+                if (candidate != null) return candidate.ok()
 
-        synchronized(lock) {
-            dropDeadShards()
-            val candidate =
-                shards
-                    .filter { it.activeFlowCount < MuxHeader.SHARD_FLOW_THRESHOLD }
-                    .minByOrNull { it.activeFlowCount }
-            if (candidate != null) return candidate.ok()
-        }
-
-        // Opened outside the lock: it is a TCP connect and a TLS handshake, and
-        // holding the lock across it would stall every other flow's placement
-        // for the length of a round trip.
-        return when (val opened = openCarrier()) {
-            is DecodeResult.Invalid -> opened
-            is DecodeResult.Ok -> {
-                synchronized(lock) {
-                    if (closed) {
-                        opened.value.close()
-                        return invalid(MuxShardReason.SetClosed)
-                    }
-                    shards += opened.value
+                // Somebody else is already opening one. Wait for them rather
+                // than opening a second: without this, a burst of flows opens a
+                // carrier each and multiplexes nothing.
+                if (opening) {
+                    lock.wait(OPEN_WAIT_MILLIS)
+                } else {
+                    opening = true
+                    mineToOpen = true
                 }
-                opened
+            }
+            if (!mineToOpen) continue
+
+            // Only the thread that claimed `opening` reaches here. Opened
+            // outside the lock: it is a TCP connect and a TLS handshake, and
+            // holding the lock across it would stall every other placement for
+            // the length of a round trip.
+            val opened = openCarrier()
+            synchronized(lock) {
+                opening = false
+                lock.notifyAll()
+                when (opened) {
+                    is DecodeResult.Invalid -> return opened
+                    is DecodeResult.Ok -> {
+                        if (closed) {
+                            opened.value.close()
+                            return invalid(MuxShardReason.SetClosed)
+                        }
+                        shards += opened.value
+                        return opened
+                    }
+                }
             }
         }
     }
@@ -133,7 +201,9 @@ class MuxShardSet(
                 dropDeadShards()
                 val idle =
                     shards.filter {
-                        it.activeFlowCount == 0 && it.idleMillis() >= MuxHeader.SHARD_IDLE_CLOSE_SECONDS * 1_000L
+                        // A reservation counts: a carrier picked a moment ago
+                        // has no flows yet and is not idle.
+                        it.load == 0 && it.idleMillis() >= MuxHeader.SHARD_IDLE_CLOSE_SECONDS * 1_000L
                     }
                 shards.removeAll(idle)
                 idle
@@ -145,13 +215,16 @@ class MuxShardSet(
     private fun dropDeadShards() {
         val dead = shards.filter { !it.isOpen }
         shards.removeAll(dead)
-        dead.forEach { runCatching { it.close() } }
+        dead.forEach {
+            runCatching { it.close() }
+        }
     }
 
     override fun close() {
         val all =
             synchronized(lock) {
                 closed = true
+                lock.notifyAll()
                 shards.toList().also { shards.clear() }
             }
         all.forEach { runCatching { it.close() } }
@@ -166,6 +239,15 @@ class MuxShardSet(
          * seconds of becoming due rather than up to a whole timeout late.
          */
         const val REAP_INTERVAL_SECONDS = 5L
+
+        /**
+         * How long a placement waits for somebody else's carrier to come up
+         * before looking again.
+         *
+         * A bound rather than a plain wait, so that an opener which dies
+         * without notifying cannot leave every other placement asleep.
+         */
+        const val OPEN_WAIT_MILLIS = 250L
     }
 }
 

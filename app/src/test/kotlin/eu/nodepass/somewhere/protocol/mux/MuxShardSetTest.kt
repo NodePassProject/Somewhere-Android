@@ -16,6 +16,10 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 /**
  * Placement. NW-P-17, `docs/protocol.md` section 3.
@@ -57,9 +61,13 @@ class MuxShardSetTest {
 
     /** Places a flow and opens it, as the session does. */
     private fun openOne(shards: MuxShardSet): Pair<MuxCarrier, Flow> {
-        val carrier = (shards.place() as DecodeResult.Ok).value
-        val flow = (carrier.open(target, FlowKind.Tcp, nextFlowId++) as DecodeResult.Ok).value
-        return carrier to flow
+        var placed: MuxCarrier? = null
+        val flow =
+            shards.placing { carrier, slot ->
+                placed = carrier
+                carrier.open(target, FlowKind.Tcp, nextFlowId++, ByteArray(0), slot)
+            }
+        return placed!! to (flow as DecodeResult.Ok).value
     }
 
     @Test
@@ -193,6 +201,45 @@ class MuxShardSetTest {
         carriers.forEach { assertTrue("every carrier closes with the set", !it.isOpen) }
         assertEquals(0, shards.liveShardCount)
         assertTrue(shards.place() is DecodeResult.Invalid)
+    }
+
+    @Test
+    fun aBurstOfSimultaneousFlowsDoesNotOpenACarrierEach() {
+        // The defect this class was rewritten for, and it was found on a
+        // device rather than here: sixteen concurrent flows opened fifteen TLS
+        // connections. Every thread read the same empty carrier set, every one
+        // decided a carrier was needed, and every one opened one — multiplexing
+        // nothing, under exactly the load multiplexing exists for.
+        //
+        // Two things fix it and both are asserted by this test: a placement
+        // reserves its slot, so the next thread sees the carrier as loaded
+        // before the flow is open; and only one carrier is opened at a time, so
+        // threads that find nothing with room wait rather than racing.
+        val shards = shardSet()
+        val flows = 16
+        val ready = CountDownLatch(1)
+        val done = CountDownLatch(flows)
+        val failures = AtomicInteger(0)
+
+        val threads =
+            (1..flows).map {
+                thread {
+                    ready.await()
+                    runCatching { openOne(shards) }.onFailure { failures.incrementAndGet() }
+                    done.countDown()
+                }
+            }
+        ready.countDown()
+        assertTrue("every flow should have opened", done.await(60, TimeUnit.SECONDS))
+        threads.forEach { it.join(5_000) }
+
+        assertEquals("no flow may fail", 0, failures.get())
+        assertEquals(flows, shards.activeFlowCount)
+        assertEquals(
+            "sixteen simultaneous flows over a density of four",
+            (flows + MuxHeader.SHARD_FLOW_THRESHOLD - 1) / MuxHeader.SHARD_FLOW_THRESHOLD,
+            shards.liveShardCount,
+        )
     }
 
     @Test

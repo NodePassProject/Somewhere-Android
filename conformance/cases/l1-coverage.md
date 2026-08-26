@@ -1,7 +1,8 @@
-# L1 coverage map
+# L1 and L2 coverage map
 
-Every L1 row of [`conformance-matrix.md`](conformance-matrix.md), and the test
-that covers it. Sixty-three rows, in the matrix's own order.
+Every L1 and L2 row of [`conformance-matrix.md`](conformance-matrix.md), and
+the test that covers it. Sixty-three L1 rows and twenty-one L2 rows, in the
+matrix's own order.
 
 A row is in one of three states, and there is no fourth:
 
@@ -161,3 +162,46 @@ Three things, which is the argument for writing it rather than assuming it:
    the seven rejections need a carrier this layer does not have. Left as a bare
    E2E row it reads as work not yet done; named as unreachable it becomes a
    case L2 and L3 inherit.
+
+
+---
+
+# L2
+
+Twenty-one rows, added when the Mux carrier landed. The same three states, and
+the same rule: no row is silent.
+
+| # | Case | State | Covered by |
+|---|---|---|---|
+| 1 | No duplicate `flowId` under concurrent flow opening (stress) | covered | `FlowIdAllocatorTest.concurrentAllocationNeverHandsOutADuplicate`; and end to end by `MuxSessionTest.nConcurrentFlowsCostCeilingOfNOverFourConnections`, where sixteen flows open at once on one id space |
+| 2 | FLOW_LIMIT: exceed the flow cap | covered (client side) / manual (Portal side) | `MuxCarrierTest.theCarrierRefusesMoreThanItsStreamCap` — this client refuses its 257th stream itself, so the Portal is never asked. Provoking the Portal's own `FLOW_LIMIT` means deliberately breaking that cap, which is a case for a fault-injecting build rather than the shipping one |
+| 3 | `0xff` marker after AuthFrame; Portal does not echo it | covered | `MuxCarrierTest.theMarkerIsWrittenOnceAfterTheAuthenticationFrame` reads it off the wire at a peer; `.theMarkerCannotBeMistakenForAFlowHeader` is why the dispatch works. Against a live Portal by `e2e-fakeip.sh` under `mux=1`, where nothing would open at all if the marker were wrong |
+| 4 | MuxHeader 8-byte layout | covered | `MuxHeaderVectorTest.theHeaderIsEightBytesInTheDocumentedOrder` |
+| 5 | STREAM and WINDOW encode/decode | covered | `MuxHeaderVectorTest.validHeadersRoundTrip`, `.theFixtureKindBytesMatchTheEnum` |
+| 6 | A DATAGRAM kind closes the carrier as unsupported | covered | `MuxCarrierTest.aDatagramFrameClosesTheCarrier` — a peer really sends one and the carrier really goes |
+| 7 | SYN opens, FIN half-closes, RST resets | covered | `MuxCarrierTest.aFlowOpensAndCarriesBytesBothWays`, `.aFinFromThePortalIsACleanEndOfStream`, `.aResetFailsTheStreamWithItsOwnReason`, `.closingAFlowHalfClosesItRatherThanTheCarrier` |
+| 8 | RST must be the only flag with `value=0` | covered | `MuxHeaderVectorTest.everyRejectionVectorIsRefused` (both halves: `ResetNotAlone` and `ResetWithValue`) |
+| 9 | Any other flag bit set is rejected | covered | `MuxHeaderVectorTest.everyReservedFlagBitIsRejected` |
+| 10 | Late FIN and RST processing is idempotent | covered | `MuxCarrierTest.lateFinAndResetAreIdempotent`. This row found a real defect: the first carrier treated a late FIN as data for an unknown flow and tore itself down whenever any flow closed |
+| 11 | Payload needs both credits before queueing | covered | `MuxCarrierCreditTest.aWindowWithFlowZeroReplenishesTheConnection` — stream credit alone is shown not to be enough. Verified to fail: removing the connection-credit check turns it red |
+| 12 | WINDOW with `flowId=0` replenishes connection credit | covered | as row 11 |
+| 13 | Credit beyond the configured window closes the carrier | covered | `MuxCreditTest.creditBeyondTheWindowIsRefused`, `MuxCarrierCreditTest.creditBeyondTheWindowClosesTheCarrier` |
+| 14 | Late WINDOW for a closed stream is ignored | covered | `MuxCarrierCreditTest.aLateWindowForAClosedStreamIsIgnored` |
+| 15 | A STREAM frame never exceeds 32 KiB of payload | covered | `MuxCarrierCreditTest.noStreamFrameCarriesMoreThanThirtyTwoKilobytes` — a 200 KB write, every frame measured, and the payload reassembled by digest |
+| 16 | 256-stream cap and 512 outbound queue slots respected | covered | `MuxCarrierTest.theCarrierRefusesMoreThanItsStreamCap`; `MuxCarrierCreditTest.aSlowPeerSlowsTheWriterRatherThanGrowingAQueue` for the queue |
+| 17 | A new shard at 4 active flows; a fully idle shard closes after 30 s | covered | `MuxShardSetTest.aNewShardOpensOnlyOnceEveryLiveOneIsFull`, `.aFullyIdleShardClosesAfterThirtySeconds`, `.aFlowArrivingJustBeforeTheDeadlineKeepsTheShard`. The two constants are read from the pinned fixture by `MuxHeaderVectorTest.theFixtureBoundsMatchTheConstants` rather than retyped |
+| 18 | Mux `flowId` matches the FlowHeader `flowId` | covered | `MuxCarrierTest.theMuxFlowIdEqualsTheFlowHeaderFlowId` — the peer decodes the FlowHeader out of the SYN payload and the ids are compared there, which is the only place the rule is observable |
+| 19 | Closing the carrier fails every logical stream on it | covered | `MuxCarrierTest.closingTheCarrierFailsEveryStreamOnItWithAStatedReason`, and `MuxCarrierRefusalTest.everyRefusalSaysSomethingDifferent` for the "each with its own reason" half |
+| 20 | The same case set runs under both `mux=0` and `mux=1` | covered | `conformance/scripts/e2e-fakeip.sh` runs the device set under both by default, and asserts the connection counts differ. Measured: 20 flows over 20 connections at `mux=0`, over 11 at `mux=1` |
+| 21 | Under queue pressure, packets are dropped rather than queued without bound | covered, with a correction | `MuxCarrierCreditTest.aSlowPeerSlowsTheWriterRatherThanGrowingAQueue`, and `UdpRelay`'s `MAX_FLOWS` for the datagram case. **Dropping is right for datagrams and wrong for stream bytes** — a dropped stream byte is a corrupt stream, not a lost packet. So the queue is bounded and a full one makes the writer wait, which on this client becomes back-pressure on the device's own TCP window. The row's wording is upstream's and is about the datagram plane |
+
+## L2 summary
+
+| State | Rows |
+|---|---|
+| covered by an automated test | 20 |
+| covered in part, with a named manual step | 1 — row 2, whose Portal-side `FLOW_LIMIT` this client cannot provoke without breaking its own cap |
+
+Row 25 of L1 said five of the seven rejections were unreachable at that layer.
+One of them, `FLOW_LIMIT`, is reachable at L2 in principle and is still not
+provoked here, for the reason in row 2 above. The other four remain L3's.

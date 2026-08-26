@@ -7,6 +7,7 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.SharedKey
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.mux.MuxCarrier
+import eu.nodepass.somewhere.protocol.mux.MuxCarrierReason
 import eu.nodepass.somewhere.protocol.mux.MuxShardSet
 import eu.nodepass.somewhere.protocol.target.Target
 import java.io.Closeable
@@ -170,16 +171,21 @@ class NowhereSession(
         flowId: UInt,
         firstPayload: ByteArray,
     ): DecodeResult<Flow> {
-        repeat(2) { attempt ->
-            val carrier =
-                when (val placed = shards.place()) {
-                    is DecodeResult.Ok -> placed.value
-                    is DecodeResult.Invalid -> return placed
-                }
-            val opened = carrier.open(target, kind, flowId, firstPayload)
-            if (opened is DecodeResult.Ok || attempt == 1 || carrier.isOpen) return opened
+        // `placing` rather than a bare place: the placement reserves a slot on
+        // the carrier it chose, and the reservation has to be given back
+        // however the open ends. Without the reservation a burst of flows all
+        // read the same empty carrier set and open one connection each, which
+        // is the whole of what Mux exists to avoid — measured at fifteen
+        // connections for sixteen concurrent flows before it existed.
+        var result = shards.placing { carrier, slot -> carrier.open(target, kind, flowId, firstPayload, slot) }
+
+        // A carrier reaped or reset between placement and open is ordinary.
+        // Failing the flow for it would surface as a page that intermittently
+        // does not load, so it is retried once on a fresh placement.
+        if (result is DecodeResult.Invalid && result.reason is MuxCarrierReason.TransportClosed) {
+            result = shards.placing { carrier, slot -> carrier.open(target, kind, flowId, firstPayload, slot) }
         }
-        return DecodeResult.Invalid(SessionReason.NoCarrier)
+        return result
     }
 
     override fun close() {

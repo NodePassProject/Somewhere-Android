@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * One TLS connection carrying many logical flows. NW-P-12 to NW-P-17,
@@ -121,8 +122,51 @@ class MuxCarrier(
     private var reader: Thread? = null
     private var writer: Thread? = null
 
-    /** Live flows, which is what shard placement is decided on. */
+    /** Live flows on this carrier. */
     val activeFlowCount: Int get() = streams.size
+
+    /**
+     * Placements made on this carrier whose flows are not yet registered.
+     *
+     * @see Slot
+     */
+    private val pending = AtomicInteger(0)
+
+    /**
+     * What shard placement is decided on: flows plus placements owed.
+     *
+     * The two must not overlap, which is the entire reason [Slot] exists. A
+     * reservation held until `open` *returns* would double-count its own flow
+     * for the length of a setup round trip — the carrier would look twice as
+     * busy as it is and the shard set would open connections that were not
+     * needed, which is the defect this was written to fix, facing the other way.
+     */
+    val load: Int get() = streams.size + pending.get()
+
+    /**
+     * A held place on this carrier, from the moment it is chosen until its
+     * flow is registered.
+     *
+     * Needed because those two moments are not the same one. A flow that has
+     * been placed but not opened is invisible to [activeFlowCount], so a burst
+     * of simultaneous placements all read the same carrier as empty and all
+     * decide a new one is needed — sixteen connections for sixteen flows,
+     * measured on a device.
+     */
+    class Slot internal constructor() {
+        internal val released = AtomicBoolean(false)
+    }
+
+    /** Holds a place. Every reservation must reach [release] exactly once. */
+    fun reserve(): Slot {
+        pending.incrementAndGet()
+        return Slot()
+    }
+
+    /** Gives a place back. Idempotent, so the owner and [open] may both call it. */
+    fun release(slot: Slot?) {
+        if (slot != null && slot.released.compareAndSet(false, true)) pending.decrementAndGet()
+    }
 
     val isOpen: Boolean get() = !closed.get() && transport.isOpen
 
@@ -192,23 +236,39 @@ class MuxCarrier(
         kind: FlowKind,
         flowId: UInt,
         firstPayload: ByteArray = ByteArray(0),
+        /** The place this flow was given, released the moment it is registered. */
+        slot: Slot? = null,
     ): DecodeResult<Flow> {
-        if (!isOpen) return invalid(closeReason ?: MuxCarrierReason.TransportClosed)
+        if (!isOpen) {
+            release(slot)
+            return invalid(closeReason ?: MuxCarrierReason.TransportClosed)
+        }
         if (streams.size >= MuxHeader.MAX_ACTIVE_STREAMS) {
+            release(slot)
             return invalid(MuxCarrierReason.StreamLimit(MuxHeader.MAX_ACTIVE_STREAMS))
         }
-        if (flowId == 0u) return invalid(MuxReason.StreamFlowIdZero)
+        if (flowId == 0u) {
+            release(slot)
+            return invalid(MuxReason.StreamFlowIdZero)
+        }
 
         val header =
             when (val built = FlowHeader.forClient(FlowRole.Duplex, kind, FlowCarrier.TlsTcp, FlowCarrier.TlsTcp, flowId)) {
                 is DecodeResult.Ok -> built.value
-                is DecodeResult.Invalid -> return invalid(built.reason)
+                is DecodeResult.Invalid -> {
+                    release(slot)
+                    return invalid(built.reason)
+                }
             }
 
         val stream = Stream(flowId, target, kind)
         if (streams.putIfAbsent(flowId, stream) != null) {
+            release(slot)
             return invalid(MuxCarrierReason.FlowIdInUse(flowId))
         }
+        // Registered: from here the flow counts through `streams`, so the place
+        // it was holding must go back or it would be counted twice.
+        release(slot)
 
         val opening = header.encode() + target.encode() + firstPayload
         if (!send(stream, opening, flags = MuxHeader.FLAG_SYN)) {

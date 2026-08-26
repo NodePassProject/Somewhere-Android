@@ -5,7 +5,7 @@ The **Req** column references PRD requirement IDs. The **Layer** column is the
 earliest delivery layer that should cover the case.
 
 **Which of these are actually covered is in [`l1-coverage.md`](l1-coverage.md)**,
-row by row, for every L1 case. This file says what ought to be tested; that one
+row by row, for every L1 and L2 case. This file says what ought to be tested; that one
 says what is, and names the reason wherever the answer is "not automatically".
 
 Three case types:
