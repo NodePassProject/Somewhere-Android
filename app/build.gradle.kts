@@ -199,10 +199,21 @@ kover {
                     // of bytes an untrusted network chose, whose failures are
                     // silent. It happens not to be Nowhere's own wire format.
                     "eu.nodepass.somewhere.dns.*",
+                    // Which applications may be routed is policy, and policy
+                    // that is wrong is wrong silently — the same reason the
+                    // DNS layer is here.
+                    "eu.nodepass.somewhere.apps.*",
                 )
             }
             excludes {
                 classes(
+                    // The one class in `apps` that a JVM test cannot reach. It
+                    // is an adapter over `PackageManager` and holds no rule of
+                    // its own: everything it could get wrong lives in
+                    // AppInventory, which is inside the gate. Excluded by name
+                    // so that the exemption is visible rather than achieved by
+                    // leaving the whole package out.
+                    "eu.nodepass.somewhere.apps.PackageManagerApps",
                     "eu.nodepass.somewhere.BuildConfig",
                     "*.R",
                     "*.R$*",
