@@ -3,6 +3,9 @@
 
 package eu.nodepass.somewhere.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
@@ -217,6 +220,67 @@ class DesignRuleUiTest {
         compose.onAllNodesWithText("\u2014").assertCountEquals(5)
         compose.onNodeWithText(sectionLabel(R.string.home_connected_to)).assertIsDisplayed()
         compose.onNodeWithText(string(R.string.action_disconnect)).assertIsDisplayed()
+    }
+
+    @Test
+    fun theHomeScreenNeverContradictsItselfAboutBeingConnected() {
+        // The defect this exists for was on screen, not in a log: the header
+        // read "Not connected" while the button offered to disconnect, because
+        // one of them read the tunnel state and the other read a snapshot.
+        // Both now read `session.connected`, so the two can only disagree if
+        // somebody reintroduces a second source — which is the thing worth
+        // catching, and which nothing else would notice.
+        //
+        // Asserted over every state the screen can be in rather than over the
+        // one that broke, because the next second source will be introduced
+        // somewhere else.
+        // One composition, driven through each state, because `setContent` may
+        // be called only once per test — and because recomposing is what the
+        // screen really does when the tunnel changes, which is when the two
+        // readers used to drift apart.
+        var session by mutableStateOf(SampleState.session.copy(connected = false, connecting = false))
+        compose.setContent {
+            SomewhereTheme {
+                Home(
+                    node = SampleState.frankfurt,
+                    session = session,
+                    onOpenNodes = {},
+                    onOpenSettings = {},
+                )
+            }
+        }
+
+        listOf(
+            Triple(true, false, R.string.action_disconnect),
+            Triple(false, true, R.string.home_connecting),
+            Triple(false, false, R.string.action_connect),
+        ).forEach { (connected, connecting, action) ->
+            session =
+                SampleState.session.copy(
+                    connected = connected,
+                    connecting = connecting,
+                    measured = connected,
+                )
+            compose.waitForIdle()
+
+            // Exact matches only, never substrings. In Chinese the connected
+            // status reads 已连接 and the heading above it reads 已连接到, so a
+            // substring assertion matches both and fails on a screen that is
+            // perfectly correct — the same class of locale trap that
+            // sectionLabel() exists for.
+            val heading = if (connected) R.string.home_connected_to else R.string.home_not_connected
+            val otherHeading = if (connected) R.string.home_not_connected else R.string.home_connected_to
+            compose.onNodeWithText(sectionLabel(heading)).assertIsDisplayed()
+            compose.onNodeWithText(string(action)).assertIsDisplayed()
+
+            // The heading and the button are built at opposite ends of the
+            // file from the same field. A second state source shows up here as
+            // the two disagreeing, which is precisely what was once on screen.
+            compose.onAllNodesWithText(sectionLabel(otherHeading)).assertCountEquals(0)
+            listOf(R.string.action_connect, R.string.action_disconnect, R.string.home_connecting)
+                .filter { it != action }
+                .forEach { compose.onAllNodesWithText(string(it)).assertCountEquals(0) }
+        }
     }
 
     @Test
