@@ -1,8 +1,8 @@
-# L1 and L2 coverage map
+# L1, L2 and L3 coverage map
 
-Every L1 and L2 row of [`conformance-matrix.md`](conformance-matrix.md), and
-the test that covers it. Sixty-three L1 rows and twenty-one L2 rows, in the
-matrix's own order.
+Every L1, L2 and L3 row of [`conformance-matrix.md`](conformance-matrix.md),
+and the test that covers it. Sixty-three L1 rows, twenty-one L2 rows and
+twenty-seven L3 rows, in the matrix's own order.
 
 A row is in one of three states, and there is no fourth:
 
@@ -229,3 +229,87 @@ Carrier-specific failures — a lane used twice, a stream the peer reset — kee
 their own vocabularies, because those really are the carrier's own. Silence
 stays outside it: a Portal that answers nothing has named no `SetupResult`, and
 inventing one would be the same mistake facing the other way.
+
+---
+
+# L3
+
+Twenty-seven rows. **Nine are covered, eighteen are blocked on the same thing**
+and it is not eighteen different problems: this client has no QUIC connection
+yet, and the task that was to produce one — C0 of the run PRD — did not finish.
+See the L3 note below for where it stopped.
+
+The nine that are covered are covered *now*, not provisionally. They are the
+parts of section 9 that are arithmetic and framing rather than transport, and
+they are checked against the same fixture `verify-vectors.py` recomputes from
+the specification.
+
+| # | Case | State | Covered by |
+|---|---|---|---|
+| 1 | AuthFrame over QUIC (transport 0x02) matches | covered | `AuthVectorTest.everyPositiveVectorIsReproduced`, `.theTransportByteChangesTheTag` — the QUIC frame differs from the TLS one for the same key, which is the property the transport byte exists for |
+| 2 | `OPEN/UDP/quic-up/tls-down` encodes to `0d11223344` | covered | `FlowHeaderVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` |
+| 3 | `ATTACH/UDP/tls-up/quic-down` encodes to `1600000007` | covered | as row 2 |
+| 4 | `PAIR_TIMEOUT`: OPEN without ATTACH | blocked | needs a QUIC carrier to send OPEN on. L1 row 25 named it unreachable at that layer; it is unreachable at this one too, for now |
+| 5 | `METADATA_CONFLICT`: mismatched OPEN and ATTACH | blocked | as row 4 |
+| 6 | `SESSION_REPLACED`: a newer carrier for one session | blocked | as row 4 |
+| 7 | Only the downlink of a split flow receives the result | blocked | as row 4 |
+| 8 | Auth on the first bidirectional stream; later streams send none | blocked | needs a connection with streams |
+| 9 | Unidirectional streams are never used | blocked | a source-level rule with no source to rule over yet |
+| 10 | Only one bidirectional stream is credited before auth | blocked | needs a peer that withholds credit |
+| 11 | DATA 5-byte header | covered | `QuicDatagramVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` |
+| 12 | CLOSE 5-byte header | covered | as row 11, and `.everyRejectionInTheFixtureIsRefused` for the "exactly five bytes" half |
+| 13 | FRAGMENT 13-byte header | covered | as row 11 |
+| 14 | Type 3 and non-zero reserved bits rejected | covered | `QuicDatagramVectorTest.everyRejectionInTheFixtureIsRefused`, `.everyTruncationPointIsRejectedRatherThanCrashing` |
+| 15 | No DATA before READY | blocked | needs a flow that has not been answered yet |
+| 16 | Never fragment when the whole packet fits | covered | `QuicDatagramVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` (the fixture's own `payloadLens` case), `.aPacketThatFitsIsOneDataFrameAndCarriesNoFragmentHeader`. This row found a defect: `plan` refused a zero-length packet, having applied the fragment header's `total_len` nonzero rule to a whole packet |
+| 17 | `fragmentPayloadMax = maxDatagram - 13`; count in 2..255 | covered | `QuicDatagramVectorTest.theFragmentPlanMatchesTheFixturesOwnArithmetic`, `.everyRejectionInTheFixtureIsRefused` |
+| 18 | Reassembly keyed by `(flowId, packetId)` | covered | `FragmentReassemblyTest.packetsOnDifferentFlowsWithTheSameIdDoNotCollide` |
+| 19 | Identical duplicate ignored; differing bytes discard the packet | covered | `FragmentReassemblyTest.anIdenticalDuplicateIsIgnoredAndADifferingOneDiscardsThePacket` |
+| 20 | Conflicting count or totalLen discards the packet | covered | `FragmentReassemblyTest.aFragmentThatDisagreesAboutCountOrLengthDiscardsThePacket` |
+| 21 | Reassembled length not equal to totalLen discards the packet | covered | `FragmentReassemblyTest.aPacketThatDoesNotAddUpToItsDeclaredLengthIsDiscarded` |
+| 22 | Reassembly slots and lifetime are bounded (64 slots / 10 s) | covered | `FragmentReassemblyTest.slotsAreBoundedAndAFullTableRefusesNewPacketsRatherThanGrowing`, `.bytesAreBoundedSeparatelyFromSlots`, `.aPacketWhoseLastFragmentNeverComesGivesUpItsSlot`, `.arbitraryFragmentsNeitherCrashNorGrowWithoutBound`. Verified to fail: removing the byte budget turns it red. **The byte budget is a third bound the row does not name** — 64 slots alone would let one fragment each of 64 maximum-size packets pin four megabytes |
+| 23 | Replanning after maxDatagram shrinks uses a new packetId | covered | `PacketIdsTest.replanningTakesAFreshIdRatherThanReusingTheOne`, `.aShrunkenDatagramSizeReallyDoesProduceADifferentLayout` — the second states the reason as arithmetic rather than as prose |
+| 24 | packetId allocation skips zero | covered | `PacketIdsTest.theFirstIdIsNotZero`, `.idsDoNotRepeatWhileAFlowIsBusy`, `.concurrentAllocationNeverHandsOutADuplicate` |
+| 25 | All four carrier combinations interoperate | blocked | needs three of the four to exist |
+| 26 | Connection migrates or is rebuilt after a network change | blocked | needs a connection, and a physical device — see Phase D |
+| 27 | Keep-alive within the idle timeout, more frugal than 15 s | blocked | as row 26 |
+
+## L3 summary
+
+| State | Rows |
+|---|---|
+| covered by an automated test | 9 |
+| blocked on a QUIC connection this client does not have | 18 |
+
+No row is silent, and none of the eighteen is called "not yet written" — they
+are one missing piece, named once below.
+
+## Where C0 stopped
+
+The run PRD put a spike before any other L3 code, deliberately, because one
+requirement decides the shape of everything after it: **NW-P-01 authenticates a
+QUIC connection with transport byte `0x02` and an exporter under the label
+`EXPORTER-Nowhere-Auth`**, so whatever provides QUIC must expose RFC 5705
+keying material from its TLS 1.3 handshake.
+
+What was established before the spike stopped:
+
+- **Cronet is out.** It offers neither raw streams nor an exporter.
+- **ngtcp2 fits the shape a VPN needs.** It never owns a socket — the
+  application feeds it received datagrams and sends the ones it produces —
+  which is the only arrangement in which the UDP socket can be `protect()`-ed.
+  A library that opens its own socket cannot be kept out of the tunnel.
+- **Android's ngtcp2 story is much better than Apple's.** Ngtcp2 ships stock
+  crypto backends for BoringSSL and aws-lc, both of which build for Android
+  ABIs. The Apple client's 3,821 lines of Swift include a custom crypto backend
+  *and* a hand-written TLS 1.3 handshake, because that platform ships no TLS a
+  QUIC stack can drive; none of that recurs here.
+- **The JVM option is missing one thing.** Kwik's datagram API fits section 9
+  directly, and nothing in its documentation mentions keying-material export.
+
+**Why it stopped: the spike's definition of done is a QUIC connection
+authenticated against a real Portal, and that runs on a device.** No device or
+emulator was attached for this run, and an Android `.so` cannot be loaded by a
+JVM test on the build host. The blocker is hardware, not the technical
+question — which is a different thing from the contingency the PRD wrote for
+("no workable QUIC stack"), and is recorded as such rather than as a dead end.
