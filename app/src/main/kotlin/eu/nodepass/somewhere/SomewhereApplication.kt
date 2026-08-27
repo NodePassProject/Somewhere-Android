@@ -9,6 +9,8 @@ import eu.nodepass.somewhere.apps.PackageManagerApps
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.routing.RoutingPreferences
+import eu.nodepass.somewhere.routing.RuleStore
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,4 +53,15 @@ class SomewhereApplication : Application() {
 
     /** What the device has installed, for the screen that offers a choice. */
     val installedApps: PackageManagerApps by lazy { PackageManagerApps(this) }
+
+    /**
+     * The imported rule document, and whether rules apply at all.
+     *
+     * Two files, because they have different lifetimes: the document is
+     * replaced wholesale on every import, and losing the mode along with it
+     * would be a surprise.
+     */
+    val rules: RuleStore by lazy { RuleStore(File(filesDir, "routing/rules.txt")) }
+
+    val routing: RoutingPreferences by lazy { RoutingPreferences(File(filesDir, "routing/settings.txt")) }
 }

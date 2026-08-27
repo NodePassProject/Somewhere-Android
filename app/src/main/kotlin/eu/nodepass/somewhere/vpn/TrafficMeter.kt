@@ -39,6 +39,7 @@ class TrafficMeter(
 ) {
     private val upstream = AtomicLong(0)
     private val downstream = AtomicLong(0)
+    private val direct = AtomicLong(0)
 
     private var lastSampleAt: Long? = null
     private var lastUpstream = 0L
@@ -56,6 +57,26 @@ class TrafficMeter(
     fun recordDownstream(bytes: Int) {
         if (bytes > 0) downstream.addAndGet(bytes.toLong())
     }
+
+    /**
+     * Bytes that left the device without touching the Portal.
+     *
+     * Counted apart from both directions rather than added to either. A routing
+     * rule can send a large share of a device's traffic straight out, and a
+     * throughput figure that included it would describe the tunnel's load as
+     * something it is not — the same defect as one number for two directions,
+     * which this class refuses on the line above.
+     *
+     * Undirected on purpose: the interesting question about direct traffic is
+     * how much of it there is, and splitting it would imply a screen that shows
+     * two more figures nobody has designed.
+     */
+    fun recordDirect(bytes: Int) {
+        if (bytes > 0) direct.addAndGet(bytes.toLong())
+    }
+
+    /** Bytes that bypassed the tunnel entirely, in both directions together. */
+    val directBytes: Long get() = direct.get()
 
     val upstreamBytes: Long get() = upstream.get()
 

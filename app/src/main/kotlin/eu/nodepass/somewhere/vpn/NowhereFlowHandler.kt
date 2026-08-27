@@ -12,6 +12,11 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.target.Target
+import eu.nodepass.somewhere.routing.DirectDialer
+import eu.nodepass.somewhere.routing.RouteAction
+import eu.nodepass.somewhere.routing.Router
+import eu.nodepass.somewhere.routing.RoutingMode
+import eu.nodepass.somewhere.routing.RoutingRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -77,6 +82,15 @@ class NowhereFlowHandler(
      * silence the device reads as a broken network.
      */
     private val upstreamResolvers: List<ByteArray> = emptyList(),
+    /**
+     * Where each flow goes.
+     *
+     * Consulted once, here, and not in the DNS interceptor — see [Router] for
+     * why a name still gets a synthetic address whichever way it is routed.
+     */
+    private val router: Router = Router({ RoutingRules.EMPTY }, { RoutingMode.Everything }),
+    /** Opens the connections that do not go through the Portal. */
+    private val direct: DirectDialer = DirectDialer(protect = { false }),
     private val pump: () -> TunPump?,
 ) : TunPump.FlowHandler {
     private companion object {
@@ -130,6 +144,14 @@ class NowhereFlowHandler(
         val acknowledged = Channel<Unit>(capacity = Channel.CONFLATED)
 
         @Volatile var flow: Flow? = null
+
+        /**
+         * Whether this flow left the device without touching the Portal.
+         *
+         * Set once, before anything is dialled, and read by the byte counting
+         * afterwards — a direct byte is not a tunnelled byte.
+         */
+        @Volatile var direct: Boolean = false
 
         @Volatile var gone = false
         var job: Job? = null
@@ -338,6 +360,27 @@ class NowhereFlowHandler(
         if (connection.released.compareAndSet(false, true)) fakeIp.release(address)
     }
 
+    /**
+     * Counts bytes on the side of the tunnel they were actually on.
+     *
+     * A direct byte never reached the Portal, so adding it to the tunnel's
+     * figures would make the home screen's throughput a sum of two unrelated
+     * measurements — the same defect as one number for both directions, which
+     * this project already refused once.
+     */
+    private fun record(
+        connection: Connection,
+        upstream: Int = 0,
+        downstream: Int = 0,
+    ) {
+        if (connection.direct) {
+            meter.recordDirect(upstream + downstream)
+            return
+        }
+        if (upstream > 0) meter.recordUpstream(upstream)
+        if (downstream > 0) meter.recordDownstream(downstream)
+    }
+
     private suspend fun serve(connection: Connection) {
         // The device's first bytes usually arrive before the Portal answers.
         // Sending them in the opening write costs one round trip less, which
@@ -345,9 +388,27 @@ class NowhereFlowHandler(
         // parameter exists for.
         val first = connection.outbound.tryReceive().getOrNull() ?: ByteArray(0)
 
+        val action = router.decide(connection.target)
+        if (action == RouteAction.Reject) {
+            // A decision, not a failure. The device sees a reset, which is what
+            // it would see from a destination that refused it — there is no way
+            // to say "a rule forbade this" in TCP, and the reason is in the log
+            // rather than invented on the wire.
+            Log.i(TAG, "a rule rejects ${connection.target}")
+            abort(connection)
+            return
+        }
+        connection.direct = action == RouteAction.Direct
+
         val opened =
             withContext(Dispatchers.IO) {
-                runCatching { session.openFlow(connection.target, firstPayload = first) }
+                runCatching {
+                    if (connection.direct) {
+                        direct.connect(connection.target)
+                    } else {
+                        session.openFlow(connection.target, firstPayload = first)
+                    }
+                }
             }.getOrElse { error ->
                 Log.w(TAG, "dial failed for ${connection.target}: ${error.message}")
                 abort(connection)
@@ -358,7 +419,8 @@ class NowhereFlowHandler(
             when (opened) {
                 is DecodeResult.Ok -> opened.value
                 is DecodeResult.Invalid -> {
-                    Log.w(TAG, "the Portal refused ${connection.target}: ${opened.reason.detail}")
+                    val who = if (connection.direct) "the destination" else "the Portal"
+                    Log.w(TAG, "$who refused ${connection.target}: ${opened.reason.detail}")
                     abort(connection)
                     return
                 }
@@ -366,9 +428,17 @@ class NowhereFlowHandler(
 
         connection.flow = flow
         if (first.isNotEmpty()) {
+            if (connection.direct) {
+                // A direct flow has no opening write to ride on, so the first
+                // bytes are sent here instead of being carried by the dial.
+                withContext(Dispatchers.IO) {
+                    flow.write(first)
+                    flow.flush()
+                }
+            }
             // Carried in the opening write rather than by the pump, so the pump
             // never sees it and it would otherwise go uncounted.
-            meter.recordUpstream(first.size)
+            record(connection, upstream = first.size)
             credit(connection, first.size)
         }
 
@@ -390,7 +460,7 @@ class NowhereFlowHandler(
                     flow.write(chunk)
                     flow.flush()
                 }
-                meter.recordUpstream(chunk.size)
+                record(connection, upstream = chunk.size)
                 // Only now: the bytes are on the wire, so the window may reopen.
                 credit(connection, chunk.size)
             }
@@ -410,7 +480,7 @@ class NowhereFlowHandler(
                 val read = withContext(Dispatchers.IO) { flow.read(buffer) }
                 if (read < 0) break
                 if (read == 0) continue
-                meter.recordDownstream(read)
+                record(connection, downstream = read)
                 if (!deliver(connection, buffer, read)) break
             }
         } catch (error: Exception) {

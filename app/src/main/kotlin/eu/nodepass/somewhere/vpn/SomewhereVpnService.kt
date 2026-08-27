@@ -26,6 +26,8 @@ import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.routing.DirectDialer
+import eu.nodepass.somewhere.routing.Router
 import java.net.InetAddress
 
 /**
@@ -297,7 +299,16 @@ class SomewhereVpnService : VpnService() {
                 },
             )
 
-        val flows = NowhereFlowHandler(nowhere, fakeIp, resolvers) { pump }
+        // Read once, at the moment the tunnel is built, exactly as the
+        // per-application selection is. A rule set that changed under a live
+        // flow would decide one thing for its first packet and another for its
+        // last, which is not something a user could ever reason about.
+        val loadedRules = application.rules.load().rules
+        val routingSettings = application.routing.load()
+        val router = Router({ loadedRules }, { routingSettings.mode }, routingSettings.fallback)
+        val direct = DirectDialer(protect = { socket -> protect(socket) })
+
+        val flows = NowhereFlowHandler(nowhere, fakeIp, resolvers, router, direct) { pump }
         val running = TunPump(descriptor, flows)
 
         session = nowhere
