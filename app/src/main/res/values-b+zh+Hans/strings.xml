@@ -87,6 +87,14 @@
     <string name="apps_only_these">仅这些</string>
     <string name="apps_search">搜索应用</string>
     <string name="apps_self_excluded">始终排除 — 它自己的流量不能回环</string>
+    <string name="apps_loading">正在读取应用列表…</string>
+    <string name="apps_none">此设备上没有可以分流的应用。</string>
+    <string name="apps_partial_list">没有启动图标的应用未列出。</string>
+    <string name="apps_restart_needed">隧道仍在使用建立时的选择。</string>
+    <string name="apps_reconnect">重新连接以生效</string>
+    <plurals name="apps_never_routed">
+        <item quantity="other">%d 个应用在任何隧道之外，未列出</item>
+    </plurals>
 
     <string name="editor_title">编辑节点</string>
     <string name="action_save">保存</string>

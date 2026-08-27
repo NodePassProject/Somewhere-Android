@@ -122,6 +122,15 @@
     <!-- NW-A-04: the client must exclude itself, or its own traffic loops. A
          fixed row rather than a toggle, because it cannot be turned off. -->
     <string name="apps_self_excluded">Always excluded — its own traffic cannot loop</string>
+    <string name="apps_loading">Reading the application list…</string>
+    <string name="apps_none">No application on this device can be routed.</string>
+    <string name="apps_partial_list">Applications with no launcher icon are not listed.</string>
+    <string name="apps_restart_needed">The tunnel is still carrying the selection it was built with.</string>
+    <string name="apps_reconnect">Reconnect to apply</string>
+    <plurals name="apps_never_routed">
+        <item quantity="one">%d application is outside every tunnel and is not listed</item>
+        <item quantity="other">%d applications are outside every tunnel and are not listed</item>
+    </plurals>
 
     <!-- Node editor -->
     <string name="editor_title">Edit node</string>

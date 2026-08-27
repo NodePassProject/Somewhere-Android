@@ -89,6 +89,14 @@
     <string name="apps_only_these">僅這些</string>
     <string name="apps_search">搜尋應用程式</string>
     <string name="apps_self_excluded">一律排除 — 它自己的流量不能繞回</string>
+    <string name="apps_loading">正在讀取應用程式清單…</string>
+    <string name="apps_none">此裝置上沒有可以分流的應用程式。</string>
+    <string name="apps_partial_list">沒有啟動圖示的應用程式未列出。</string>
+    <string name="apps_restart_needed">隧道仍在使用建立時的選擇。</string>
+    <string name="apps_reconnect">重新連線以套用</string>
+    <plurals name="apps_never_routed">
+        <item quantity="other">%d 個應用程式在任何隧道之外，未列出</item>
+    </plurals>
 
     <string name="editor_title">編輯節點</string>
     <string name="action_save">儲存</string>

@@ -173,10 +173,3 @@ enum class RoutingMode {
     Rules,
     Everything,
 }
-
-@Immutable
-data class AppEntry(
-    val label: String,
-    val packageName: String,
-    val excluded: Boolean,
-)

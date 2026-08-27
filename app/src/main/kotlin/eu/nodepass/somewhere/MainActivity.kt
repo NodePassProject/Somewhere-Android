@@ -17,12 +17,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
+import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.SomewhereApp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
+import kotlinx.coroutines.Dispatchers
 
 /**
  * The single activity.
@@ -44,6 +47,15 @@ class MainActivity : ComponentActivity() {
      * node the user may since have changed.
      */
     private var awaitingConsent: NowhereUrl? = null
+
+    /**
+     * The node the running tunnel was started with.
+     *
+     * Kept so that a per-application change can rebuild the same tunnel rather
+     * than asking the user which node they meant. Android fixes that set at
+     * `establish()`, so rebuilding is the only way a change takes effect.
+     */
+    private var running: NowhereUrl? = null
 
     /**
      * `VpnService.prepare()` returns an intent the first time, and null once
@@ -68,7 +80,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         pendingLink = linkFrom(intent)
 
-        val repository = (application as SomewhereApplication).nodes
+        val application = application as SomewhereApplication
+        val repository = application.nodes
+        val apps =
+            AppsController(
+                store = application.appSelection,
+                apps = application.installedApps,
+                scope = lifecycleScope,
+                io = Dispatchers.IO,
+                engaged = { TunnelController.isEngaged },
+            )
 
         setContent {
             SomewhereTheme {
@@ -79,9 +100,11 @@ class MainActivity : ComponentActivity() {
                 ) {
                     SomewhereApp(
                         nodes = repository,
+                        apps = apps,
                         pendingLink = pendingLink,
                         onLinkHandled = { pendingLink = null },
                         onToggleTunnel = ::toggleTunnel,
+                        onReconnect = { running?.let(::startTunnel) },
                     )
                 }
             }
@@ -110,6 +133,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTunnel(node: NowhereUrl) {
+        running = node
         SomewhereVpnService.start(this, node)
     }
 

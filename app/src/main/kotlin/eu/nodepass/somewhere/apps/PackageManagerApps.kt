@@ -29,13 +29,13 @@ import kotlinx.coroutines.withContext
  * It is not *every* installed package: an application with no launcher entry
  * stays hidden, and seeing those would need `QUERY_ALL_PACKAGES`, which is
  * policy-sensitive on the Play store and is **D-16**, not a line added here.
- * [invisibleWithoutBroaderQuery] is what the screen uses to say so rather than
- * quietly presenting a partial list as a complete one.
+ * [listIsPartial] is what the screen uses to say so rather than quietly
+ * presenting a partial list as a complete one.
  */
 class PackageManagerApps(
     context: Context,
     private val self: String = context.packageName,
-) {
+) : AppSource {
     private val packages: PackageManager = context.packageManager
 
     private val icons = LruCache<String, Drawable>(ICON_CACHE_ENTRIES)
@@ -59,7 +59,7 @@ class PackageManagerApps(
         }
 
     /** The candidates, put through every rule in [AppInventory]. */
-    fun inventory(): AppInventory = AppInventory.of(candidates(), self)
+    override fun inventory(): AppInventory = AppInventory.of(candidates(), self)
 
     /**
      * True when the platform is filtering the list and this app has not asked
@@ -69,7 +69,7 @@ class PackageManagerApps(
      * known without the permission, and inventing it would be worse than
      * saying the list is partial.
      */
-    val invisibleWithoutBroaderQuery: Boolean
+    override val listIsPartial: Boolean
         get() = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R
 
     /**
@@ -79,7 +79,7 @@ class PackageManagerApps(
      * disk, and doing that where the frame is composed is the difference
      * between a list and a slideshow.
      */
-    suspend fun icon(packageName: String): Drawable? {
+    override suspend fun icon(packageName: String): Drawable? {
         icons.get(packageName)?.let { return it }
         return withContext(Dispatchers.IO) {
             val loaded = runCatching { packages.getApplicationIcon(packageName) }.getOrNull()

@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.MonoChip
 import eu.nodepass.somewhere.ui.components.MonoText
@@ -49,7 +51,10 @@ import eu.nodepass.somewhere.ui.theme.SomewhereType
 import java.text.NumberFormat
 
 @Composable
-fun RoutingScreen(onOpenApps: () -> Unit) {
+fun RoutingScreen(
+    apps: AppsController,
+    onOpenApps: () -> Unit,
+) {
     val colors = SomewhereTheme.colors
     var mode by remember { mutableStateOf(RoutingMode.Rules) }
     var geoIp by remember { mutableStateOf(false) }
@@ -111,7 +116,11 @@ fun RoutingScreen(onOpenApps: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        val excluded = SampleState.apps.filter { it.excluded }
+                        // The real selection, not a sample: this row is the
+                        // only place the count appears outside the per-app
+                        // screen, and two sources for one number is how they
+                        // start disagreeing.
+                        val selection by apps.selection.collectAsState()
                         Column(
                             modifier = Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -120,8 +129,8 @@ fun RoutingScreen(onOpenApps: () -> Unit) {
                                 text =
                                     pluralStringResource(
                                         R.plurals.apps_excluded_count,
-                                        excluded.size,
-                                        excluded.size,
+                                        selection.packages.size,
+                                        selection.packages.size,
                                     ),
                                 fontFamily = SomewhereType.Body,
                                 fontWeight = FontWeight.Medium,
@@ -129,7 +138,11 @@ fun RoutingScreen(onOpenApps: () -> Unit) {
                                 color = colors.ink,
                             )
                             Text(
-                                text = excluded.joinToString(", ") { it.label },
+                                // Package names rather than labels: a label
+                                // needs the PackageManager and this row is a
+                                // summary, not the list. An identifier is
+                                // never translated, so it is monospaced.
+                                text = selection.packages.sorted().joinToString(", "),
                                 style = SomewhereType.bodySmall,
                                 color = colors.muted,
                             )

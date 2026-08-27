@@ -39,6 +39,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
@@ -75,9 +76,11 @@ object Routes {
 @Composable
 fun SomewhereApp(
     nodes: NodeRepository,
+    apps: AppsController,
     pendingLink: String? = null,
     onLinkHandled: () -> Unit = {},
     onToggleTunnel: (NowhereUrl) -> Unit = {},
+    onReconnect: () -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -127,7 +130,10 @@ fun SomewhereApp(
                     )
                 }
                 composable(Tab.Routing.route) {
-                    RoutingScreen(onOpenApps = { navController.navigate(Routes.APPS) })
+                    RoutingScreen(
+                        apps = apps,
+                        onOpenApps = { navController.navigate(Routes.APPS) },
+                    )
                 }
                 composable(Tab.Logs.route) { DiagnosticsScreen() }
                 composable(Routes.EDITOR) {
@@ -150,7 +156,13 @@ fun SomewhereApp(
                         },
                     )
                 }
-                composable(Routes.APPS) { AppsScreen(onBack = { navController.popBackStack() }) }
+                composable(Routes.APPS) {
+                    AppsScreen(
+                        onBack = { navController.popBackStack() },
+                        controller = apps,
+                        onReconnect = onReconnect,
+                    )
+                }
                 composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
             }
         }

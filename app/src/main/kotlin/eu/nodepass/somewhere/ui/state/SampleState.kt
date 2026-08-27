@@ -131,12 +131,4 @@ object SampleState {
             RuleSet(RuleAction.Tunnel, "everything_else", null),
             RuleSet(RuleAction.GeoIp, "bypass_by_country", null),
         )
-
-    val apps: List<AppEntry> =
-        listOf(
-            AppEntry("Banking", "com.example.banking", excluded = true),
-            AppEntry("Camera", "com.example.camera", excluded = true),
-            AppEntry("Maps", "com.example.maps", excluded = false),
-            AppEntry("Messages", "com.example.messages", excluded = false),
-        )
 }
