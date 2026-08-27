@@ -25,6 +25,8 @@ scripts/e2e-fakeip.sh         remote resolution on a device: a name only the Por
 scripts/oracle-diff.sh        the same cases through both implementations and both carriers
 scripts/oracle-cases.py       the oracle's half of that comparison, over raw SOCKS5
 scripts/portal-lifecycle.sh   the two cases that need the Portal to stop being there
+scripts/quic-probe.sh         D-15: does a QUIC stack give us the exporter NW-P-01 needs
+quic-probe/probe.c            the spike that answers it, derived from ngtcp2's simpleclient (MIT)
 cases/conformance-matrix.md   test matrix derived from the spec, mapped to PRD IDs
 cases/l1-coverage.md          every L1 row and the test that covers it, or why it has none
 ```
@@ -79,6 +81,13 @@ scripts/e2e-fakeip.sh
   `mux=0` and over **four** at `mux=1`, counted from the source ports in the
   Portal's own exchange lines. Verified to fail: the version of the client that
   raced its placements used fifteen, and the assertion catches it.
+- `quic-probe.sh` — passes. Ngtcp2 v1.17.0 with the stock BoringSSL crypto
+  backend, over aws-lc v1.68.0, builds for `arm64-v8a` and `x86_64`, exports 32
+  bytes under `EXPORTER-Nowhere-Auth`, and a real Portal answers **READY** to
+  the AuthFrame built from them. Verified to fail: a wrong shared key completes
+  the same handshake and receives no setup byte at all, and the script fails if
+  one ever does. This is the measurement D-15 was waiting on; see
+  `cases/l1-coverage.md`.
 - `portal-lifecycle.sh` — passes. The Portal reclaimed a connection that
   authenticated and then said nothing after **40004 ms**, which is NW-P-11's
   forty seconds observed rather than transcribed; and a session kept working

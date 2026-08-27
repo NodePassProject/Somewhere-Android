@@ -284,7 +284,7 @@ the specification.
 No row is silent, and none of the eighteen is called "not yet written" — they
 are one missing piece, named once below.
 
-## Where C0 stopped
+## What C0 found
 
 The run PRD put a spike before any other L3 code, deliberately, because one
 requirement decides the shape of everything after it: **NW-P-01 authenticates a
@@ -292,24 +292,42 @@ QUIC connection with transport byte `0x02` and an exporter under the label
 `EXPORTER-Nowhere-Auth`**, so whatever provides QUIC must expose RFC 5705
 keying material from its TLS 1.3 handshake.
 
-What was established before the spike stopped:
+`scripts/quic-probe.sh` answers it, and re-answers it on demand:
 
-- **Cronet is out.** It offers neither raw streams nor an exporter.
-- **ngtcp2 fits the shape a VPN needs.** It never owns a socket — the
-  application feeds it received datagrams and sends the ones it produces —
-  which is the only arrangement in which the UDP socket can be `protect()`-ed.
-  A library that opens its own socket cannot be kept out of the tunnel.
-- **Android's ngtcp2 story is much better than Apple's.** Ngtcp2 ships stock
-  crypto backends for BoringSSL and aws-lc, both of which build for Android
-  ABIs. The Apple client's 3,821 lines of Swift include a custom crypto backend
-  *and* a hand-written TLS 1.3 handshake, because that platform ships no TLS a
-  QUIC stack can drive; none of that recurs here.
-- **The JVM option is missing one thing.** Kwik's datagram API fits section 9
-  directly, and nothing in its documentation mentions keying-material export.
+```
+OK  ngtcp2 v1.17.0 (MIT), aws-lc v1.68.0 (Apache-2.0 OR ISC)
+OK  arm64-v8a: elf64-littleaarch64
+OK  x86_64: elf64-x86-64
+handshake=complete
+exporter=7f146483b41a9cb04914e962720bf836ad0fa1d4c2de25bd02d34f9805ef709c
+setup_result=0x00 READY
+```
 
-**Why it stopped: the spike's definition of done is a QUIC connection
-authenticated against a real Portal, and that runs on a device.** No device or
-emulator was attached for this run, and an Android `.so` cannot be loaded by a
-JVM test on the build host. The blocker is hardware, not the technical
-question — which is a different thing from the contingency the PRD wrote for
-("no workable QUIC stack"), and is recorded as such rather than as a dead end.
+**ngtcp2 with the stock BoringSSL crypto backend, over aws-lc, builds for both
+shipped ABIs, exports 32 bytes under the specified label, and a real Portal
+answers READY to the AuthFrame built from them.** D-15 is settled on that.
+
+Three things are worth keeping beyond the verdict.
+
+**The control is the finding, not the READY.** A wrong shared key completes the
+same handshake and receives no setup byte at all — silence, which is what
+upstream answers a bad tag with over TLS as well, and the Portal logs `invalid
+authentication frame`. Without that half, a READY would prove the Portal
+answers rather than that the exporter is what it answered to. The script fails
+if a wrong key ever reaches a setup result.
+
+**The derivation was pinned before anything was connected.** The C side
+recomputes `auth_key` for the shared key `"secret"` and compares it with the
+fixed vector this suite already carries. A spike that fails at the Portal
+otherwise has four suspects — the derivation, the exporter, the framing, and
+the network — and this removes one before the first packet.
+
+**Android needs no custom crypto backend, which is the Apple client's largest
+L3 cost and does not recur here.** That client carries
+`ngtcp2_crypto_apple.c` plus a TLS 1.3 handshake written in Swift because its
+platform ships no TLS a QUIC stack can drive. Nothing of the kind was written
+for this: the backend is upstream's own, unmodified.
+
+What remains for C1 is the part the spike deliberately did not do — vendoring,
+a JNI bridge, and a Kotlin transport. The probe is a spike and nothing links
+against it.
