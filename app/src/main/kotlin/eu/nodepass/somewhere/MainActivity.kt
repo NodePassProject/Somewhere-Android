@@ -20,12 +20,15 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.ui.SomewhereApp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The single activity.
@@ -56,6 +59,15 @@ class MainActivity : ComponentActivity() {
      * `establish()`, so rebuilding is the only way a change takes effect.
      */
     private var running: NowhereUrl? = null
+
+    /**
+     * The routing controller, once the composition has been built.
+     *
+     * Held as a field because the document picker is registered before
+     * `onCreate` runs — an `ActivityResultLauncher` has to be, or the system
+     * cannot restore it — and its callback needs somewhere to deliver a file.
+     */
+    private var routing: RoutingController? = null
 
     /**
      * `VpnService.prepare()` returns an intent the first time, and null once
@@ -90,6 +102,14 @@ class MainActivity : ComponentActivity() {
                 io = Dispatchers.IO,
                 engaged = { TunnelController.isEngaged },
             )
+        val routingController =
+            RoutingController(
+                rules = application.rules,
+                preferences = application.routing,
+                scope = lifecycleScope,
+                io = Dispatchers.IO,
+                engaged = { TunnelController.isEngaged },
+            ).also { routing = it }
 
         setContent {
             SomewhereTheme {
@@ -101,10 +121,12 @@ class MainActivity : ComponentActivity() {
                     SomewhereApp(
                         nodes = repository,
                         apps = apps,
+                        routing = routingController,
                         pendingLink = pendingLink,
                         onLinkHandled = { pendingLink = null },
                         onToggleTunnel = ::toggleTunnel,
                         onReconnect = { running?.let(::startTunnel) },
+                        onImportRules = { importRules.launch(ruleMimeTypes) },
                     )
                 }
             }
@@ -136,6 +158,42 @@ class MainActivity : ComponentActivity() {
         running = node
         SomewhereVpnService.start(this, node)
     }
+
+    /**
+     * What the picker will offer.
+     *
+     * Rule files are text and are named `.list`, `.txt`, `.conf` and a dozen
+     * other things, so the type filter is the broad one; a file that is not a
+     * rule set fails at the parser with a line number, which is a better
+     * answer than a picker that would not show it.
+     */
+    private val ruleMimeTypes = arrayOf("text/*", "application/octet-stream")
+
+    /**
+     * Reads a rule file the user picked, through the system's own picker.
+     *
+     * The picker rather than a text box: rule sets are thousands of lines and
+     * arrive as files. The document is read here and handed to the controller
+     * as text, so everything that decides whether something is a rule set
+     * stays in one place, where a test can reach it.
+     *
+     * A file this app cannot read is reported the same way a malformed one is.
+     * "Permission denied" and "line 12 is not a rule" are both answers to the
+     * same question the user just asked.
+     */
+    private val importRules =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val target = uri ?: return@registerForActivityResult
+            lifecycleScope.launch {
+                val text =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            contentResolver.openInputStream(target)?.use { it.readBytes().decodeToString() }
+                        }.getOrNull()
+                    }
+                routing?.import(text ?: "")
+            }
+        }
 
     /**
      * The activity is `singleTop`-shaped in practice: tapping a second import

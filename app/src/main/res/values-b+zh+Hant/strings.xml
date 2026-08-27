@@ -70,6 +70,15 @@
     <string name="routing_everything_detail">所有流量都走通道</string>
     <string name="routing_rule_sets">規則集</string>
     <string name="routing_per_app">個別應用程式</string>
+    <string name="routing_no_rules">未載入規則集，所有目標都經由 Portal。</string>
+    <string name="routing_import">匯入規則檔案</string>
+    <string name="routing_remove_rules">移除</string>
+    <string name="routing_restart_needed">隧道仍在使用建立時的規則。</string>
+    <string name="routing_reconnect">重新連線以套用</string>
+    <plurals name="routing_rule_count">
+        <item quantity="other">已載入 %s 條規則</item>
+    </plurals>
+    <string name="routing_unsupported">未支援：%s</string>
     <string name="rule_private_ranges">私有位址範圍</string>
     <string name="rule_domestic_domains">境內網域</string>
     <string name="rule_everything_else">其餘全部</string>

@@ -68,6 +68,15 @@
     <string name="routing_everything_detail">所有流量都走隧道</string>
     <string name="routing_rule_sets">规则集</string>
     <string name="routing_per_app">分应用</string>
+    <string name="routing_no_rules">未加载规则集，所有目标都经由 Portal。</string>
+    <string name="routing_import">导入规则文件</string>
+    <string name="routing_remove_rules">移除</string>
+    <string name="routing_restart_needed">隧道仍在使用建立时的规则。</string>
+    <string name="routing_reconnect">重新连接以生效</string>
+    <plurals name="routing_rule_count">
+        <item quantity="other">已加载 %s 条规则</item>
+    </plurals>
+    <string name="routing_unsupported">未支持：%s</string>
     <string name="rule_private_ranges">私有地址段</string>
     <string name="rule_domestic_domains">国内域名</string>
     <string name="rule_everything_else">其余全部</string>

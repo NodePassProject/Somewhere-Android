@@ -42,6 +42,7 @@ import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.screens.AppsScreen
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
@@ -77,10 +78,12 @@ object Routes {
 fun SomewhereApp(
     nodes: NodeRepository,
     apps: AppsController,
+    routing: RoutingController,
     pendingLink: String? = null,
     onLinkHandled: () -> Unit = {},
     onToggleTunnel: (NowhereUrl) -> Unit = {},
     onReconnect: () -> Unit = {},
+    onImportRules: () -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -132,7 +135,10 @@ fun SomewhereApp(
                 composable(Tab.Routing.route) {
                     RoutingScreen(
                         apps = apps,
+                        routing = routing,
                         onOpenApps = { navController.navigate(Routes.APPS) },
+                        onReconnect = onReconnect,
+                        onImportRules = onImportRules,
                     )
                 }
                 composable(Tab.Logs.route) { DiagnosticsScreen() }

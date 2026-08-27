@@ -155,21 +155,3 @@ data class SubscriptionState(
     val usage: SubscriptionUsage,
     val refreshedMinutesAgo: Int,
 )
-
-@Immutable
-data class RuleSet(
-    val action: RuleAction,
-    val name: String,
-    val entryCount: Int?,
-)
-
-enum class RuleAction {
-    Direct,
-    Tunnel,
-    GeoIp,
-}
-
-enum class RoutingMode {
-    Rules,
-    Everything,
-}

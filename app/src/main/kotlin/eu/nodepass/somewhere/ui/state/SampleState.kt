@@ -123,12 +123,4 @@ object SampleState {
             ConnectionLogEntry(SetupResult.SessionReplaced, "14:19:12.006"),
             ConnectionLogEntry(SetupResult.Ready, "14:19:11.883", carrier = "TLS/TCP, MUX"),
         )
-
-    val ruleSets: List<RuleSet> =
-        listOf(
-            RuleSet(RuleAction.Direct, "private_ranges", 18),
-            RuleSet(RuleAction.Direct, "domestic_domains", 4206),
-            RuleSet(RuleAction.Tunnel, "everything_else", null),
-            RuleSet(RuleAction.GeoIp, "bypass_by_country", null),
-        )
 }

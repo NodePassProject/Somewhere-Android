@@ -98,6 +98,16 @@
     <string name="routing_everything_detail">All traffic goes through the tunnel</string>
     <string name="routing_rule_sets">Rule sets</string>
     <string name="routing_per_app">Per-app</string>
+    <string name="routing_no_rules">No rule set is loaded, so every destination goes through the Portal.</string>
+    <string name="routing_import">Import a rule file</string>
+    <string name="routing_remove_rules">Remove</string>
+    <string name="routing_restart_needed">The tunnel is still using the rules it was built with.</string>
+    <string name="routing_reconnect">Reconnect to apply</string>
+    <plurals name="routing_rule_count">
+        <item quantity="one">%s rule loaded</item>
+        <item quantity="other">%s rules loaded</item>
+    </plurals>
+    <string name="routing_unsupported">Not carried: %s</string>
     <string name="rule_private_ranges">Private ranges</string>
     <string name="rule_domestic_domains">Domestic domains</string>
     <string name="rule_everything_else">Everything else</string>

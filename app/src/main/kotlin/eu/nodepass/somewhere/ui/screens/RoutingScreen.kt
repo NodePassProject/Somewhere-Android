@@ -12,16 +12,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,19 +34,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.routing.RoutingController
+import eu.nodepass.somewhere.routing.RoutingMode
 import eu.nodepass.somewhere.ui.components.Card
-import eu.nodepass.somewhere.ui.components.MonoChip
-import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.Panel
 import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.PanelRow
 import eu.nodepass.somewhere.ui.components.SectionLabel
-import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
-import eu.nodepass.somewhere.ui.state.RoutingMode
-import eu.nodepass.somewhere.ui.state.RuleAction
-import eu.nodepass.somewhere.ui.state.RuleSet
-import eu.nodepass.somewhere.ui.state.SampleState
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import java.text.NumberFormat
@@ -53,11 +49,18 @@ import java.text.NumberFormat
 @Composable
 fun RoutingScreen(
     apps: AppsController,
+    routing: RoutingController,
     onOpenApps: () -> Unit,
+    onReconnect: () -> Unit,
+    onImportRules: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
-    var mode by remember { mutableStateOf(RoutingMode.Rules) }
-    var geoIp by remember { mutableStateOf(false) }
+    val settings by routing.settings.collectAsState()
+    val loaded by routing.loaded.collectAsState()
+    val importError by routing.lastImportError.collectAsState()
+    val restartNeeded by routing.restartNeeded.collectAsState()
+
+    LaunchedEffect(Unit) { routing.refresh() }
 
     Column(Modifier.fillMaxSize()) {
         Text(
@@ -73,16 +76,16 @@ fun RoutingScreen(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeCard(
-                    selected = mode == RoutingMode.Rules,
+                    selected = settings.mode == RoutingMode.Rules,
                     title = stringResource(R.string.routing_rules),
                     detail = stringResource(R.string.routing_rules_detail),
-                    onClick = { mode = RoutingMode.Rules },
+                    onClick = { routing.setMode(RoutingMode.Rules) },
                 )
                 ModeCard(
-                    selected = mode == RoutingMode.Everything,
+                    selected = settings.mode == RoutingMode.Everything,
                     title = stringResource(R.string.routing_everything),
                     detail = stringResource(R.string.routing_everything_detail),
-                    onClick = { mode = RoutingMode.Everything },
+                    onClick = { routing.setMode(RoutingMode.Everything) },
                 )
             }
 
@@ -90,19 +93,76 @@ fun RoutingScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     SectionLabel(stringResource(R.string.routing_rule_sets), Modifier.weight(1f))
                     Text(
-                        text = stringResource(R.string.action_edit),
+                        text =
+                            stringResource(
+                                if (loaded.count == 0) R.string.routing_import else R.string.routing_remove_rules,
+                            ),
                         fontFamily = SomewhereType.Body,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Medium,
                         color = colors.brand,
-                        modifier = Modifier.clickable {},
+                        modifier =
+                            Modifier.clickable {
+                                if (loaded.count == 0) onImportRules() else routing.clearRules()
+                            },
                     )
                 }
                 Panel {
-                    SampleState.ruleSets.forEachIndexed { index, set ->
-                        if (index > 0) PanelDivider()
-                        RuleRow(set, geoIp) { geoIp = it }
+                    // What is actually loaded. The four rule sets drawn here
+                    // before — private ranges, domestic domains, everything
+                    // else, bypass by country — were invented, with invented
+                    // counts, and the last of them switched a GEOIP feature
+                    // that does not exist.
+                    PanelRow(Modifier.padding(horizontal = 0.dp)) {
+                        Text(
+                            text =
+                                if (loaded.count == 0) {
+                                    stringResource(R.string.routing_no_rules)
+                                } else {
+                                    pluralStringResource(
+                                        R.plurals.routing_rule_count,
+                                        loaded.count,
+                                        NumberFormat.getIntegerInstance().format(loaded.count),
+                                    )
+                                },
+                            style = SomewhereType.bodySmall,
+                            color = if (loaded.count == 0) colors.muted else colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
                     }
+                    if (loaded.unsupported.isNotEmpty()) {
+                        PanelDivider()
+                        PanelRow(Modifier.padding(horizontal = 0.dp)) {
+                            // Named rather than dropped: a client that silently
+                            // ignored a GEOIP rule would leave the user routing
+                            // against a set they believe is loaded.
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.routing_unsupported,
+                                        loaded.unsupported.entries.joinToString(", ") { "${it.key} x${it.value}" },
+                                    ),
+                                style = SomewhereType.bodySmall,
+                                color = colors.muted,
+                            )
+                        }
+                    }
+                    importError?.let { reason ->
+                        PanelDivider()
+                        PanelRow(Modifier.padding(horizontal = 0.dp)) {
+                            Text(text = reason, style = SomewhereType.bodySmall, color = colors.warn)
+                        }
+                    }
+                }
+                if (restartNeeded) {
+                    RoutingNotice(
+                        text = stringResource(R.string.routing_restart_needed),
+                        action = stringResource(R.string.routing_reconnect),
+                        onAction = {
+                            routing.restarted()
+                            onReconnect()
+                        },
+                    )
                 }
             }
 
@@ -200,44 +260,48 @@ private fun ModeCard(
     }
 }
 
+/**
+ * A line saying a running tunnel does not have these rules yet.
+ *
+ * Rules are read when the TUN is built, so a change made now reaches the next
+ * tunnel and not this one. The alternative is a screen showing a rule set the
+ * traffic is not using.
+ */
 @Composable
-private fun RuleRow(
-    set: RuleSet,
-    geoIpEnabled: Boolean,
-    onGeoIpChange: (Boolean) -> Unit,
+private fun RoutingNotice(
+    text: String,
+    action: String,
+    onAction: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
-    PanelRow(Modifier.padding(horizontal = 0.dp)) {
-        // DIRECT / TUNNEL / GEOIP are routing verbs, not prose: the chip stays
-        // monospaced and English so a rule file and this screen read alike.
-        MonoChip(
-            text = set.action.name.uppercase(),
-            foreground = if (set.action == RuleAction.Tunnel) colors.brand else colors.muted,
-            background = if (set.action == RuleAction.Tunnel) colors.brandTint else colors.surfaceAlt,
-        )
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(colors.brandTint)
+                .border(1.dp, colors.brandLine, RoundedCornerShape(10.dp))
+                .padding(horizontal = 15.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text(
-            text = stringResource(set.labelResource),
-            fontFamily = SomewhereType.Body,
-            fontSize = 13.sp,
-            color = if (set.action == RuleAction.GeoIp) colors.inkMuted else colors.ink,
+            text = text,
+            style = SomewhereType.bodySmall,
+            color = colors.ink,
             modifier = Modifier.weight(1f),
         )
-        if (set.action == RuleAction.GeoIp) {
-            SomewhereSwitch(checked = geoIpEnabled, onCheckedChange = onGeoIpChange)
-        } else {
-            MonoText(
-                text = set.entryCount?.let { NumberFormat.getIntegerInstance().format(it) } ?: "—",
-                color = colors.faint,
-            )
-        }
+        Text(
+            text = action,
+            fontFamily = SomewhereType.Body,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.5.sp,
+            color = colors.brand,
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onAction)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+        )
     }
 }
-
-private val RuleSet.labelResource: Int
-    get() =
-        when (name) {
-            "private_ranges" -> R.string.rule_private_ranges
-            "domestic_domains" -> R.string.rule_domestic_domains
-            "everything_else" -> R.string.rule_everything_else
-            else -> R.string.rule_bypass_by_country
-        }
