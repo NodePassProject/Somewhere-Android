@@ -203,6 +203,10 @@ kover {
                     // that is wrong is wrong silently — the same reason the
                     // DNS layer is here.
                     "eu.nodepass.somewhere.apps.*",
+                    // A wrong routing decision is wrong silently and in the
+                    // worst direction: traffic leaves the device somewhere the
+                    // user did not ask it to.
+                    "eu.nodepass.somewhere.routing.*",
                 )
             }
             excludes {
