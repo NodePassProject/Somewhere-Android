@@ -16,8 +16,8 @@ import java.io.IOException
  *
  * ## What an unreadable file means
  *
- * [SelectionMode.Everything], the default, which is what the app did before
- * this existed. That direction matters: the two failure modes here are "carry
+ * [SelectionMode.AllButThese] with nothing named — the default, and what the
+ * app did before this existed. That direction matters: the two failure modes here are "carry
  * more than the user asked" and "carry less", and a corrupt file that silently
  * became [SelectionMode.OnlyThese] with nothing in it would produce a tunnel
  * carrying nothing at all, which looks exactly like a broken tunnel. Falling

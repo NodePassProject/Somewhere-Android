@@ -50,14 +50,14 @@ class AppRuleApplicationTest {
 
     @Test
     fun changingTheSelectionWhileConnectedNeedsARebuildAndSaysSo() {
-        val before = AppSelection(SelectionMode.Everything)
+        val before = AppSelection(SelectionMode.AllButThese)
         val after = AppSelection(SelectionMode.OnlyThese, setOf("com.example.one"))
         assertEquals(SelectionChange.NeedsRestart, changeOutcome(true, before, after))
     }
 
     @Test
     fun changingItWhileDisconnectedIsJustStored() {
-        val before = AppSelection(SelectionMode.Everything)
+        val before = AppSelection(SelectionMode.AllButThese)
         val after = AppSelection(SelectionMode.OnlyThese, setOf("com.example.one"))
         assertEquals(SelectionChange.Stored, changeOutcome(false, before, after))
     }

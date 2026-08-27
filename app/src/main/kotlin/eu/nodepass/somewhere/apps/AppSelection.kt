@@ -11,19 +11,24 @@ package eu.nodepass.somewhere.apps
  * applied to a tunnel is [AppRule], which is a different type for a reason.
  */
 enum class SelectionMode {
-    /** Every application on the device is carried. The default and today's behaviour. */
-    Everything,
+    /**
+     * Every application except the named ones is carried.
+     *
+     * With nothing named this is "carry everything", which is the default and
+     * what the app did before any of this existed. There is deliberately no
+     * separate `Everything` mode: it would be a second way to store a state
+     * this one already has, and two spellings of one fact drift apart the
+     * first time something switches on the mode alone.
+     */
+    AllButThese,
 
     /** Only the named applications are carried. */
     OnlyThese,
-
-    /** Every application except the named ones is carried. */
-    AllButThese,
 }
 
 /** The stored answer: a mode, and the packages it names. */
 data class AppSelection(
-    val mode: SelectionMode = SelectionMode.Everything,
+    val mode: SelectionMode = SelectionMode.AllButThese,
     val packages: Set<String> = emptySet(),
 )
 
@@ -76,7 +81,6 @@ fun AppSelection.ruleFor(
 ): AppRule {
     val present = packages.filter { it in installed }.toSet()
     return when (mode) {
-        SelectionMode.Everything -> AppRule.AllButThese(setOf(self))
         SelectionMode.OnlyThese -> AppRule.OnlyThese(present - self)
         SelectionMode.AllButThese -> AppRule.AllButThese(present + self)
     }

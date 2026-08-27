@@ -46,7 +46,7 @@ class AppSelectionStoreTest {
 
     @Test
     fun nothingStoredIsEverythingCarried() {
-        assertEquals(AppSelection(SelectionMode.Everything, emptySet()), store().load())
+        assertEquals(AppSelection(SelectionMode.AllButThese, emptySet()), store().load())
     }
 
     @Test
@@ -56,7 +56,7 @@ class AppSelectionStoreTest {
         // indistinguishable from a broken tunnel.
         val file = File(folder.root, "apps.txt")
         file.writeText("not-a-mode\ncom.example.one\n")
-        assertEquals(AppSelection(SelectionMode.Everything, emptySet()), AppSelectionStore(file).load())
+        assertEquals(AppSelection(SelectionMode.AllButThese, emptySet()), AppSelectionStore(file).load())
     }
 
     @Test

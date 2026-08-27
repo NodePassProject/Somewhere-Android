@@ -17,7 +17,7 @@ class AppSelectionTest {
     fun carryingEverythingStillMeansEverythingExceptThisClient() {
         // NW-A-04. There is no mode that puts this app inside its own tunnel,
         // which is why AppRule has no Everything case to return here.
-        val rule = AppSelection(SelectionMode.Everything).ruleFor(installed, self)
+        val rule = AppSelection(SelectionMode.AllButThese).ruleFor(installed, self)
         assertEquals(AppRule.AllButThese(setOf(self)), rule)
     }
 
@@ -60,7 +60,7 @@ class AppSelectionTest {
         // turned into its opposite.
         val rule = AppSelection(SelectionMode.OnlyThese, emptySet()).ruleFor(installed, self)
         assertTrue(rule.carriesNothing)
-        assertFalse(AppSelection(SelectionMode.Everything).ruleFor(installed, self).carriesNothing)
+        assertFalse(AppSelection(SelectionMode.AllButThese).ruleFor(installed, self).carriesNothing)
         assertFalse(
             AppSelection(SelectionMode.AllButThese, setOf("com.example.one"))
                 .ruleFor(installed, self)
