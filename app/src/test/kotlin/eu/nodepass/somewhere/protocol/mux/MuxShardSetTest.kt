@@ -263,6 +263,49 @@ class MuxShardSetTest {
     }
 
     @Test
+    fun aBurstIsUnaffectedByTheMomentEachFlowRegisters() {
+        // The burst test above says the right thing and says it once, which is
+        // not enough for a race that needs the machine to be busy: it failed
+        // about one full-suite run in ten and never in isolation. Repeating the
+        // burst is what makes the window reachable on demand.
+        //
+        // What it catches: registering a stream and giving its placement slot
+        // back are two statements, and between them the same flow is counted
+        // twice by `load`. Four flows opening at once on one carrier can read
+        // as eight, the carrier looks full when it is not, and a placement
+        // opens another — more carriers than the density calls for, from a
+        // client that is multiplexing perfectly well.
+        val expected = (BURST_FLOWS + MuxHeader.SHARD_FLOW_THRESHOLD - 1) / MuxHeader.SHARD_FLOW_THRESHOLD
+        repeat(BURST_ROUNDS) { round ->
+            // Each round's carriers and fake Portals are stopped at the end of
+            // it. Left to accumulate they are a megabyte of loopback buffer and
+            // a handful of threads apiece, and the first version of this test
+            // failed at round 31 by exhausting the machine rather than by
+            // finding anything — a rig that lies in a new direction.
+            val portalsBefore = portals.size
+            val shards = shardSet()
+            val ready = CountDownLatch(1)
+            val done = CountDownLatch(BURST_FLOWS)
+            val threads =
+                (1..BURST_FLOWS).map {
+                    thread {
+                        ready.await()
+                        runCatching { openOne(shards) }
+                        done.countDown()
+                    }
+                }
+            ready.countDown()
+            assertTrue("round $round should finish", done.await(30, TimeUnit.SECONDS))
+            threads.forEach { it.join(5_000) }
+            assertEquals("round $round", expected, shards.liveShardCount)
+            shards.close()
+            while (portals.size > portalsBefore) {
+                runCatching { portals.removeAt(portals.size - 1).stop() }
+            }
+        }
+    }
+
+    @Test
     fun nConcurrentFlowsUseCeilingOfNOverFourCarriers() {
         // The claim L2 exists to make, stated as arithmetic: sixteen flows
         // should cost four connections rather than sixteen.
@@ -275,5 +318,17 @@ class MuxShardSetTest {
             shards.liveShardCount,
         )
         assertEquals(flows, shards.activeFlowCount)
+    }
+
+    private companion object {
+        /** Sixteen: four shards' worth at the specified density. */
+        const val BURST_FLOWS = 16
+
+        /**
+         * Enough rounds that a window needing a busy machine is reached on
+         * demand rather than once in ten full-suite runs, and few enough that
+         * the test stays under a second.
+         */
+        const val BURST_ROUNDS = 40
     }
 }

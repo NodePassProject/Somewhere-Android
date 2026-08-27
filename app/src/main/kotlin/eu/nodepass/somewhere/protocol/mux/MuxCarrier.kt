@@ -141,8 +141,24 @@ class MuxCarrier(
      * for the length of a setup round trip — the carrier would look twice as
      * busy as it is and the shard set would open connections that were not
      * needed, which is the defect this was written to fix, facing the other way.
+     *
+     * Read under [loadLock] because becoming one is a transition between the
+     * two halves of that sum, and a reader that catches it half-done sees the
+     * same flow twice. Four flows opening at once then read as eight, the
+     * carrier looks full when it is not, and the placement that reads it opens
+     * another connection — sixteen flows over five carriers at a density of
+     * four. Caught by `aBurstIsUnaffectedByTheMomentEachFlowRegisters`.
      */
-    val load: Int get() = streams.size + pending.get()
+    val load: Int get() = synchronized(loadLock) { streams.size + pending.get() }
+
+    /**
+     * Guards the transition between a placement and a registered stream.
+     *
+     * Only that transition, and only against [load]. It is never held across
+     * anything that blocks, and nothing under it touches the shard set, so it
+     * is always the innermost lock.
+     */
+    private val loadLock = Any()
 
     /**
      * A held place on this carrier, from the moment it is chosen until its
@@ -263,13 +279,21 @@ class MuxCarrier(
             }
 
         val stream = Stream(flowId, target, kind)
-        if (streams.putIfAbsent(flowId, stream) != null) {
+        // Registering and giving the placement back are one step as far as
+        // `load` is concerned. Written as two statements they were two, and
+        // between them this flow counted through `streams` *and* through
+        // `pending` — the carrier reading one flow heavier per flow currently
+        // opening on it.
+        val clash =
+            synchronized(loadLock) {
+                val taken = streams.putIfAbsent(flowId, stream) != null
+                if (!taken) release(slot)
+                taken
+            }
+        if (clash) {
             release(slot)
             return invalid(MuxCarrierReason.FlowIdInUse(flowId))
         }
-        // Registered: from here the flow counts through `streams`, so the place
-        // it was holding must go back or it would be counted twice.
-        release(slot)
 
         val opening = header.encode() + target.encode() + firstPayload
         if (!send(stream, opening, flags = MuxHeader.FLAG_SYN)) {
