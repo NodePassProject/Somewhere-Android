@@ -16,6 +16,11 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import eu.nodepass.somewhere.MainActivity
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.SomewhereApplication
+import eu.nodepass.somewhere.apps.VpnAppTarget
+import eu.nodepass.somewhere.apps.applyTo
+import eu.nodepass.somewhere.apps.carriesNothing
+import eu.nodepass.somewhere.apps.ruleFor
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
@@ -215,7 +220,7 @@ class SomewhereVpnService : VpnService() {
         // network is this one and its only resolver is the one we announce.
         val resolvers = underlyingResolvers()
 
-        val descriptor =
+        val builder =
             Builder()
                 .setSession(getString(R.string.app_name))
                 .addAddress(TUN_ADDRESS, TUN_PREFIX)
@@ -225,7 +230,49 @@ class SomewhereVpnService : VpnService() {
                 // Blocking reads: a non-blocking TUN returns 0 in a tight loop
                 // and burns a core doing nothing.
                 .setBlocking(true)
-                .establish()
+
+        // Fixed here for the life of this descriptor: Android has no way to
+        // change the per-application set on a tunnel that is already up, which
+        // is why changing it elsewhere has to rebuild rather than pretend.
+        //
+        // Filtered against what is installed *now*, because a package that has
+        // been uninstalled since it was chosen makes the builder throw, and
+        // that exception does not fail the selection — it fails establish().
+        val application = applicationContext as SomewhereApplication
+        val rule =
+            application.appSelection
+                .load()
+                .ruleFor(
+                    installed =
+                        application.installedApps
+                            .candidates()
+                            .map { it.packageName }
+                            .toSet(),
+                    self = packageName,
+                )
+        rule.applyTo(
+            object : VpnAppTarget {
+                override fun allow(packageName: String) {
+                    builder.addAllowedApplication(packageName)
+                }
+
+                override fun disallow(packageName: String) {
+                    builder.addDisallowedApplication(packageName)
+                }
+            },
+        )
+        if (rule.carriesNothing) {
+            // Asked for by name — "only these applications", and none of them
+            // are installed. Reported rather than established, because a tunnel
+            // that carries nothing is indistinguishable from a broken one and
+            // the user would debug the wrong thing.
+            Log.w(TAG, "the selection carries no application at all")
+            TunnelController.report(TunnelState.Failed(R.string.tunnel_no_apps))
+            stopSelf()
+            return
+        }
+
+        val descriptor = builder.establish()
 
         if (descriptor == null) {
             // establish() returns null when consent was never granted or was

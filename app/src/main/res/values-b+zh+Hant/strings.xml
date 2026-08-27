@@ -169,5 +169,6 @@
     <string name="tunnel_bad_node">無法讀取該節點。</string>
     <string name="tunnel_unresolved">無法解析該節點的位址。</string>
     <string name="tunnel_no_consent">Android 未授予建立隧道的權限。</string>
+    <string name="tunnel_no_apps">沒有選取任何已安裝的應用程式，隧道將不傳輸任何流量。</string>
     <string name="home_connecting">連線中…</string>
 </resources>

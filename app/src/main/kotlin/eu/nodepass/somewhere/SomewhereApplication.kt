@@ -4,6 +4,8 @@
 package eu.nodepass.somewhere
 
 import android.app.Application
+import eu.nodepass.somewhere.apps.AppSelectionStore
+import eu.nodepass.somewhere.apps.PackageManagerApps
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
@@ -35,4 +37,18 @@ class SomewhereApplication : Application() {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
+
+    /**
+     * Which applications the tunnel carries.
+     *
+     * Its own file for the same reason the subscription has one: it is read by
+     * the VPN service on a different thread from the screen that writes it,
+     * and a shared file would make one a reason to reparse the other.
+     */
+    val appSelection: AppSelectionStore by lazy {
+        AppSelectionStore(File(filesDir, "apps/selection.txt"))
+    }
+
+    /** What the device has installed, for the screen that offers a choice. */
+    val installedApps: PackageManagerApps by lazy { PackageManagerApps(this) }
 }
