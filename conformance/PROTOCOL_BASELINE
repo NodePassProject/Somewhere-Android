@@ -7,14 +7,28 @@
 UPSTREAM_REPO=NodePassProject/Nowhere
 UPSTREAM_BRANCH=main
 UPSTREAM_TAG=v1.8.2
-UPSTREAM_COMMIT=8807960c
-UPSTREAM_COMMIT_DATE=2026-08-26
+UPSTREAM_COMMIT=05366539
+UPSTREAM_COMMIT_DATE=2026-08-29
 BINARY_VERSION_STRING=nowhere-v1.8.2
 
 # Normative files watched for change
 SPEC_FILES=docs/protocol.md docs/configuration.md docs/compatibility.md docs/security.md
 
 # Known state
+# - Advanced from 8807960c to 05366539 on 2026-08-29. One commit, "Correct
+#   documented runtime defaults", changing two lines of docs/security.md: the
+#   TLS Mux shard density 12 -> 4, in prose and in an ASCII diagram.
+#
+#   It is a documentation correction rather than a change. protocol.md has said
+#   4 since v1.8.2 and security.md still said 12; upstream made the two agree.
+#   This client already implements 4 -- MuxHeader.SHARD_FLOW_THRESHOLD, and the
+#   fixture pins it -- so nothing here moves, and the reason the pin moves at
+#   all is that a baseline naming a commit whose documents disagreed with each
+#   other is a worse record than one naming the commit where they stopped.
+#
+#   Verified before moving: 45 vector checks pass, smoke-local.sh carries
+#   traffic end to end against the oracle rebuilt at 05366539, and no wire
+#   field, layout, length, ordering or derivation is touched by the diff.
 # - Advanced from v1.8.0 to v1.8.2 on 2026-08-26, on the first normative change
 #   the drift check has ever reported. What changed, in full:
 #     * TLS Mux shard density 12 -> 4 active flows before another shard opens
