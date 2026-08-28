@@ -53,6 +53,24 @@ if [ "$EMULATED" = "1" ]; then
     echo "  !! This is an emulator. Every check below will run and none of them"
     echo "     answers the question Phase D exists for, which is what a phone"
     echo "     does. Use it to check the script, not the client."
+else
+    # The address a device reaches the build host at is not the same one an
+    # emulator does, and getting it wrong looks like a broken tunnel rather
+    # than a wrong argument. 10.0.2.2 is QEMU's alias for the host and means
+    # nothing on a phone; a phone needs the host's address on the network they
+    # share, and the Portal has to be listening on it rather than on loopback.
+    case "$PORTAL" in
+        10.0.2.2:*|127.0.0.1:*|localhost:*)
+            die "NOWHERE_E2E_PORTAL is '$PORTAL', which is an emulator's or this machine's own address. A phone cannot reach either. Use the build host's address on the network the phone is on, and start the Portal bound to 0.0.0.0."
+            ;;
+    esac
+    case "$TARGET" in
+        10.0.2.2:*)
+            die "NOWHERE_E2E_TARGET is '$TARGET'. 10.0.2.2 is QEMU's host alias; a Portal on a real network cannot dial it."
+            ;;
+    esac
+    echo
+    echo "  Physical hardware. This is the run Phase D was written for."
 fi
 
 # ── 1. Private DNS ──────────────────────────────────────────────────────────
@@ -147,3 +165,27 @@ echo
 echo "A NOTE is not a pass. It is something only a person watching the device"
 echo "can settle, and leaving it unsettled is the honest state until they do."
 [ "$FAILS" -eq 0 ] || exit 1
+
+# ── Running this on a phone ─────────────────────────────────────────────────
+#
+#   1. Start a Portal on this machine, bound to every interface rather than
+#      loopback, and an origin beside it:
+#
+#        nowhere "portal://<key>@0.0.0.0:22095?net=mix&log=info" > portal.log &
+#
+#   2. Find this machine's address on the network the phone is on:
+#
+#        ipconfig getifaddr en0        # macOS
+#        hostname -I | awk '{print $1}' # Linux
+#
+#   3. Attach the phone with USB debugging on, then:
+#
+#        NOWHERE_E2E_PORTAL=<that address>:22095 \
+#        NOWHERE_E2E_KEY=<key> \
+#        NOWHERE_E2E_TARGET=<that address>:28091 \
+#        NOWHERE_PORTAL_LOG=portal.log \
+#        conformance/scripts/device-acceptance.sh
+#
+# The phone and this machine must be on the same network, and this machine's
+# firewall must let the phone reach both ports. A tunnel that cannot reach its
+# Portal looks exactly like a tunnel that does not work.
