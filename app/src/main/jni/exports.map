@@ -13,14 +13,27 @@
 #
 # So the library exports its JNI entry points and nothing else. Everything the
 # C side needs from the JVM it gets by calling in, not by being called by name.
-# JNI_OnLoad and JNI_OnUnload are deliberately absent rather than listed "in
-# case". This library registers natively by name, defines neither, and the NDK
-# links with --no-undefined-version, so naming a symbol that does not exist is
-# a link error rather than a harmless extra line. That is the right trade: this
-# file cannot quietly drift into describing a library it no longer matches.
+# JNI_OnLoad is here because the library defines it and the runtime linker has
+# to find it. lwip_jni_bridge.c caches the JavaVM* there and every C-to-Kotlin
+# callback goes through that pointer, so hiding it does not fail at link time
+# or at load time -- it fails when the first packet needs a callback, as
+# "get_env: JavaVM is NULL", with the tunnel simply never answering.
+#
+# That is not hypothetical: the first version of this file listed neither, on
+# the reading that the library defined neither, and two lwIP device tests went
+# red with "the stack wrote nothing back within 5s" while every build gate
+# stayed green. The linker had in fact said so -- it rejected JNI_OnUnload by
+# name and accepted JNI_OnLoad -- and the message was misread.
+#
+# JNI_OnUnload stays out because it genuinely does not exist, and the NDK links
+# with --no-undefined-version, so naming it is a link error rather than a
+# harmless extra line. That is the right trade in both directions: this file
+# cannot describe a symbol the library lacks, and the device says so when it
+# lacks one the library needs.
 {
     global:
         Java_*;
+        JNI_OnLoad;
     local:
         *;
 };

@@ -255,6 +255,19 @@ Two rules from those documents that reach into protocol code:
     `somewhere_native` is all C, so libc++ was left off a link line that needs
     it for aws-lc. `LINKER_LANGUAGE CXX` is the fix and it has to be set
     explicitly.
+23. **`JNI_OnLoad` must be exported, and hiding it fails nowhere near the
+    cause.** `lwip_jni_bridge.c` caches the `JavaVM*` there and every
+    C-to-Kotlin callback goes through that pointer. An export map listing only
+    `Java_*` links cleanly, loads cleanly, and then the tunnel simply never
+    answers: `get_env: JavaVM is NULL`, and the device test reports "the stack
+    wrote nothing back within 5s". The linker had said so at the time — it
+    rejected `JNI_OnUnload` by name and accepted `JNI_OnLoad`, which is how one
+    knows which exists.
+24. **A version script is an input to the link that ninja does not know about.**
+    Editing `exports.map` changes nothing until something else forces a relink,
+    so a corrected map and an unchanged library look identical. `LINK_DEPENDS`
+    declares it. This cost a whole debugging round: the fix was right, the
+    tests failed the same way, and the library on the device predated the edit.
 
 ## Already verified — do not redo
 

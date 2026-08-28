@@ -106,6 +106,7 @@ add_library(somewhere_native SHARED
     ${LWIP_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/lwip_jni_bridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/quic/quic_version_jni.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/quic/quic_conn_jni.c
 )
 
 # The target has no C++ source of its own, so CMake would pick the C linker and
@@ -136,6 +137,14 @@ target_link_libraries(somewhere_native
 # matters in a process that already runs Conscrypt's.
 target_link_options(somewhere_native PRIVATE
     -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map
+)
+
+# The map is an input to the link, and without saying so it is not one ninja
+# knows about: editing it changes nothing until something else forces a relink.
+# That cost a whole debugging round -- the map was corrected, the tests failed
+# identically, and the library on the device was the one built before the edit.
+set_target_properties(somewhere_native PROPERTIES
+    LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/exports.map
 )
 
 target_compile_options(somewhere_native PRIVATE

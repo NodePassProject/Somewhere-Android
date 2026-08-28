@@ -420,7 +420,10 @@ abstract class NativeLibraryChecksTask : DefaultTask() {
                     .lineSequence()
                     .mapNotNull { it.trim().substringAfterLast(' ').takeIf(String::isNotBlank) }
                     .toList()
-            val strays = exported.filterNot { it.startsWith("Java_") }
+            // JNI_OnLoad is exported on purpose: the lwIP bridge caches the
+            // JavaVM* there, and hiding it fails at the first callback rather
+            // than at link or load time. See app/src/main/jni/exports.map.
+            val strays = exported.filterNot { it.startsWith("Java_") || it == "JNI_OnLoad" }
             if (strays.isNotEmpty()) {
                 problems +=
                     "$abi exports ${strays.size} symbol(s) that are not JNI entry points, " +
@@ -466,6 +469,86 @@ abstract class NativeLibraryChecksTask : DefaultTask() {
         }
     }
 }
+
+// ── The QUIC bridge cannot reach the network ────────────────────────────────
+// Inside a VPN every outbound socket must be VpnService.protect()-ed or it
+// routes back into the TUN, reaches lwIP, and is dialled again. The socket
+// therefore lives in Kotlin, under DirectDialer's rule, and the bridge is
+// written so that it *cannot* open one: no networking function appears in it at
+// all, not even address parsing — addresses arrive as raw bytes.
+//
+// That is a claim about source, so it is checked against source. A grep is a
+// weak tool for most things and exactly the right one here: the property is
+// "these names do not appear", and a reader can check the same thing by eye.
+
+abstract class NativeBridgeChecksTask : DefaultTask() {
+    @get:InputDirectory
+    abstract val bridgeSources: DirectoryProperty
+
+    @TaskAction
+    fun check() {
+        val forbidden =
+            listOf(
+                "socket(",
+                "bind(",
+                "connect(",
+                "listen(",
+                "accept(",
+                "send(",
+                "sendto(",
+                "sendmsg(",
+                "recv(",
+                "recvfrom(",
+                "recvmsg(",
+                "getaddrinfo(",
+                "gethostbyname(",
+                "inet_pton(",
+                "inet_addr(",
+                "poll(",
+                "select(",
+                "epoll_create",
+            )
+        val problems = mutableListOf<String>()
+
+        bridgeSources
+            .get()
+            .asFile
+            .walkTopDown()
+            .filter { it.isFile && (it.extension == "c" || it.extension == "h") }
+            .forEach { source ->
+                source.readLines().forEachIndexed { index, line ->
+                    val code = line.substringBefore("//").trim()
+                    if (code.startsWith("*") || code.startsWith("/*")) return@forEachIndexed
+                    forbidden.filter { code.contains(it) }.forEach { name ->
+                        problems += "${source.name}:${index + 1} calls $name"
+                    }
+                }
+            }
+
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "the QUIC bridge reaches the network:\n" +
+                    problems.joinToString("\n") { "  $it" } +
+                    "\n\nThe socket belongs in Kotlin, where it is protected before it is " +
+                    "connected. An unprotected socket routes back into the TUN, arrives at lwIP, " +
+                    "and is dialled again — a loop that looks like a hang and takes the device " +
+                    "with it. See QuicConnection and app/src/main/jni/quic/quic_conn_jni.c.",
+            )
+        }
+        logger.lifecycle(
+            "the QUIC bridge calls none of ${forbidden.size} networking functions",
+        )
+    }
+}
+
+val nativeBridgeChecks =
+    tasks.register<NativeBridgeChecksTask>("checkNativeBridge") {
+        group = "verification"
+        description = "The QUIC bridge contains no networking function of any kind."
+        bridgeSources.set(layout.projectDirectory.dir("src/main/jni/quic"))
+    }
+
+tasks.named("check") { dependsOn(nativeBridgeChecks) }
 
 val nativeLibraryChecks =
     tasks.register<NativeLibraryChecksTask>("checkNativeLibraries") {
