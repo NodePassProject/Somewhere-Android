@@ -253,14 +253,14 @@ the specification.
 | 5 | `METADATA_CONFLICT`: mismatched OPEN and ATTACH | blocked | as row 4 |
 | 6 | `SESSION_REPLACED`: a newer carrier for one session | blocked | as row 4 |
 | 7 | Only the downlink of a split flow receives the result | blocked | as row 4 |
-| 8 | Auth on the first bidirectional stream; later streams send none | blocked | needs a connection with streams |
-| 9 | Unidirectional streams are never used | blocked | a source-level rule with no source to rule over yet |
-| 10 | Only one bidirectional stream is credited before auth | blocked | needs a peer that withholds credit |
+| 8 | Auth on the first bidirectional stream; later streams send none | covered | `QuicCarrierTest.theFirstStreamCarriesTheAuthFrameAndTheSecondCarriesNone`, `.aRejectedFirstFlowStillCountsAsHavingAuthenticated`; and on a device against a live Portal, `QuicAuthenticationTest.aSecondFlowOpensWithoutASecondAuthFrame` |
+| 9 | Unidirectional streams are never used | covered | Two ways, because one of them is only a claim: the client advertises `initial_max_streams_uni = 0`, and `checkNativeBridge` fails the build if `open_uni_stream` appears in the bridge. Verified to fail |
+| 10 | Only one bidirectional stream is credited before auth | **partly covered** | The client opens streams one at a time and surfaces `STREAM_ID_BLOCKED` to its caller rather than retrying behind it, so it cannot open a second and stall. **The refusal itself has never been provoked**: the reference Portal credits more than one stream, and a peer that withholds credit is a fake this suite does not have. Recorded rather than claimed |
 | 11 | DATA 5-byte header | covered | `QuicDatagramVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` |
 | 12 | CLOSE 5-byte header | covered | as row 11, and `.everyRejectionInTheFixtureIsRefused` for the "exactly five bytes" half |
 | 13 | FRAGMENT 13-byte header | covered | as row 11 |
 | 14 | Type 3 and non-zero reserved bits rejected | covered | `QuicDatagramVectorTest.everyRejectionInTheFixtureIsRefused`, `.everyTruncationPointIsRejectedRatherThanCrashing` |
-| 15 | No DATA before READY | blocked | needs a flow that has not been answered yet |
+| 15 | No DATA before READY | blocked | still needs the DATAGRAM path wired to a live connection — C5. The stream half of the rule is now reachable; the datagram half is not |
 | 16 | Never fragment when the whole packet fits | covered | `QuicDatagramVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` (the fixture's own `payloadLens` case), `.aPacketThatFitsIsOneDataFrameAndCarriesNoFragmentHeader`. This row found a defect: `plan` refused a zero-length packet, having applied the fragment header's `total_len` nonzero rule to a whole packet |
 | 17 | `fragmentPayloadMax = maxDatagram - 13`; count in 2..255 | covered | `QuicDatagramVectorTest.theFragmentPlanMatchesTheFixturesOwnArithmetic`, `.everyRejectionInTheFixtureIsRefused` |
 | 18 | Reassembly keyed by `(flowId, packetId)` | covered | `FragmentReassemblyTest.packetsOnDifferentFlowsWithTheSameIdDoNotCollide` |
@@ -278,11 +278,23 @@ the specification.
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 9 |
-| blocked on a QUIC connection this client does not have | 18 |
+| covered by an automated test | 12 |
+| partly covered, with the gap named | 1 |
+| blocked | 14 |
 
-No row is silent, and none of the eighteen is called "not yet written" — they
-are one missing piece, named once below.
+No row is silent. Twelve are covered, row 10 is covered in the half that is
+this client's behaviour and honest about the half that needs a peer this suite
+does not have, and the remaining fourteen name what each is waiting for rather
+than being called "not yet written".
+
+**What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
+that completes a handshake against a live Portal, and C3 authenticated over it.
+Rows 1, 2 and 3 were already covered as byte-level vectors; what is new is that
+the frames they describe are now sent, and a real Portal answers `READY` to the
+flow behind them. The Portal's own log records the transition: before C3 a
+connection produced "authentication deadline elapsed" because no frame was
+sent, and a wrong key now produces "invalid authentication frame" — the frame
+arrives, reaches validation, and is refused with silence.
 
 ## What C0 found
 

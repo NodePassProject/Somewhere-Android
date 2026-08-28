@@ -525,6 +525,33 @@ abstract class NativeBridgeChecksTask : DefaultTask() {
                 }
             }
 
+        // A second source-level rule, in the same file and of the same kind.
+        // Section 3 of the specification says unidirectional streams are not
+        // used. This client advertises initial_max_streams_uni = 0, so the
+        // statement is on the wire — but nothing stops a later change from
+        // opening one, and a stream the peer will never read is a flow that
+        // hangs rather than an error.
+        val uniStreams =
+            bridgeSources
+                .get()
+                .asFile
+                .walkTopDown()
+                .filter { it.isFile && it.extension == "c" }
+                .flatMap { source ->
+                    source.readLines().mapIndexedNotNull { index, line ->
+                        val code = line.substringBefore("//").trim()
+                        if (code.contains("open_uni_stream")) "${source.name}:${index + 1}" else null
+                    }
+                }.toList()
+        if (uniStreams.isNotEmpty()) {
+            throw GradleException(
+                "the QUIC bridge opens a unidirectional stream at ${uniStreams.joinToString()}. " +
+                    "The specification does not use them, and this client advertises " +
+                    "initial_max_streams_uni = 0 — so one opened here is a stream the peer will " +
+                    "never read, which presents as a flow that hangs rather than as an error.",
+            )
+        }
+
         if (problems.isNotEmpty()) {
             throw GradleException(
                 "the QUIC bridge reaches the network:\n" +
@@ -536,7 +563,8 @@ abstract class NativeBridgeChecksTask : DefaultTask() {
             )
         }
         logger.lifecycle(
-            "the QUIC bridge calls none of ${forbidden.size} networking functions",
+            "the QUIC bridge calls none of ${forbidden.size} networking functions " +
+                "and opens no unidirectional stream",
         )
     }
 }

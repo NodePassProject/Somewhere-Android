@@ -61,6 +61,29 @@
 #define SW_ERR_WRONG_THREAD (-1001)
 #define SW_ERR_STATE (-1002)
 
+// One bidirectional stream. QUIC gives ordered reliable bytes per stream, so
+// each of these is a byte pipe the session layer can treat exactly as it treats
+// a dedicated TLS lane -- which is why Transport is an interface over bytes
+// rather than over a socket.
+struct quic_stream {
+    int64_t id;
+
+    // Bytes the caller has handed over and ngtcp2 has not yet acknowledged.
+    // `sent` is how far writev has consumed; `acked` is how far the peer has
+    // confirmed, and only acknowledged bytes may be dropped -- a retransmit
+    // needs the original.
+    uint8_t *send;
+    size_t send_len, send_cap, sent, acked;
+    int fin_requested, fin_written;
+
+    // Bytes that arrived and the caller has not read.
+    uint8_t *recv;
+    size_t recv_len, recv_cap, recv_off;
+    int recv_fin;
+
+    struct quic_stream *next;
+};
+
 struct quic_conn {
     ngtcp2_conn *conn;
     ngtcp2_crypto_conn_ref conn_ref;
@@ -74,6 +97,11 @@ struct quic_conn {
 
     ngtcp2_ccerr last_error;
     char message[192];
+
+    struct quic_stream *streams;
+    // Which stream writev should try next. Without this a busy first stream
+    // starves every other one, because the loop would always start at the head.
+    struct quic_stream *next_write;
 
     pthread_t owner;
 };
@@ -102,7 +130,147 @@ static void say(struct quic_conn *c, const char *what) {
     snprintf(c->message, sizeof(c->message), "%s", what);
 }
 
+// ── streams ─────────────────────────────────────────────────────────────────
+
+static struct quic_stream *stream_find(struct quic_conn *c, int64_t id) {
+    struct quic_stream *s;
+    for (s = c->streams; s; s = s->next) {
+        if (s->id == id) {
+            return s;
+        }
+    }
+    return NULL;
+}
+
+static struct quic_stream *stream_add(struct quic_conn *c, int64_t id) {
+    struct quic_stream *s = calloc(1, sizeof(*s));
+    if (!s) {
+        return NULL;
+    }
+    s->id = id;
+    s->next = c->streams;
+    c->streams = s;
+    return s;
+}
+
+static void stream_free_all(struct quic_conn *c) {
+    struct quic_stream *s = c->streams, *next;
+    while (s) {
+        next = s->next;
+        free(s->send);
+        free(s->recv);
+        free(s);
+        s = next;
+    }
+    c->streams = NULL;
+    c->next_write = NULL;
+}
+
+static int buffer_append(uint8_t **buf, size_t *len, size_t *cap,
+                         const uint8_t *data, size_t datalen) {
+    if (*len + datalen > *cap) {
+        size_t want = *cap ? *cap : 4096;
+        uint8_t *grown;
+        while (want < *len + datalen) {
+            // Doubling, with a ceiling that is not a policy: a stream whose
+            // reader never drains it is a bug in the caller, and growing
+            // without bound turns that bug into an out-of-memory kill with no
+            // diagnostic at all.
+            if (want > (16u << 20)) {
+                return -1;
+            }
+            want *= 2;
+        }
+        grown = realloc(*buf, want);
+        if (!grown) {
+            return -1;
+        }
+        *buf = grown;
+        *cap = want;
+    }
+    memcpy(*buf + *len, data, datalen);
+    *len += datalen;
+    return 0;
+}
+
 // ── ngtcp2 callbacks ────────────────────────────────────────────────────────
+
+static int recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
+                               int64_t stream_id, uint64_t offset,
+                               const uint8_t *data, size_t datalen,
+                               void *user_data, void *stream_user_data) {
+    struct quic_conn *c = user_data;
+    struct quic_stream *s;
+    (void)conn;
+    (void)offset;
+    (void)stream_user_data;
+
+    // A peer-initiated stream is not something this client asked for, and the
+    // protocol has no use for one: every stream here is client-initiated. It
+    // is recorded rather than refused so that the caller sees the bytes if the
+    // specification ever grows a reason for them.
+    s = stream_find(c, stream_id);
+    if (!s) {
+        s = stream_add(c, stream_id);
+        if (!s) {
+            return NGTCP2_ERR_CALLBACK_FAILURE;
+        }
+    }
+
+    if (datalen > 0 &&
+        buffer_append(&s->recv, &s->recv_len, &s->recv_cap, data, datalen) != 0) {
+        say(c, "a stream received more than its reader was ever going to drain");
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    }
+    if (flags & NGTCP2_STREAM_DATA_FLAG_FIN) {
+        s->recv_fin = 1;
+    }
+    return 0;
+}
+
+// Acknowledged bytes may be dropped and no others: an unacknowledged byte can
+// still be retransmitted, and ngtcp2 asks for the original when it is.
+static int acked_stream_data_offset_cb(ngtcp2_conn *conn, int64_t stream_id,
+                                       uint64_t offset, uint64_t datalen,
+                                       void *user_data,
+                                       void *stream_user_data) {
+    struct quic_conn *c = user_data;
+    struct quic_stream *s = stream_find(c, stream_id);
+    (void)conn;
+    (void)offset;
+    (void)stream_user_data;
+
+    if (!s) {
+        return 0;
+    }
+    s->acked += (size_t)datalen;
+    if (s->acked >= s->send_len) {
+        s->send_len = 0;
+        s->sent = 0;
+        s->acked = 0;
+    }
+    return 0;
+}
+
+static int stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+                           uint64_t app_error_code, void *user_data,
+                           void *stream_user_data) {
+    struct quic_conn *c = user_data;
+    struct quic_stream *s = stream_find(c, stream_id);
+    (void)conn;
+    (void)flags;
+    (void)app_error_code;
+    (void)stream_user_data;
+
+    // Not freed here. The caller may still be holding unread bytes, and a
+    // close that discarded them would lose the Portal's last word -- which for
+    // a rejected flow is the entire message.
+    if (s) {
+        s->recv_fin = 1;
+    }
+    return 0;
+}
+
 
 static void rand_cb(uint8_t *dest, size_t destlen, const ngtcp2_rand_ctx *ctx) {
     (void)ctx;
@@ -216,6 +384,9 @@ static int quic_init(struct quic_conn *c) {
         .decrypt = ngtcp2_crypto_decrypt_cb,
         .hp_mask = ngtcp2_crypto_hp_mask_cb,
         .recv_retry = ngtcp2_crypto_recv_retry_cb,
+        .recv_stream_data = recv_stream_data_cb,
+        .acked_stream_data_offset = acked_stream_data_offset_cb,
+        .stream_close = stream_close_cb,
         .rand = rand_cb,
         .get_new_connection_id = get_new_connection_id_cb,
         .update_key = ngtcp2_crypto_update_key_cb,
@@ -264,6 +435,7 @@ static void conn_free(struct quic_conn *c) {
     if (!c) {
         return;
     }
+    stream_free_all(c);
     if (c->conn) {
         ngtcp2_conn_del(c->conn);
     }
@@ -430,9 +602,15 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeWrite(JNIEnv *env,
     struct quic_conn *c = checked(handle, &err);
     ngtcp2_path_storage ps;
     ngtcp2_pkt_info pi;
-    ngtcp2_ssize nwrite;
+    ngtcp2_ssize nwrite, wdatalen;
     uint8_t buf[1452];
     jsize capacity;
+    struct quic_stream *start, *s;
+    int64_t stream_id;
+    ngtcp2_vec datav;
+    size_t datavcnt;
+    uint32_t flags;
+    int visited;
 
     if (!c) {
         return err;
@@ -443,20 +621,214 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeWrite(JNIEnv *env,
         return SW_ERR_STATE;
     }
 
+    // Round-robin from wherever the last call stopped. Starting at the head
+    // every time lets one busy stream starve the rest, which on this client
+    // would mean a large transfer stalling every other flow on the connection.
+    start = c->next_write ? c->next_write : c->streams;
+    s = start;
+    stream_id = -1;
+    datavcnt = 0;
+    flags = NGTCP2_WRITE_STREAM_FLAG_NONE;
+    visited = 0;
+
+    while (s && visited <= 1) {
+        size_t pending = s->send_len > s->sent ? s->send_len - s->sent : 0;
+        if (pending > 0 || (s->fin_requested && !s->fin_written)) {
+            stream_id = s->id;
+            datav.base = s->send + s->sent;
+            datav.len = pending;
+            datavcnt = 1;
+            if (s->fin_requested && s->sent + pending >= s->send_len) {
+                flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
+            }
+            break;
+        }
+        s = s->next ? s->next : c->streams;
+        if (s == start) {
+            visited++;
+        }
+    }
+
     ngtcp2_path_storage_zero(&ps);
+    wdatalen = 0;
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
-                                       NULL, NGTCP2_WRITE_STREAM_FLAG_NONE, -1,
-                                       NULL, 0, now_ns());
+                                       &wdatalen, flags, stream_id,
+                                       datavcnt ? &datav : NULL, datavcnt,
+                                       now_ns());
     if (nwrite < 0) {
+        if (nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED ||
+            nwrite == NGTCP2_ERR_STREAM_SHUT_WR) {
+            // The peer's credit is exhausted or the half is closed. Neither is
+            // an error: there is simply nothing to send for this stream right
+            // now, and the caller comes back when a WINDOW-equivalent arrives.
+            return 0;
+        }
         say(c, ngtcp2_strerror((int)nwrite));
         ngtcp2_ccerr_set_liberr(&c->last_error, (int)nwrite, NULL, 0);
         return (jint)nwrite;
     }
+
+    if (stream_id != -1 && wdatalen > 0) {
+        struct quic_stream *written = stream_find(c, stream_id);
+        if (written) {
+            written->sent += (size_t)wdatalen;
+            if ((flags & NGTCP2_WRITE_STREAM_FLAG_FIN) &&
+                written->sent >= written->send_len) {
+                written->fin_written = 1;
+            }
+            c->next_write = written->next ? written->next : c->streams;
+        }
+    }
+
     if (nwrite == 0) {
         return 0;
     }
     (*env)->SetByteArrayRegion(env, out, 0, (jsize)nwrite, (const jbyte *)buf);
     return (jint)nwrite;
+}
+
+// Opens one client-initiated bidirectional stream.
+//
+// Unidirectional streams are never opened -- the specification says they are
+// not used, and this client advertises initial_max_streams_uni = 0 so the
+// statement is on the wire as well as in the source.
+//
+// NGTCP2_ERR_STREAM_ID_BLOCKED is not a failure but the observable form of
+// NW-P-19: before authentication the peer credits exactly one bidirectional
+// stream, so a second one has to wait for the peer to extend the limit rather
+// than be opened and stalled.
+JNIEXPORT jlong JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpenStream(JNIEnv *env,
+                                                                 jclass clazz,
+                                                                 jlong handle) {
+    (void)env;
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    int64_t stream_id;
+    int rv;
+
+    if (!c) {
+        return err;
+    }
+    rv = ngtcp2_conn_open_bidi_stream(c->conn, &stream_id, NULL);
+    if (rv != 0) {
+        say(c, ngtcp2_strerror(rv));
+        return rv;
+    }
+    if (!stream_add(c, stream_id)) {
+        say(c, "out of memory for a stream");
+        return SW_ERR_STATE;
+    }
+    return (jlong)stream_id;
+}
+
+// Queues bytes on a stream. They leave on a later nativeWrite, which is what
+// keeps this bridge free of anything that could send.
+JNIEXPORT jint JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeSend(JNIEnv *env,
+                                                           jclass clazz,
+                                                           jlong handle,
+                                                           jlong stream_id,
+                                                           jbyteArray data,
+                                                           jint length,
+                                                           jboolean fin) {
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    struct quic_stream *s;
+    jbyte *bytes;
+    int rv = 0;
+
+    if (!c) {
+        return err;
+    }
+    s = stream_find(c, (int64_t)stream_id);
+    if (!s) {
+        say(c, "no such stream");
+        return SW_ERR_STATE;
+    }
+    if (s->fin_requested) {
+        say(c, "the write half of this stream is already closed");
+        return SW_ERR_STATE;
+    }
+    if (length < 0 || length > (*env)->GetArrayLength(env, data)) {
+        say(c, "a write of an impossible length");
+        return SW_ERR_STATE;
+    }
+
+    if (length > 0) {
+        bytes = (*env)->GetByteArrayElements(env, data, NULL);
+        if (!bytes) {
+            return SW_ERR_STATE;
+        }
+        if (buffer_append(&s->send, &s->send_len, &s->send_cap,
+                          (const uint8_t *)bytes, (size_t)length) != 0) {
+            say(c, "the send buffer would not grow");
+            rv = SW_ERR_STATE;
+        }
+        (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+    }
+    if (rv == 0 && fin) {
+        s->fin_requested = 1;
+    }
+    return rv;
+}
+
+// Drains what arrived on a stream.
+//
+// Returns the count copied, 0 when nothing has arrived yet, and -1 at a clean
+// end of stream with nothing left -- which is the same contract Transport.read
+// already has, so the session layer needs no second spelling of "the peer is
+// done".
+JNIEXPORT jint JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeRead(JNIEnv *env,
+                                                           jclass clazz,
+                                                           jlong handle,
+                                                           jlong stream_id,
+                                                           jbyteArray out,
+                                                           jint offset,
+                                                           jint length) {
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    struct quic_stream *s;
+    size_t available, take;
+
+    if (!c) {
+        return err;
+    }
+    s = stream_find(c, (int64_t)stream_id);
+    if (!s) {
+        say(c, "no such stream");
+        return SW_ERR_STATE;
+    }
+    if (offset < 0 || length < 0 ||
+        offset + length > (*env)->GetArrayLength(env, out)) {
+        say(c, "a read outside the buffer");
+        return SW_ERR_STATE;
+    }
+
+    available = s->recv_len - s->recv_off;
+    if (available == 0) {
+        return s->recv_fin ? -1 : 0;
+    }
+    take = available < (size_t)length ? available : (size_t)length;
+    (*env)->SetByteArrayRegion(env, out, offset, (jsize)take,
+                               (const jbyte *)(s->recv + s->recv_off));
+    s->recv_off += take;
+    if (s->recv_off == s->recv_len) {
+        s->recv_len = 0;
+        s->recv_off = 0;
+    }
+
+    // Credit has to be returned or the peer stops sending. L2 shipped the
+    // version of this defect where returned credit was truncated into a u16
+    // and a transfer stalled short of the end looking like a dead network;
+    // here the equivalent mistake is not returning any.
+    ngtcp2_conn_extend_max_stream_offset(c->conn, (int64_t)stream_id, take);
+    ngtcp2_conn_extend_max_offset(c->conn, take);
+    return (jint)take;
 }
 
 JNIEXPORT jlong JNICALL

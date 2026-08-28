@@ -91,29 +91,84 @@ class QuicConnection private constructor(
      */
     fun completeHandshake(timeoutMillis: Long = DEFAULT_HANDSHAKE_TIMEOUT_MILLIS) {
         val deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLI
-        val incoming = ByteArray(MAX_DATAGRAM)
-        val packet = DatagramPacket(incoming, incoming.size)
 
         while (!handshakeCompleted) {
             if (System.nanoTime() >= deadline) {
                 throw QuicException(QuicFailure.HandshakeTimeout)
             }
-            flush()
-
-            // The transport's own timer decides how long to wait, capped so a
-            // connection with no deadline at all still notices the caller's.
-            val remaining = (deadline - System.nanoTime()) / NANOS_PER_MILLI
-            socket.soTimeout = minOf(waitMillis(), remaining).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
-            try {
-                packet.length = incoming.size
-                socket.receive(packet)
-                check(nativeReceive(handle, incoming, packet.length))
-            } catch (_: SocketTimeoutException) {
-                check(nativeHandleExpiry(handle))
-            }
+            pump((deadline - System.nanoTime()) / NANOS_PER_MILLI)
         }
         // Whatever the completed handshake left to say — the client's final
         // flight, usually — goes out before the caller is told it is ready.
+        flush()
+    }
+
+    /**
+     * Opens one client-initiated bidirectional stream.
+     *
+     * Unidirectional streams are never opened. The specification says they are
+     * not used, and this client advertises `initial_max_streams_uni = 0`, so
+     * the statement is on the wire as well as in the source.
+     *
+     * Before authentication the peer credits exactly one bidirectional stream
+     * (NW-P-19), so a second one here fails rather than opening and stalling.
+     * That refusal is the observable form of the rule and is left visible to
+     * the caller instead of being retried behind its back.
+     */
+    fun openStream(): Long {
+        val id = nativeOpenStream(handle)
+        if (id < 0) {
+            throw QuicException(QuicFailure.Transport(message() ?: "no stream could be opened"))
+        }
+        return id
+    }
+
+    /** Queues bytes on a stream; they leave on a later [pump]. */
+    fun send(
+        streamId: Long,
+        bytes: ByteArray,
+        fin: Boolean = false,
+    ) {
+        check(nativeSend(handle, streamId, bytes, bytes.size, fin))
+    }
+
+    /**
+     * Takes what has arrived on a stream.
+     *
+     * @return the count copied, `0` when nothing has arrived yet, and `-1` at a
+     *   clean end of stream — the same contract [Transport.read] has, so the
+     *   session layer needs no second spelling of "the peer is done".
+     */
+    fun receive(
+        streamId: Long,
+        into: ByteArray,
+        offset: Int,
+        length: Int,
+    ): Int {
+        val n = nativeRead(handle, streamId, into, offset, length)
+        if (n < -1) check(n)
+        return n
+    }
+
+    /**
+     * Sends everything ready and waits up to [timeoutMillis] for one datagram.
+     *
+     * This is the whole IO loop, and it is called from wherever the owning
+     * thread happens to be — the handshake, a stream read, a flush. There is no
+     * separate pump thread, deliberately: a second thread driving the same
+     * connection is the lwIP defect again, and this bridge refuses it anyway.
+     */
+    fun pump(timeoutMillis: Long) {
+        flush()
+        val incoming = ByteArray(MAX_DATAGRAM)
+        val packet = DatagramPacket(incoming, incoming.size)
+        socket.soTimeout = minOf(waitMillis(), timeoutMillis).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()
+        try {
+            socket.receive(packet)
+            check(nativeReceive(handle, incoming, packet.length))
+        } catch (_: SocketTimeoutException) {
+            check(nativeHandleExpiry(handle))
+        }
         flush()
     }
 
@@ -148,8 +203,12 @@ class QuicConnection private constructor(
         nativeClose(handle)
     }
 
-    /** Sends every datagram the transport currently has ready. */
-    private fun flush() {
+    /**
+     * Sends every datagram the transport currently has ready, and waits for
+     * nothing. This is what a caller means by "flush": the bytes are on their
+     * way, not answered.
+     */
+    fun flush() {
         val out = ByteArray(MAX_DATAGRAM)
         while (true) {
             val written = nativeWrite(handle, out)
@@ -289,6 +348,27 @@ class QuicConnection private constructor(
             label: ByteArray,
             length: Int,
         ): ByteArray?
+
+        @JvmStatic
+        private external fun nativeOpenStream(handle: Long): Long
+
+        @JvmStatic
+        private external fun nativeSend(
+            handle: Long,
+            streamId: Long,
+            data: ByteArray,
+            length: Int,
+            fin: Boolean,
+        ): Int
+
+        @JvmStatic
+        private external fun nativeRead(
+            handle: Long,
+            streamId: Long,
+            out: ByteArray,
+            offset: Int,
+            length: Int,
+        ): Int
 
         @JvmStatic
         private external fun nativeLastMessage(handle: Long): String?
