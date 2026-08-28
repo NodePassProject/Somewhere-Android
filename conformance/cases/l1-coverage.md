@@ -234,15 +234,13 @@ inventing one would be the same mistake facing the other way.
 
 # L3
 
-Twenty-seven rows. **Nine are covered, eighteen are blocked on the same thing**
-and it is not eighteen different problems: this client has no QUIC connection
-yet, and the task that was to produce one — C0 of the run PRD — did not finish.
-See the L3 note below for where it stopped.
+Twenty-seven rows. **Eighteen are covered, one partly, eight blocked** — see
+the summary below, which names the eight.
 
-The nine that are covered are covered *now*, not provisionally. They are the
-parts of section 9 that are arithmetic and framing rather than transport, and
-they are checked against the same fixture `verify-vectors.py` recomputes from
-the specification.
+Everything covered here is covered *now*, not provisionally. The arithmetic and
+framing rows are checked against the same fixture `verify-vectors.py` recomputes
+from the specification; the connection, authentication and stream rows are
+checked against a live Portal from inside the app process.
 
 | # | Case | State | Covered by |
 |---|---|---|---|
@@ -278,14 +276,22 @@ the specification.
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 12 |
-| partly covered, with the gap named | 1 |
-| blocked | 14 |
+| covered by an automated test | 18 |
+| partly covered, with the gap named | 1 — row 10 |
+| blocked | 8 — rows 4, 5, 6, 7, 15, 25, 26, 27 |
 
-No row is silent. Twelve are covered, row 10 is covered in the half that is
-this client's behaviour and honest about the half that needs a peer this suite
-does not have, and the remaining fourteen name what each is waiting for rather
-than being called "not yet written".
+**These are counted from the table above, and the blocked ones are named
+rather than totalled.** The previous version of this summary said nine covered
+and eighteen blocked while its own table showed sixteen and eleven; the number
+had been written by hand and then carried forward through two runs without
+anyone re-deriving it. Naming the blocked rows makes the summary re-checkable
+by reading, which a total is not.
+
+Row 10 is covered in the half that is this client's behaviour and honest about
+the half that needs a peer this suite does not have. The eight blocked rows each
+name what they are waiting for rather than being called "not yet written", and
+seven of the eight wait on the same two things: split flows (4, 5, 6, 7, 25) and
+a physical device (26, 27).
 
 **What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
 that completes a handshake against a live Portal, and C3 authenticated over it.
