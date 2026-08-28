@@ -101,12 +101,25 @@ android {
         }
     }
 
+    // Signing material is the maintainer's and lives nowhere in this repository:
+    // `local.properties` is gitignored, and `*.jks` is refused outright.
+    //
+    // The config is created only when a keystore is actually there, so that a
+    // release build is something anyone who clones this can run. Without it the
+    // APK comes out unsigned, which is the honest outcome — an unsigned APK
+    // cannot be installed by an ordinary user, and a build that failed instead
+    // would make "can this be built" and "can this be published" the same
+    // question when they are not.
+    val keystore = localProperties.getProperty("KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+
     signingConfigs {
-        create("release") {
-            storeFile = file(localProperties.getProperty("KEYSTORE_FILE", "../keystore.jks"))
-            storePassword = localProperties.getProperty("KEYSTORE_PASSWORD", "")
-            keyAlias = localProperties.getProperty("KEY_ALIAS", "release")
-            keyPassword = localProperties.getProperty("KEY_PASSWORD", "")
+        if (keystore != null) {
+            create("release") {
+                storeFile = keystore
+                storePassword = localProperties.getProperty("KEYSTORE_PASSWORD", "")
+                keyAlias = localProperties.getProperty("KEY_ALIAS", "release")
+                keyPassword = localProperties.getProperty("KEY_PASSWORD", "")
+            }
         }
     }
 
@@ -114,7 +127,14 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            // The maintainer's key when there is one, and the debug key when
+            // there is not. Not a shortcut: an APK signed with the debug key
+            // cannot be published — every store refuses it — so it cannot be
+            // mistaken for a release, while it *can* be installed, which is
+            // what makes the minified build testable at all. R8 is where this
+            // project's recurring failure mode lives, and a release artifact
+            // nobody can run is one nobody has run.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -601,6 +621,129 @@ tasks.withType<Test>().configureEach {
         systemProperty("somewhere.quic.library", it)
     }
 }
+
+// ── The shipped release APK, checked as a file ──────────────────────────────
+// R8 is where this project's recurring failure mode lives — green build, green
+// lint, green tests, broken on the artifact nobody ran — and the JNI bridge is
+// the part a shrinker is most confidently wrong about. Nothing in Kotlin calls
+// `nativeInit`'s callbacks and nothing in C calls anything, so R8 sees an
+// unreferenced method on both sides and renames or removes it. The failure is
+// not a crash: `nativeInit` logs that a callback did not resolve and returns,
+// so the tunnel comes up and answers nothing.
+//
+// Running the instrumentation suite against the minified build was tried first
+// and abandoned. The two APKs are shrunk by two separate R8 runs, so the test
+// APK's calls are compiled against names the application no longer has, and the
+// keeps that fix *that* (`-keep class eu.nodepass.somewhere.**`) would also
+// keep every JNI entry point — masking exactly the mistake this is for.
+//
+// So the artifact is read instead of run. This is a stronger check for the
+// question asked: it inspects the file that would ship, rather than a variant
+// built to be testable.
+
+abstract class ReleaseArtifactChecksTask : DefaultTask() {
+    @get:InputFile
+    abstract val apk: RegularFileProperty
+
+    @get:Input
+    abstract val entryPoints: ListProperty<String>
+
+    @get:Input
+    abstract val requiredAbis: ListProperty<String>
+
+    @TaskAction
+    fun check() {
+        val dex = StringBuilder()
+        ZipFile(apk.get().asFile).use { zip ->
+            zip.entries().asSequence().filter { it.name.endsWith(".dex") }.forEach { entry ->
+                // Names live in the dex string table as plain UTF-8, so a
+                // substring search over the file answers "did this survive
+                // R8 under this name" without a dex parser.
+                zip.getInputStream(entry).use { dex.append(String(it.readBytes(), Charsets.ISO_8859_1)) }
+            }
+        }
+        val text = dex.toString()
+
+        // The libraries the file must carry, for the ABIs it claims to support.
+        // Modern packaging leaves them compressed and page-aligned inside the
+        // APK rather than extracting them at install, so the file is the only
+        // place this can be asked -- an install directory's `lib/` is empty on
+        // a perfectly working install.
+        val libraries =
+            ZipFile(apk.get().asFile).use { zip ->
+                zip
+                    .entries()
+                    .asSequence()
+                    .map { it.name }
+                    .filter { it.endsWith("libsomewhere_native.so") }
+                    .toList()
+            }
+        val missingAbis = requiredAbis.get().filterNot { abi -> libraries.any { it.contains("/$abi/") } }
+        if (missingAbis.isNotEmpty()) {
+            throw GradleException(
+                "the release APK carries no native library for ${missingAbis.joinToString()}",
+            )
+        }
+
+        val missing = entryPoints.get().filterNot { text.contains(it) }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "the release APK does not carry ${missing.size} JNI entry point(s): " +
+                    missing.joinToString() + "\n\n" +
+                    "R8 renamed or removed them, and the native library resolves them by name at " +
+                    "call time. Nothing crashes: nativeInit logs that a callback did not resolve " +
+                    "and returns, so the tunnel comes up and carries nothing. See " +
+                    "app/proguard-rules.pro.",
+            )
+        }
+        logger.lifecycle(
+            "release APK: ${apk.get().asFile.length()} bytes, " +
+                "${entryPoints.get().size} JNI entry points present under their own names, " +
+                "native libraries for ${requiredAbis.get().joinToString()}",
+        )
+    }
+}
+
+val releaseArtifactChecks =
+    tasks.register<ReleaseArtifactChecksTask>("checkReleaseArtifact") {
+        group = "verification"
+        description = "The shipped APK still carries the names the native library resolves."
+        dependsOn("assembleRelease")
+        apk.set(
+            layout.buildDirectory.file("outputs/apk/release/app-release.apk").flatMap { signed ->
+                layout.buildDirectory.file(
+                    if (signed.asFile.exists()) {
+                        "outputs/apk/release/app-release.apk"
+                    } else {
+                        "outputs/apk/release/app-release-unsigned.apk"
+                    },
+                )
+            },
+        )
+        entryPoints.set(
+            listOf(
+                // The Kotlin halves, which R8 can rename.
+                "eu/nodepass/somewhere/vpn/NativeBridge",
+                "eu/nodepass/somewhere/quic/QuicConnection",
+                "eu/nodepass/somewhere/quic/QuicStack",
+                // The names the C side looks up. `nativeInit` resolves the
+                // callbacks by name *and* signature, and a rename of either
+                // half breaks it silently.
+                "nativeInit",
+                "nativeInput",
+                "nativeTcpWrite",
+                "onTcpAccept",
+                "onTcpRecv",
+                "onUdpRecv",
+                "nativeOpen",
+                "nativeReceive",
+                "nativeWrite",
+                "nativeSendDatagram",
+                "nativeExportKeyingMaterial",
+            ),
+        )
+        requiredAbis.set(listOf("arm64-v8a", "x86_64"))
+    }
 
 val classpathConsistencyTasks =
     listOf("Debug" to "debug", "Release" to "release").map { (capitalised, lowercase) ->
