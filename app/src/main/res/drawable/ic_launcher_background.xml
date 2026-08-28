@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The brand ground, flat.
+
+    `brand-600` from docs/brand.md rather than the in-app `brand` token: the
+    icon is the one place the brand is allowed to be the loudest thing, and it
+    is read against a launcher wallpaper nobody chose rather than against a
+    known surface, so the AA figures the tokens carry do not apply here.
+
+    Flat because an adaptive icon is masked, scaled and parallaxed by the
+    launcher. A gradient survives none of that recognisably.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#461060"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The themed-icon layer, which the system recolours to one hue of its own.
+
+    The same geometry, because a mark a user has learned should not change
+    shape when they turn themed icons on. Both directions are drawn in the same
+    colour here and that is unavoidable rather than a choice: a monochrome
+    layer has exactly one. It is the reason the two arrows differ in *length*
+    and not only in hue — with the colour gone the shape still says there are
+    two directions and they are not the same size.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108"
+    android:tint="#FFFFFF">
+    <path
+        android:pathData="M27,41 L75,41"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M68,32 L81,41 L68,50"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M81,67 L49,67"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M49,58 L36,67 L49,76"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
