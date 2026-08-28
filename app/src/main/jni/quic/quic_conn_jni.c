@@ -66,6 +66,12 @@
 // than failing.
 #define SW_STREAM_BLOCKED (-1003)
 
+// QUIC's own framing around a DATAGRAM payload: packet header, connection id,
+// packet number, the frame's type and length, and the AEAD tag. Generous on
+// purpose -- a few wasted bytes per packet against a packet that cannot be
+// written at all.
+#define SW_QUIC_OVERHEAD 64
+
 // One bidirectional stream. QUIC gives ordered reliable bytes per stream, so
 // each of these is a byte pipe the session layer can treat exactly as it treats
 // a dedicated TLS lane -- which is why Transport is an interface over bytes
@@ -95,6 +101,18 @@ struct quic_stream {
     struct quic_stream *next;
 };
 
+// One QUIC DATAGRAM, queued in either direction.
+//
+// Unreliable by definition: RFC 9221 datagrams are neither retransmitted nor
+// ordered, which is exactly what UDP over this protocol wants. The queues exist
+// because the caller and the connection's loop are different moments, not
+// because anything here adds reliability.
+struct quic_datagram {
+    uint8_t *bytes;
+    size_t len;
+    struct quic_datagram *next;
+};
+
 struct quic_conn {
     ngtcp2_conn *conn;
     ngtcp2_crypto_conn_ref conn_ref;
@@ -108,6 +126,12 @@ struct quic_conn {
 
     ngtcp2_ccerr last_error;
     char message[192];
+
+    // Datagrams waiting to go out, and ones that arrived. Both are FIFO, kept
+    // as head/tail so a busy flow does not walk the list to append.
+    struct quic_datagram *tx_head, *tx_tail;
+    struct quic_datagram *rx_head, *rx_tail;
+    size_t tx_count, rx_count;
 
     struct quic_stream *streams;
     // Which stream writev should try next. Without this a busy first stream
@@ -139,6 +163,94 @@ static uint64_t now_ns(void) {
 
 static void say(struct quic_conn *c, const char *what) {
     snprintf(c->message, sizeof(c->message), "%s", what);
+}
+
+// ── datagrams ───────────────────────────────────────────────────────────────
+
+// Bounded in both directions. A datagram queue that grows without limit turns a
+// peer that sends faster than this device reads -- or a caller that queues
+// faster than the link drains -- into an out-of-memory kill with no diagnostic.
+// Dropping is the correct answer for an unreliable transport: UDP loses packets
+// and every user of it already copes.
+#define SW_DATAGRAM_QUEUE_MAX 256
+
+static int datagram_push(struct quic_datagram **head, struct quic_datagram **tail,
+                         size_t *count, const uint8_t *bytes, size_t len) {
+    struct quic_datagram *d;
+    if (*count >= SW_DATAGRAM_QUEUE_MAX) {
+        return -1;
+    }
+    d = calloc(1, sizeof(*d));
+    if (!d) {
+        return -1;
+    }
+    if (len > 0) {
+        d->bytes = malloc(len);
+        if (!d->bytes) {
+            free(d);
+            return -1;
+        }
+        memcpy(d->bytes, bytes, len);
+    }
+    d->len = len;
+    if (*tail) {
+        (*tail)->next = d;
+    } else {
+        *head = d;
+    }
+    *tail = d;
+    (*count)++;
+    return 0;
+}
+
+static struct quic_datagram *datagram_pop(struct quic_datagram **head,
+                                          struct quic_datagram **tail,
+                                          size_t *count) {
+    struct quic_datagram *d = *head;
+    if (!d) {
+        return NULL;
+    }
+    *head = d->next;
+    if (!*head) {
+        *tail = NULL;
+    }
+    (*count)--;
+    return d;
+}
+
+static void datagram_free(struct quic_datagram *d) {
+    if (!d) {
+        return;
+    }
+    free(d->bytes);
+    free(d);
+}
+
+static void datagram_free_all(struct quic_datagram **head,
+                              struct quic_datagram **tail, size_t *count) {
+    struct quic_datagram *d = *head, *next;
+    while (d) {
+        next = d->next;
+        datagram_free(d);
+        d = next;
+    }
+    *head = NULL;
+    *tail = NULL;
+    *count = 0;
+}
+
+static int recv_datagram_cb(ngtcp2_conn *conn, uint32_t flags,
+                            const uint8_t *data, size_t datalen,
+                            void *user_data) {
+    struct quic_conn *c = user_data;
+    (void)conn;
+    (void)flags;
+
+    // A full queue drops, and does not fail: this is an unreliable transport
+    // and refusing the connection because one packet arrived at a bad moment
+    // would be a far worse answer than the loss UDP already has.
+    datagram_push(&c->rx_head, &c->rx_tail, &c->rx_count, data, datalen);
+    return 0;
 }
 
 // ── streams ─────────────────────────────────────────────────────────────────
@@ -398,6 +510,7 @@ static int quic_init(struct quic_conn *c) {
         .hp_mask = ngtcp2_crypto_hp_mask_cb,
         .recv_retry = ngtcp2_crypto_recv_retry_cb,
         .recv_stream_data = recv_stream_data_cb,
+        .recv_datagram = recv_datagram_cb,
         .acked_stream_data_offset = acked_stream_data_offset_cb,
         .stream_close = stream_close_cb,
         .rand = rand_cb,
@@ -429,6 +542,11 @@ static int quic_init(struct quic_conn *c) {
     // authentication, and unidirectional streams are never used. Advertising
     // none of the latter says so on the wire rather than in a comment.
     params.initial_max_streams_uni = 0;
+    // Advertising a nonzero size is what enables RFC 9221 at all; without it
+    // the peer may not send DATAGRAMs and section 9 has no carrier. The value
+    // is an upper bound on one frame, not a buffer: fragmentation above this
+    // layer keeps every packet inside whatever the path actually allows.
+    params.max_datagram_frame_size = 65535;
     params.initial_max_stream_data_bidi_local = 512 * 1024;
     params.initial_max_data = 1024 * 1024;
 
@@ -449,6 +567,8 @@ static void conn_free(struct quic_conn *c) {
         return;
     }
     stream_free_all(c);
+    datagram_free_all(&c->tx_head, &c->tx_tail, &c->tx_count);
+    datagram_free_all(&c->rx_head, &c->rx_tail, &c->rx_count);
     if (c->conn) {
         ngtcp2_conn_del(c->conn);
     }
@@ -664,6 +784,37 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeWrite(JNIEnv *env,
 
     ngtcp2_path_storage_zero(&ps);
     wdatalen = 0;
+
+    // A queued datagram goes before stream data. Not a priority decision: one
+    // writev call carries one or the other, and a datagram that waits behind a
+    // large stream write is a UDP packet delayed by a TCP download -- which is
+    // the confusion between the two that section 9 exists to avoid.
+    if (c->tx_head) {
+        int accepted = 0;
+        ngtcp2_vec dv = {.base = c->tx_head->bytes, .len = c->tx_head->len};
+        nwrite = ngtcp2_conn_writev_datagram(c->conn, &ps.path, &pi, buf,
+                                             sizeof(buf), &accepted,
+                                             NGTCP2_WRITE_DATAGRAM_FLAG_NONE, 0,
+                                             &dv, 1, now_ns());
+        if (nwrite < 0) {
+            if (nwrite == NGTCP2_ERR_WRITE_MORE ||
+                nwrite == NGTCP2_ERR_STREAM_DATA_BLOCKED) {
+                return 0;
+            }
+            say(c, ngtcp2_strerror((int)nwrite));
+            ngtcp2_ccerr_set_liberr(&c->last_error, (int)nwrite, NULL, 0);
+            return (jint)nwrite;
+        }
+        if (accepted) {
+            datagram_free(datagram_pop(&c->tx_head, &c->tx_tail, &c->tx_count));
+        }
+        if (nwrite == 0) {
+            return 0;
+        }
+        (*env)->SetByteArrayRegion(env, out, 0, (jsize)nwrite, (const jbyte *)buf);
+        return (jint)nwrite;
+    }
+
     nwrite = ngtcp2_conn_writev_stream(c->conn, &ps.path, &pi, buf, sizeof(buf),
                                        &wdatalen, flags, stream_id,
                                        datavcnt ? &datav : NULL, datavcnt,
@@ -963,6 +1114,125 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeExportKeyingMaterial(
         (*env)->SetByteArrayRegion(env, result, 0, length, (const jbyte *)out);
     }
     return result;
+}
+
+// Queues one DATAGRAM. It leaves on a later nativeWrite, like everything else.
+JNIEXPORT jint JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeSendDatagram(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray data, jint length) {
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    jbyte *bytes;
+    int rv;
+
+    if (!c) {
+        return err;
+    }
+    if (length < 0 || length > (*env)->GetArrayLength(env, data)) {
+        say(c, "a datagram of an impossible length");
+        return SW_ERR_STATE;
+    }
+    bytes = (*env)->GetByteArrayElements(env, data, NULL);
+    if (!bytes) {
+        return SW_ERR_STATE;
+    }
+    rv = datagram_push(&c->tx_head, &c->tx_tail, &c->tx_count,
+                       (const uint8_t *)bytes, (size_t)length);
+    (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+
+    if (rv != 0) {
+        // Dropped, and said so. The caller decides what a drop means; for UDP
+        // it usually means nothing, and pretending otherwise would add
+        // reliability this transport does not have.
+        say(c, "the outgoing datagram queue is full");
+        return SW_ERR_STATE;
+    }
+    return 0;
+}
+
+// Takes one received DATAGRAM, or reports that none is waiting.
+JNIEXPORT jint JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeReadDatagram(
+    JNIEnv *env, jclass clazz, jlong handle, jbyteArray out) {
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    struct quic_datagram *d;
+    jsize capacity;
+    jint copied;
+
+    if (!c) {
+        return err;
+    }
+    if (!c->rx_head) {
+        return 0;
+    }
+    capacity = (*env)->GetArrayLength(env, out);
+    if ((size_t)capacity < c->rx_head->len) {
+        say(c, "the datagram buffer is smaller than the datagram");
+        return SW_ERR_STATE;
+    }
+    d = datagram_pop(&c->rx_head, &c->rx_tail, &c->rx_count);
+    copied = (jint)d->len;
+    if (copied > 0) {
+        (*env)->SetByteArrayRegion(env, out, 0, copied, (const jbyte *)d->bytes);
+    }
+    datagram_free(d);
+    // A zero-length DATAGRAM is a real frame -- section 9 says an empty DATA is
+    // valid -- so 0 already means "nothing waiting". The caller distinguishes
+    // them by asking whether one was waiting at all, which is what the sign of
+    // this return does not carry; hence 1 more than the length.
+    return copied + 1;
+}
+
+/*
+ * The largest Nowhere DATA frame this connection can carry in one DATAGRAM.
+ *
+ * Two limits apply and the smaller wins: what the peer said it would accept in
+ * one DATAGRAM frame, and what actually fits in a QUIC packet on this path. The
+ * second is not a constant -- ngtcp2 knows the current path's UDP payload size
+ * -- and it can shrink, which is exactly the case section 9's "replanning after
+ * maxDatagram shrinks uses a new packet_id" rule exists for.
+ *
+ * The allowance subtracted is QUIC's own framing: packet header, connection id,
+ * packet number, the DATAGRAM frame type and length, and the AEAD tag. It is
+ * deliberately generous. Being a little conservative costs a few bytes per
+ * packet; being optimistic costs a packet that cannot be written at all.
+ */
+JNIEXPORT jint JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeMaxDatagram(JNIEnv *env,
+                                                                  jclass clazz,
+                                                                  jlong handle) {
+    (void)env;
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    const ngtcp2_transport_params *remote;
+    size_t path_limit;
+    uint64_t peer_limit;
+    size_t usable;
+
+    if (!c) {
+        return err;
+    }
+    remote = ngtcp2_conn_get_remote_transport_params(c->conn);
+    if (!remote || remote->max_datagram_frame_size == 0) {
+        // The peer did not enable RFC 9221. Reported as zero rather than as an
+        // error: it is a fact about the peer, and the caller's answer is to
+        // refuse UDP flows rather than to fail the connection.
+        return 0;
+    }
+    peer_limit = remote->max_datagram_frame_size;
+    path_limit = ngtcp2_conn_get_max_tx_udp_payload_size(c->conn);
+    if (path_limit <= SW_QUIC_OVERHEAD) {
+        return 0;
+    }
+    usable = path_limit - SW_QUIC_OVERHEAD;
+    if (peer_limit < (uint64_t)usable) {
+        usable = (size_t)peer_limit;
+    }
+    return (jint)usable;
 }
 
 JNIEXPORT jstring JNICALL

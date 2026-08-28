@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.quic
 
+import eu.nodepass.somewhere.protocol.session.QuicCarrier
 import java.io.Closeable
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -100,9 +101,16 @@ class QuicConnection private constructor(
     private val serverName: String?,
     private val protect: (DatagramSocket) -> Boolean,
     private val openSocket: () -> DatagramSocket,
-) : Closeable {
+) : Closeable,
+    QuicCarrier.Datagrams {
     private val work = LinkedBlockingQueue<FutureTask<*>>()
     private val streams = ConcurrentHashMap<Long, StreamQueue>()
+
+    /**
+     * Datagrams that arrived, in order. Bounded on the native side; this is
+     * only the hand-off, so that a reader blocks itself rather than the loop.
+     */
+    private val datagrams = LinkedBlockingQueue<ByteArray>()
     private val ready = CountDownLatch(1)
     private val startupFailure = AtomicReference<Throwable?>(null)
     private val fatal = AtomicReference<QuicFailure?>(null)
@@ -197,6 +205,7 @@ class QuicConnection private constructor(
                 flush(out)
                 receiveBurst(packet, incoming)
                 harvestStreams(harvest)
+                harvestDatagrams(harvest)
                 if (!handshakeDone && nativeHandshakeCompleted(handle) == 1) {
                     handshakeDone = true
                 }
@@ -263,6 +272,20 @@ class QuicConnection private constructor(
             }
             require(nativeReceive(handle, incoming, packet.length))
             taken++
+        }
+    }
+
+    /** Moves received datagrams across, for the same reason streams move. */
+    private fun harvestDatagrams(buffer: ByteArray) {
+        while (true) {
+            // One more than the length, so that a zero-length datagram — which
+            // section 9 makes valid — is distinguishable from none waiting.
+            val n = nativeReadDatagram(handle, buffer)
+            if (n <= 0) {
+                if (n < 0) require(n)
+                return
+            }
+            datagrams.put(buffer.copyOf(n - 1))
         }
     }
 
@@ -444,6 +467,69 @@ class QuicConnection private constructor(
         }
     }
 
+    /**
+     * Queues one QUIC DATAGRAM. It leaves on the owning thread's next pass.
+     *
+     * Unreliable by definition — RFC 9221 datagrams are neither retransmitted
+     * nor ordered — which is what UDP over this protocol wants. A full queue
+     * drops rather than blocking or failing the connection: UDP loses packets,
+     * and every user of it already copes with that.
+     */
+    override fun send(bytes: ByteArray) = sendDatagram(bytes)
+
+    override fun receive(timeoutMillis: Long): ByteArray? = receiveDatagram(timeoutMillis)
+
+    override fun maxDatagram(): Int = maxDatagramSize()
+
+    fun sendDatagram(bytes: ByteArray) {
+        onOwner {
+            val rv = nativeSendDatagram(handle, bytes, bytes.size)
+            if (rv < 0) {
+                throw QuicException(
+                    QuicFailure.Transport(nativeLastMessage(handle) ?: "the datagram was refused"),
+                )
+            }
+        }
+    }
+
+    /**
+     * Takes one received DATAGRAM, waiting up to [timeoutMillis].
+     *
+     * @return the bytes, or null when nothing arrived in time. A zero-length
+     *   datagram is a real frame — section 9 says an empty DATA is valid — so
+     *   "nothing" cannot be spelled as an empty array.
+     */
+    fun receiveDatagram(timeoutMillis: Long): ByteArray? {
+        val deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLI
+        while (true) {
+            val taken = datagrams.poll()
+            if (taken != null) return taken
+            fatal.get()?.let { throw QuicException(it) }
+            if (!running) return null
+            if (System.nanoTime() >= deadline) return null
+            datagrams.poll(READ_POLL_MILLIS, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+    }
+
+    /**
+     * The largest Nowhere DATA frame one DATAGRAM can carry right now, or 0
+     * when the peer did not enable RFC 9221.
+     *
+     * **It can shrink**, which is not a detail: section 9 says replanning after
+     * it does must use a new `packet_id`, because a peer reassembling the old
+     * plan and the new one under one id would produce a packet that is neither.
+     */
+    fun maxDatagramSize(): Int =
+        onOwner {
+            val size = nativeMaxDatagram(handle)
+            if (size < 0) {
+                throw QuicException(
+                    QuicFailure.Transport(nativeLastMessage(handle) ?: "no datagram size available"),
+                )
+            }
+            size
+        }
+
     /** RFC 5705 keying material, which is what NW-P-01 authenticates with. */
     fun exportKeyingMaterial(
         label: String,
@@ -587,6 +673,23 @@ class QuicConnection private constructor(
             offset: Int,
             length: Int,
         ): Int
+
+        @JvmStatic
+        private external fun nativeSendDatagram(
+            handle: Long,
+            data: ByteArray,
+            length: Int,
+        ): Int
+
+        /** Returns one more than the length, or 0 when none is waiting. */
+        @JvmStatic
+        private external fun nativeReadDatagram(
+            handle: Long,
+            out: ByteArray,
+        ): Int
+
+        @JvmStatic
+        private external fun nativeMaxDatagram(handle: Long): Int
 
         @JvmStatic
         private external fun nativeLastMessage(handle: Long): String?

@@ -71,6 +71,12 @@ class NowhereSession(
      * a different session wearing this one's name.
      */
     private val quicStreams: QuicCarrier.StreamFactory? = null,
+    /**
+     * The QUIC connection's DATAGRAM side. Absent means UDP flows are refused
+     * over QUIC rather than carried over a stream — section 9 puts them in
+     * DATAGRAMs and a Portal is not listening for anything else.
+     */
+    private val quicDatagrams: QuicCarrier.Datagrams? = null,
 ) : Closeable {
     /** Opens a fresh authenticated-capable transport to the Portal. */
     fun interface TransportFactory {
@@ -81,7 +87,7 @@ class NowhereSession(
      * The QUIC carrier, when the node selected one. One connection carries
      * every flow, so there is exactly one of these or none.
      */
-    private val quic: QuicCarrier? = quicStreams?.let { QuicCarrier(it, sharedKey, id) }
+    private val quic: QuicCarrier? = quicStreams?.let { QuicCarrier(it, sharedKey, id, quicDatagrams) }
 
     private val flowIds = FlowIdAllocator()
     private val lanes = mutableListOf<DedicatedTlsLane>()
@@ -128,6 +134,16 @@ class NowhereSession(
     val liveFlowCount: Int get() = flowIds.liveCount
 
     /**
+     * Whether a UDP flow from this session takes packets rather than a framed
+     * byte stream. True exactly when a QUIC carrier with DATAGRAMs is in use.
+     *
+     * Asked rather than inferred: a caller with a packet in hand needs to know
+     * whether to frame it, and working that out from the node's parameters
+     * would put the same decision in two places.
+     */
+    val carriesPackets: Boolean get() = quic != null
+
+    /**
      * Opens one flow to [target].
      *
      * At L1 this means: a new TLS connection, authenticate, open, and hand back
@@ -154,7 +170,7 @@ class NowhereSession(
                 else -> openDedicated(target, kind, flowId, firstPayload)
             }
         return when (opened) {
-            is DecodeResult.Ok -> DecodeResult.Ok(TrackedFlow(opened.value, flowId))
+            is DecodeResult.Ok -> DecodeResult.Ok(track(opened.value, flowId))
             is DecodeResult.Invalid -> {
                 // A failed open must not leak the id: it is bounded, and a
                 // caller retrying after failures is the normal case rather than
@@ -228,11 +244,45 @@ class NowhereSession(
         runCatching { quic?.close() }
     }
 
-    /** Releases the flow id when the caller closes the flow. */
+    /**
+     * Wraps a flow so its id is released when the caller closes it.
+     *
+     * **Two wrappers, because one would erase an interface.** `Flow by delegate`
+     * implements exactly `Flow`, so a [PacketFlow] handed through it comes out
+     * the other side as an ordinary flow and a caller with a packet in hand
+     * frames it for a stream that is not being used. That is not a type
+     * subtlety — it is a UDP packet framed twice, and it cost a run of
+     * datagram cases that failed on "a QUIC UDP flow must take packets".
+     */
+    private fun track(
+        flow: Flow,
+        flowId: UInt,
+    ): Flow =
+        if (flow is PacketFlow) {
+            TrackedPacketFlow(flow, flowId)
+        } else {
+            TrackedFlow(flow, flowId)
+        }
+
     private inner class TrackedFlow(
         private val delegate: Flow,
         private val trackedId: UInt,
     ) : Flow by delegate {
+        private var released = false
+
+        override fun close() {
+            if (!released) {
+                released = true
+                flowIds.release(trackedId)
+            }
+            delegate.close()
+        }
+    }
+
+    private inner class TrackedPacketFlow(
+        private val delegate: PacketFlow,
+        private val trackedId: UInt,
+    ) : PacketFlow by delegate {
         private var released = false
 
         override fun close() {

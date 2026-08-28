@@ -260,7 +260,7 @@ What replaces them:
 
 # L3
 
-Twenty-seven rows. **Eighteen are covered, one partly, eight blocked** — see
+Twenty-seven rows. **Nineteen are covered, one partly, seven blocked** — see
 the summary below, which names the eight.
 
 Everything covered here is covered *now*, not provisionally. The arithmetic and
@@ -284,7 +284,7 @@ checked against a live Portal from inside the app process.
 | 12 | CLOSE 5-byte header | covered | as row 11, and `.everyRejectionInTheFixtureIsRefused` for the "exactly five bytes" half |
 | 13 | FRAGMENT 13-byte header | covered | as row 11 |
 | 14 | Type 3 and non-zero reserved bits rejected | covered | `QuicDatagramVectorTest.everyRejectionInTheFixtureIsRefused`, `.everyTruncationPointIsRejectedRatherThanCrashing` |
-| 15 | No DATA before READY | blocked | still needs the DATAGRAM path wired to a live connection — C5. The stream half of the rule is now reachable; the datagram half is not |
+| 15 | No DATA before READY | covered | `DatagramReassembler` refuses payload until `markReady`, and `QuicCarrier` calls it only when a Portal has answered a flow — so a datagram arriving before any flow exists is discarded rather than queued for one that may never open. `QuicCarrierTest.aUdpFlowsOpeningWriteCarriesNoPayload` pins the other half: the first packet leaves as a DATAGRAM after READY, never on the control stream |
 | 16 | Never fragment when the whole packet fits | covered | `QuicDatagramVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` (the fixture's own `payloadLens` case), `.aPacketThatFitsIsOneDataFrameAndCarriesNoFragmentHeader`. This row found a defect: `plan` refused a zero-length packet, having applied the fragment header's `total_len` nonzero rule to a whole packet |
 | 17 | `fragmentPayloadMax = maxDatagram - 13`; count in 2..255 | covered | `QuicDatagramVectorTest.theFragmentPlanMatchesTheFixturesOwnArithmetic`, `.everyRejectionInTheFixtureIsRefused` |
 | 18 | Reassembly keyed by `(flowId, packetId)` | covered | `FragmentReassemblyTest.packetsOnDifferentFlowsWithTheSameIdDoNotCollide` |
@@ -302,9 +302,9 @@ checked against a live Portal from inside the app process.
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 18 |
+| covered by an automated test | 19 |
 | partly covered, with the gap named | 1 — row 10 |
-| blocked | 8 — rows 4, 5, 6, 7, 15, 25, 26, 27 |
+| blocked | 7 — rows 4, 5, 6, 7, 25, 26, 27 |
 
 **These are counted from the table above, and the blocked ones are named
 rather than totalled.** The previous version of this summary said nine covered
@@ -316,8 +316,8 @@ by reading, which a total is not.
 Row 10 is covered in the half that is this client's behaviour and honest about
 the half that needs a peer this suite does not have. The eight blocked rows each
 name what they are waiting for rather than being called "not yet written", and
-seven of the eight wait on the same two things: split flows (4, 5, 6, 7, 25) and
-a physical device (26, 27).
+all seven wait on the same two things: split flows (4, 5, 6, 7, 25) and a
+physical device (26, 27).
 
 **What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
 that completes a handshake against a live Portal, and C3 authenticated over it.

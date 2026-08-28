@@ -11,6 +11,7 @@ import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
 import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.NowhereSession
+import eu.nodepass.somewhere.protocol.session.PacketFlow
 import eu.nodepass.somewhere.protocol.target.Target
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,14 @@ class UdpRelay(
 
         /** Reading a datagram bigger than this means the peer is not speaking UoT. */
         const val MAX_DATAGRAM = UdpOverTcp.PACKET_MAX
+
+        /**
+         * How long a downstream packet pump waits before checking whether its
+         * relay is still wanted. Not a timeout on the flow: a UDP relay that
+         * hears nothing for a while is the ordinary case, and the reaper is
+         * what ends an idle one.
+         */
+        const val PACKET_WAIT_MILLIS = 1_000L
     }
 
     /** The four-tuple that identifies one relay. */
@@ -174,13 +183,23 @@ class UdpRelay(
         target: Target,
     ) {
         val first = relay.outbound.tryReceive().getOrNull() ?: ByteArray(0)
+
+        // Over QUIC the first packet is not framed and does not ride the
+        // opening write at all: section 9 sends it as a DATAGRAM once the
+        // Portal has answered. The session knows which carrier it is on, so the
+        // opening payload is handed over raw and the carrier decides. Over TLS
+        // it is length-prefixed here, as it always was.
         val framed =
-            when (val encoded = UdpOverTcp.encode(first)) {
-                is DecodeResult.Ok -> encoded.value
-                is DecodeResult.Invalid -> {
-                    Log.w(TAG, "cannot frame a datagram: ${encoded.reason.detail}")
-                    close(relay)
-                    return
+            if (session.carriesPackets) {
+                first
+            } else {
+                when (val encoded = UdpOverTcp.encode(first)) {
+                    is DecodeResult.Ok -> encoded.value
+                    is DecodeResult.Invalid -> {
+                        Log.w(TAG, "cannot frame a datagram: ${encoded.reason.detail}")
+                        close(relay)
+                        return
+                    }
                 }
             }
 
@@ -222,6 +241,15 @@ class UdpRelay(
     ) {
         try {
             for (payload in relay.outbound) {
+                // A packet flow takes packets. Framing one for it would frame
+                // it twice: once for a stream that is not being used, and once
+                // for the datagram that is.
+                if (flow is PacketFlow) {
+                    withContext(Dispatchers.IO) { flow.sendPacket(payload) }
+                    meter.recordUpstream(payload.size)
+                    relay.lastUsed = now()
+                    continue
+                }
                 val framed =
                     when (val encoded = UdpOverTcp.encode(payload)) {
                         is DecodeResult.Ok -> encoded.value
@@ -249,6 +277,14 @@ class UdpRelay(
         relay: Relay,
         flow: Flow,
     ) {
+        // A packet flow delivers whole packets, so there is no length prefix to
+        // read and no way for the stream to desynchronise. That is the whole
+        // difference between the two carriers here.
+        if (flow is PacketFlow) {
+            pumpDownPackets(relay, flow)
+            return
+        }
+
         val prefix = ByteArray(UdpOverTcp.LENGTH_PREFIX_SIZE)
         try {
             while (true) {
@@ -279,6 +315,34 @@ class UdpRelay(
             }
         } catch (error: Exception) {
             Log.w(TAG, "downstream relay ended: ${error.message}")
+        }
+    }
+
+    /** Portal → device, over DATAGRAMs. */
+    private suspend fun pumpDownPackets(
+        relay: Relay,
+        flow: PacketFlow,
+    ) {
+        try {
+            while (true) {
+                val payload =
+                    withContext(Dispatchers.IO) { flow.receivePacket(PACKET_WAIT_MILLIS) } ?: break
+                meter.recordDownstream(payload.size)
+                relay.lastUsed = now()
+                pump()?.writeToDevice {
+                    NativeBridge.nativeUdpSendto(
+                        relay.key.destination.toByteArray(),
+                        relay.key.destinationPort,
+                        relay.key.source.toByteArray(),
+                        relay.key.sourcePort,
+                        relay.isIpv6,
+                        payload,
+                        payload.size,
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "downstream packet relay ended: ${error.message}")
         }
     }
 

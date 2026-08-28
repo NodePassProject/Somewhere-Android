@@ -14,7 +14,10 @@ import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowOrigin
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.protocol.quic.DatagramFrame
+import eu.nodepass.somewhere.protocol.quic.QuicDatagram
 import eu.nodepass.somewhere.protocol.target.Target
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -169,6 +172,90 @@ class QuicCarrierTest {
         val decodedTarget = Target.decode(written, offset = Authentication.FRAME_LENGTH + 5)
         val payloadStart = Authentication.FRAME_LENGTH + 5 + (decodedTarget as DecodeResult.Ok).value.consumed
         assertEquals("hello", String(written.copyOfRange(payloadStart, written.size)))
+    }
+
+    /** A fake DATAGRAM side: what was sent, and what to hand back. */
+    private class FakeDatagrams(
+        private val max: Int = 1200,
+    ) : QuicCarrier.Datagrams {
+        val sent: MutableList<ByteArray> = mutableListOf()
+        val incoming: ArrayDeque<ByteArray> = ArrayDeque()
+
+        override fun send(bytes: ByteArray) {
+            sent += bytes
+        }
+
+        override fun receive(timeoutMillis: Long): ByteArray? = incoming.removeFirstOrNull()
+
+        override fun maxDatagram(): Int = max
+    }
+
+    @Test
+    fun aUdpFlowIsRefusedWhenTheConnectionCarriesNoDatagrams() {
+        // Section 9 puts UDP in DATAGRAMs. Falling back to the TLS carrier's
+        // length-prefixed framing on a QUIC stream would be framing nobody is
+        // listening for.
+        val carrier = QuicCarrier(Streams(quicStream()), key, session, datagrams = null)
+        val opened = carrier.openFlow(target, FlowKind.Udp, 1u)
+        assertEquals(QuicCarrierReason.NoDatagrams, (opened as DecodeResult.Invalid).reason)
+    }
+
+    @Test
+    fun aUdpFlowsOpeningWriteCarriesNoPayload() {
+        // The payload does not ride the control stream: it goes as a DATAGRAM
+        // once the Portal has answered. A stream that carried it would be
+        // sending bytes the Portal reads as a second Target.
+        val stream = quicStream()
+        val datagrams = FakeDatagrams()
+        val carrier = QuicCarrier(Streams(stream), key, session, datagrams)
+        val payload = "hello".encodeToByteArray()
+
+        val opened = carrier.openFlow(target, FlowKind.Udp, 3u, firstPayload = payload)
+        assertTrue("the flow should open: ${opened.reasonOrNull()?.detail}", opened is DecodeResult.Ok)
+
+        val written = stream.writtenBytes()
+        val decodedTarget = Target.decode(written, offset = Authentication.FRAME_LENGTH + 5)
+        val consumed = Authentication.FRAME_LENGTH + 5 + (decodedTarget as DecodeResult.Ok).value.consumed
+        assertEquals("the control stream carried payload", consumed, written.size)
+
+        assertEquals("the first packet did not go as a datagram", 1, datagrams.sent.size)
+        assertArrayEquals(
+            "the datagram is not a DATA frame for this flow",
+            QuicDatagram.Data(3u, payload).encode(),
+            datagrams.sent.single(),
+        )
+    }
+
+    @Test
+    fun aPacketTooLargeForOneDatagramIsFragmentedWithOnePacketId() {
+        val datagrams = FakeDatagrams(max = 100)
+        val carrier = QuicCarrier(Streams(quicStream()), key, session, datagrams)
+        val flow = (carrier.openFlow(target, FlowKind.Udp, 4u) as DecodeResult.Ok).value as PacketFlow
+
+        flow.sendPacket(ByteArray(250) { it.toByte() })
+
+        assertTrue("a large packet was not fragmented", datagrams.sent.size > 1)
+        val decoded =
+            datagrams.sent.map { (DatagramFrame.decode(it) as DecodeResult.Ok).value as DatagramFrame.Fragment }
+        assertEquals("fragments of one packet must share a packet id", 1, decoded.map { it.packetId }.toSet().size)
+        assertEquals("every fragment declares the same count", 1, decoded.map { it.count }.toSet().size)
+        assertEquals("the indices are not 0..count-1", decoded.indices.toList(), decoded.map { it.index })
+        assertEquals("the declared total length is wrong", 250, decoded.first().totalLength)
+    }
+
+    @Test
+    fun closingAUdpFlowTellsTheFarEnd() {
+        val datagrams = FakeDatagrams()
+        val carrier = QuicCarrier(Streams(quicStream()), key, session, datagrams)
+        val flow = (carrier.openFlow(target, FlowKind.Udp, 5u) as DecodeResult.Ok).value
+
+        flow.close()
+
+        assertArrayEquals(
+            "closing a UDP flow must send a CLOSE frame",
+            QuicDatagram.Close(5u).encode(),
+            datagrams.sent.last(),
+        )
     }
 
     @Test

@@ -355,6 +355,7 @@ class SomewhereVpnService : VpnService() {
                             QuicStreamTransport(connection, connection.openStream())
                         }
                     },
+                quicDatagrams = quicConnection,
             )
 
         // Read once, at the moment the tunnel is built, exactly as the
