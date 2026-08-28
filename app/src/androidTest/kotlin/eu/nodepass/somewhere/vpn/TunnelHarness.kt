@@ -65,15 +65,18 @@ object TunnelHarness {
                     throw AssertionError("the test node URL does not parse: ${parsed.reason.detail}")
             }
 
-        refuseADirectlyReachableTarget()
-
         SomewhereVpnService.start(context, node)
         await("the tunnel to come up") { TunnelController.state.value is TunnelState.Connected }
     }
 
     /**
-     * Refuses to run a tunnel case whose target this device can reach without a
+     * Refuses an in-app fetch of a target this device can reach without a
      * tunnel.
+     *
+     * On the fetch rather than on `start`, because it is the fetch that makes
+     * the invalid inference. Bringing a tunnel up is a fine thing to do with any
+     * target — `TunnelHolderTest` does it so that a *shell* can use the tunnel,
+     * and a shell is not this app.
      *
      * **This exists because the suite spent a day proving nothing.** Every case
      * here fetches over an ordinary socket from inside the app's own process,
@@ -131,6 +134,8 @@ object TunnelHarness {
      * not catch it.
      */
     fun fetchAndDigest(url: String): Fetched {
+        refuseADirectlyReachableTarget()
+
         // NO_PROXY, deliberately. Emulators commonly carry a system HTTP proxy
         // — this one advertises 10.0.2.2:6152 — and `HttpURLConnection` honours
         // it while `curl` does not, which is why the same fetch can look broken

@@ -255,8 +255,22 @@ What replaces them:
   goes through the session layer at a target only the Portal can reach.
 - The claim about the **TUN itself** carrying an application's traffic belongs to
   `conformance/scripts/e2e-tunnel-fetch.sh`, which drives the fetch from the
-  shell user — who is not this app and therefore is inside the tunnel. **That
-  script is written and has not yet been run end to end.**
+  shell user — who is not this app and therefore is inside the tunnel. **It has
+  now run**: 20,971,520 bytes with a matching digest, over both carriers, with
+  the Portal's own counters moving by the same amount. That is the first
+  evidence this project has ever had that the TUN carries an application's
+  traffic.
+
+  Two things it had to learn first. **Loopback never enters a VPN's TUN** — the
+  kernel routes 127.0.0.0/8 to `lo` rather than to the default route — so the
+  trick that works from inside the app, choosing an address only the Portal can
+  reach, proves nothing from a shell. The evidence is the Portal's byte counters
+  instead. And a **truncated** transfer is non-empty, so a retry loop that
+  accepted any non-empty file reported a corrupt tunnel when what it had was a
+  hold window that expired mid-transfer.
+
+- `conformance/scripts/device-acceptance.sh` runs the whole of Phase D as one
+  command against whatever device is attached.
 
 # L3
 
