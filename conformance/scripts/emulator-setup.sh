@@ -21,7 +21,19 @@ SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 [ -n "$SDK_ROOT" ] || { echo "set ANDROID_SDK_ROOT or ANDROID_HOME" >&2; exit 1; }
 
 echo "Installing: platform-tools, emulator, platforms;android-$API, $IMAGE"
-yes | sdkmanager --install "platform-tools" "emulator" "platforms;android-$API" "$IMAGE" >/dev/null
+# `yes |` is how sdkmanager's licence prompts get answered, and it is also how
+# this script used to end silently: sdkmanager exits first, `yes` dies of
+# SIGPIPE with status 141, and under `set -o pipefail` that is the pipeline's
+# status. The script stopped here reporting success, having installed the image
+# and created no AVD -- which the next step then reported as "no usable device"
+# with nothing connecting the two. Answer the prompts from a file instead, so
+# nothing is left in the pipeline to be killed.
+sdkmanager --install "platform-tools" "emulator" "platforms;android-$API" "$IMAGE" >/dev/null <<'LICENCES'
+y
+y
+y
+y
+LICENCES
 
 if avdmanager list avd 2>/dev/null | grep -q "Name: $AVD"; then
     echo "AVD $AVD already exists; skipping creation"

@@ -1,10 +1,24 @@
 import java.util.Properties
+import java.util.zip.ZipFile
 
 val localProperties =
     Properties().apply {
         val file = rootProject.file("local.properties")
         if (file.exists()) load(file.inputStream())
     }
+
+// The QUIC stack's pinned versions, read from the one file that holds them.
+// They reach the device through BuildConfig so that an instrumentation test can
+// ask the *linked binary* what it is and compare. Two text files agreeing about
+// a version number is not evidence about what will run.
+val quicPins =
+    rootProject
+        .file("tools/quic/DEPENDENCIES")
+        .readLines()
+        .filter { it.contains("=") && !it.trimStart().startsWith("#") }
+        .associate { line -> line.substringBefore("=").trim() to line.substringAfter("=").trim() }
+
+fun quicPin(name: String): String = quicPins[name] ?: error("tools/quic/DEPENDENCIES has no $name")
 
 plugins {
     alias(libs.plugins.android.application)
@@ -73,10 +87,16 @@ android {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
+        // Tags without the "v", which is the form both libraries report at
+        // runtime. QuicStackVersionTest compares these with what the linked
+        // archives say about themselves.
+        buildConfigField("String", "NGTCP2_VERSION", "\"${quicPin("NGTCP2_TAG").removePrefix("v")}\"")
+        buildConfigField("String", "AWSLC_VERSION", "\"${quicPin("AWSLC_TAG").removePrefix("v")}\"")
+
         externalNativeBuild {
             cmake {
                 // lwIP is built NO_SYS: no threads, no locks, one caller.
-                arguments += "-DANDROID_STL=none"
+                arguments += "-DANDROID_STL=c++_static"
             }
         }
     }
@@ -295,6 +315,169 @@ abstract class ClasspathConsistencyTask : DefaultTask() {
         )
     }
 }
+
+/**
+ * The NDK this build is pinned to, found the same way the toolchain is: the SDK
+ * location, then `ndkVersion`. AGP 9 no longer exposes `android.ndkDirectory`,
+ * and guessing the newest installed NDK would defeat the point of pinning one.
+ */
+fun pinnedNdkDirectory(): File {
+    val sdk =
+        localProperties.getProperty("sdk.dir")
+            ?: System.getenv("ANDROID_SDK_ROOT")
+            ?: System.getenv("ANDROID_HOME")
+            ?: error("no SDK location: set sdk.dir in local.properties or ANDROID_SDK_ROOT")
+    val ndk = File(sdk, "ndk/${android.ndkVersion}")
+    if (!ndk.isDirectory) error("no NDK ${android.ndkVersion} at $ndk")
+    return ndk
+}
+
+// ── What the shipped native libraries export, and how they are laid out ─────
+// Added when the QUIC stack landed, after a measurement rather than a worry.
+// The first build that linked aws-lc exported 1,700 symbols, 1,684 of them the
+// crypto library's internals. This process already runs a second BoringSSL —
+// Conscrypt, which is what the L1 TLS path uses for its exporter and for ALPN —
+// and two of them exporting the same names globally is how a symbol resolves
+// into the wrong one, inside TLS, silently, far from its cause.
+//
+// The other two checks are things nothing here has ever had to care about
+// before, because this repository had never shipped a third-party .so:
+//
+//   * 16 KB page alignment. Android 15 and later run on devices with 16 KB
+//     pages, where a 4 KB-aligned library will not load. The failure is an app
+//     that installs and refuses to start, on hardware this project currently
+//     cannot test on at all.
+//   * No libc++_shared.so. The STL is linked statically on purpose; a shared
+//     one would have to be packaged, and its absence from the APK is the kind
+//     of thing discovered at runtime.
+//
+// It reads the APK rather than a build intermediate, so it checks what ships.
+
+abstract class NativeLibraryChecksTask : DefaultTask() {
+    @get:InputFile
+    abstract val apk: RegularFileProperty
+
+    @get:Input
+    abstract val ndkDirectory: Property<String>
+
+    @get:Input
+    abstract val requiredAbis: ListProperty<String>
+
+    private fun tool(name: String): File {
+        val prebuilt = File(ndkDirectory.get(), "toolchains/llvm/prebuilt")
+        val host =
+            prebuilt.listFiles()?.firstOrNull { it.isDirectory }
+                ?: throw GradleException("no LLVM toolchain under $prebuilt")
+        return File(host, "bin/$name").also {
+            if (!it.canExecute()) throw GradleException("no $name at $it")
+        }
+    }
+
+    private fun run(
+        tool: File,
+        vararg args: String,
+    ): String {
+        val process = ProcessBuilder(listOf(tool.absolutePath) + args).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        if (process.waitFor() != 0) throw GradleException("${tool.name} failed:\n$output")
+        return output
+    }
+
+    @TaskAction
+    fun check() {
+        val nm = tool("llvm-nm")
+        val readelf = tool("llvm-readelf")
+        val extracted = temporaryDir.resolve("lib").also { it.deleteRecursively() }
+        val found = mutableMapOf<String, File>()
+
+        ZipFile(apk.get().asFile).use { zip ->
+            zip
+                .entries()
+                .asSequence()
+                .filter { it.name.startsWith("lib/") && it.name.endsWith(".so") }
+                .forEach { entry ->
+                    val abi = entry.name.removePrefix("lib/").substringBefore('/')
+                    val out = extracted.resolve(entry.name.removePrefix("lib/"))
+                    out.parentFile.mkdirs()
+                    zip.getInputStream(entry).use { input -> out.outputStream().use { input.copyTo(it) } }
+                    found[abi] = out
+                }
+        }
+
+        val missing = requiredAbis.get() - found.keys
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "the APK carries no native library for ${missing.joinToString()}. " +
+                    "Both ABIs ship for different reasons: physical devices and local emulators " +
+                    "need arm64-v8a, x86 CI runners need x86_64.",
+            )
+        }
+
+        val problems = mutableListOf<String>()
+        found.toSortedMap().forEach { (abi, library) ->
+            val exported =
+                run(nm, "--dynamic", "--defined-only", library.absolutePath)
+                    .lineSequence()
+                    .mapNotNull { it.trim().substringAfterLast(' ').takeIf(String::isNotBlank) }
+                    .toList()
+            val strays = exported.filterNot { it.startsWith("Java_") }
+            if (strays.isNotEmpty()) {
+                problems +=
+                    "$abi exports ${strays.size} symbol(s) that are not JNI entry points, " +
+                    "starting with ${strays.take(5).joinToString()}. " +
+                    "See app/src/main/jni/exports.map."
+            }
+
+            val headers = run(readelf, "-l", library.absolutePath)
+            val alignments =
+                headers
+                    .lineSequence()
+                    .filter { it.trimStart().startsWith("LOAD") }
+                    .mapNotNull { it.trim().split(Regex("\\s+")).lastOrNull() }
+                    .toSet()
+            val tooSmall = alignments.filter { it.removePrefix("0x").toLong(16) < 0x4000L }
+            if (tooSmall.isNotEmpty()) {
+                problems +=
+                    "$abi has LOAD segments aligned to ${tooSmall.joinToString()}, below the " +
+                    "16 KB (0x4000) an Android 15+ device with 16 KB pages requires. Such a " +
+                    "library does not load, so the app installs and will not start."
+            }
+
+            val needed =
+                run(readelf, "-d", library.absolutePath)
+                    .lineSequence()
+                    .filter { it.contains("NEEDED") }
+                    .map { it.substringAfterLast('[').substringBefore(']') }
+                    .toList()
+            if (needed.any { it.contains("c++_shared") }) {
+                problems +=
+                    "$abi links libc++_shared.so, but the STL is linked statically on purpose " +
+                    "and nothing packages the shared one into the APK."
+            }
+
+            logger.lifecycle(
+                "$abi: ${library.length()} bytes, ${exported.size} exported symbols, " +
+                    "LOAD alignment ${alignments.joinToString()}, needs ${needed.joinToString()}",
+            )
+        }
+
+        if (problems.isNotEmpty()) {
+            throw GradleException("native library checks failed:\n" + problems.joinToString("\n") { "  $it" })
+        }
+    }
+}
+
+val nativeLibraryChecks =
+    tasks.register<NativeLibraryChecksTask>("checkNativeLibraries") {
+        group = "verification"
+        description = "What the shipped .so files export, how they are aligned, and what they need."
+        dependsOn("assembleDebug")
+        apk.set(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+        ndkDirectory.set(pinnedNdkDirectory().absolutePath)
+        requiredAbis.set(listOf("arm64-v8a", "x86_64"))
+    }
+
+tasks.named("check") { dependsOn(nativeLibraryChecks) }
 
 val classpathConsistencyTasks =
     listOf("Debug" to "debug", "Release" to "release").map { (capitalised, lowercase) ->

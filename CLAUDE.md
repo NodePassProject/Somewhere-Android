@@ -22,7 +22,8 @@ comments, everything. Do not emit Chinese in project files.
 | Path | Purpose |
 |---|---|
 | `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36 |
-| `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor |
+| `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor, plus the QUIC bridge and the library's export map |
+| `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
 | `docs/` | Architecture, the design system, i18n, brand, and the TLS exporter ADR |
 
@@ -59,7 +60,7 @@ automation from the first protocol commit rather than retrofitted later.
 
 ```sh
 ./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug \
-          checkClasspathConsistency assembleDebug
+          checkClasspathConsistency assembleDebug checkNativeLibraries
 python3 conformance/scripts/verify-vectors.py
 ```
 
@@ -70,6 +71,7 @@ python3 conformance/scripts/verify-vectors.py
 | `lintDebug` | Android lint |
 | `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
 | `verify-vectors.py` | 45 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
+| `checkNativeLibraries` | **What the shipped `.so` files export, how they are aligned, and what they need.** Reads the APK rather than a build intermediate. Verified to fail: removing the version script reports 1,684 non-JNI exports on arm64-v8a, starting with `AES_CMAC` |
 | `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired for the first time on 2026-08-26 and the pin moved to v1.8.2 |
 
 Both gates that can silently pass were verified to actually fail. The coverage
@@ -228,6 +230,31 @@ Two rules from those documents that reach into protocol code:
 18. **Keep both ABIs, for different reasons**: physical devices and local
     emulators commonly need `arm64-v8a`; AVDs on x86 CI runners need `x86_64`.
     The donor project ships only the former.
+
+19. **A statically linked BoringSSL exports its entire symbol table**, and this
+    process already runs a second one. Linking aws-lc without a version script
+    produced **1,700 exported symbols, 1,684 of them the crypto library's
+    internals** — 304 `EVP_*`, 97 `EC_*`, 94 `BIO_*`, 80 `RSA_*`. Conscrypt is
+    the other BoringSSL in this process and is what the L1 TLS path uses for
+    its exporter and for ALPN; two of them exporting the same names globally is
+    how a symbol resolves into the wrong one, inside TLS, silently. The library
+    now exports `Java_*` and nothing else
+    (`app/src/main/jni/exports.map`), which also made it 118 KB smaller.
+20. **The NDK links with `-Wl,--no-undefined-version`**, so a version script
+    naming a symbol the library does not define is a link error, not a warning.
+    Listing `JNI_OnLoad` and `JNI_OnUnload` "in case" fails the build. That is
+    the desirable direction: an export map cannot quietly drift into describing
+    a library it no longer matches.
+21. **`ANDROID_STL=c++_static` costs lwIP nothing**, measured rather than
+    assumed. `project(... C)` declared C only, lwIP is pure C, and after the
+    change both ABIs produced a byte-identical `.so`: same size, same 282
+    dynamic symbols, same `NEEDED` list. The flag was raised from `none`
+    because aws-lc's `ssl/` is C++, and the fallback of building the QUIC stack
+    under its own toolchain was not needed.
+22. **A CMake target with no C++ source of its own links with the C linker.**
+    `somewhere_native` is all C, so libc++ was left off a link line that needs
+    it for aws-lc. `LINKER_LANGUAGE CXX` is the fix and it has to be set
+    explicitly.
 
 ## Already verified — do not redo
 

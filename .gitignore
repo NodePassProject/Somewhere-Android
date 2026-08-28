@@ -30,3 +30,7 @@ __pycache__/
 # CMake's per-ABI working tree. Survives `gradlew clean` by design, which is
 # exactly why it has to be ignored rather than relied on being cleaned.
 .cxx/
+
+# The QUIC stack: fetched at pinned commits and built into a cache, never
+# committed. See tools/quic/DEPENDENCIES and D-17.
+.quic-deps/

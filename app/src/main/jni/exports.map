@@ -1,0 +1,26 @@
+# What this shared library exports, and why the list is this short.
+#
+# Statically linking aws-lc puts a complete BoringSSL inside this object. With
+# no version script the linker exports all of it: a measurement on the first
+# build that linked it found 1,700 exported symbols, of which 1,684 were the
+# crypto library's internals -- 304 EVP_*, 97 EC_*, 94 BIO_*, 80 RSA_*.
+#
+# That is not untidiness. This process already runs a second BoringSSL:
+# Conscrypt, which is what the L1 TLS path uses for its RFC 5705 exporter and
+# for ALPN. Two BoringSSLs in one process, both exporting the same names
+# globally, is the configuration in which a symbol resolves into the wrong one
+# -- and the damage would land inside TLS, silently, a long way from its cause.
+#
+# So the library exports its JNI entry points and nothing else. Everything the
+# C side needs from the JVM it gets by calling in, not by being called by name.
+# JNI_OnLoad and JNI_OnUnload are deliberately absent rather than listed "in
+# case". This library registers natively by name, defines neither, and the NDK
+# links with --no-undefined-version, so naming a symbol that does not exist is
+# a link error rather than a harmless extra line. That is the right trade: this
+# file cannot quietly drift into describing a library it no longer matches.
+{
+    global:
+        Java_*;
+    local:
+        *;
+};

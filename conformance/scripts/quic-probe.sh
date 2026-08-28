@@ -20,9 +20,11 @@
 # must **not** reach READY. Without it, a READY proves the Portal answers, not
 # that the exporter is the thing it answered to.
 #
-# The sources are fetched, not vendored. Vendoring is C1's job and a decision
-# of its own; this is a spike that must stay reproducible without committing a
-# TLS library to a repository that has not agreed to carry one.
+# The sources are fetched, not vendored (D-17). Since C1 the app's own build
+# fetches and builds them the same way, through tools/quic/build-deps.sh, and
+# this script calls that script rather than carrying a second copy of the
+# recipe. So what this probe proves and what ships are the same build, which is
+# a stronger statement than two recipes agreeing -- and one that cannot rot.
 #
 # Usage: conformance/scripts/quic-probe.sh [--host-only]
 set -uo pipefail
@@ -31,10 +33,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$(cd "$ROOT/.." && pwd)"
 WORK="${QUIC_PROBE_WORK:-${TMPDIR:-/tmp}/somewhere-quic-probe}"
 
-# Pinned, both of them. An unpinned dependency turns "does it build" into a
-# question with a different answer every week.
-NGTCP2_TAG="${NGTCP2_TAG:-v1.17.0}"
-AWSLC_TAG="${AWSLC_TAG:-v1.68.0}"
+# Pinned, both of them, in the one file that holds the pin. An unpinned
+# dependency turns "does it build" into a question with a different answer
+# every week; a pin duplicated across two files turns it into a question with
+# two answers.
+PIN="$PROJECT/tools/quic/DEPENDENCIES"
+BUILD_DEPS="$PROJECT/tools/quic/build-deps.sh"
+[ -f "$PIN" ] || { echo "FAIL: no pin at $PIN" >&2; exit 1; }
+NGTCP2_TAG=$(grep '^NGTCP2_TAG=' "$PIN" | cut -d= -f2-)
+AWSLC_TAG=$(grep '^AWSLC_TAG=' "$PIN" | cut -d= -f2-)
 
 NOWHERE_CLONE="${NOWHERE_CLONE:-$PROJECT/../Nowhere}"
 BIN="${NOWHERE_BIN:-$NOWHERE_CLONE/target/release/nowhere}"
@@ -65,61 +72,42 @@ command -v perl >/dev/null 2>&1 || fail "aws-lc needs perl on PATH"
 
 mkdir -p "$WORK"
 
-# --- 1. Sources ------------------------------------------------------------
+# --- 1. The stack the app links against ------------------------------------
+# build-deps.sh fetches at the pinned commits, verifies that each tag really is
+# that commit, builds, and prints its install prefix. A warm cache returns in
+# milliseconds, so running it here costs nothing and guarantees this probe and
+# the app are looking at the same libraries.
 step "sources"
-[ -d "$WORK/ngtcp2" ] || git clone --depth 1 --branch "$NGTCP2_TAG" \
-    https://github.com/ngtcp2/ngtcp2 "$WORK/ngtcp2" >/dev/null 2>&1 ||
-    fail "could not fetch ngtcp2 $NGTCP2_TAG"
-[ -d "$WORK/aws-lc" ] || git clone --depth 1 --branch "$AWSLC_TAG" \
-    https://github.com/aws/aws-lc "$WORK/aws-lc" >/dev/null 2>&1 ||
-    fail "could not fetch aws-lc $AWSLC_TAG"
-echo "OK  ngtcp2 $NGTCP2_TAG (MIT), aws-lc $AWSLC_TAG (Apache-2.0 OR ISC)"
-
-build_pair() {
-    local tag=$1; shift
-    "$CMAKE" -S "$WORK/aws-lc" -B "$WORK/awslc-$tag" -G Ninja \
-        -DCMAKE_MAKE_PROGRAM="$(dirname "$CMAKE")/ninja" \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DBUILD_TOOL=OFF \
-        -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        "$@" >/dev/null 2>&1 || return 1
-    "$CMAKE" --build "$WORK/awslc-$tag" --parallel >/dev/null 2>&1 || return 1
-
-    "$CMAKE" -S "$WORK/ngtcp2" -B "$WORK/ngtcp2-$tag" -G Ninja \
-        -DCMAKE_MAKE_PROGRAM="$(dirname "$CMAKE")/ninja" \
-        -DCMAKE_BUILD_TYPE=Release -DENABLE_LIB_ONLY=ON -DENABLE_SHARED_LIB=OFF \
-        -DENABLE_STATIC_LIB=ON -DBUILD_TESTING=OFF \
-        -DENABLE_OPENSSL=OFF -DENABLE_BORINGSSL=ON \
-        -DBORINGSSL_INCLUDE_DIR="$WORK/aws-lc/include" \
-        -DBORINGSSL_LIBRARIES="$WORK/awslc-$tag/ssl/libssl.a;$WORK/awslc-$tag/crypto/libcrypto.a" \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON "$@" >/dev/null 2>&1 || return 1
-    "$CMAKE" --build "$WORK/ngtcp2-$tag" --parallel >/dev/null 2>&1 || return 1
+prefix_for() {
+    "$BUILD_DEPS" "$1" 2>/dev/null | sed -n 's/^PREFIX=//p'
 }
+echo "OK  ngtcp2 $NGTCP2_TAG (MIT), aws-lc $AWSLC_TAG (Apache-2.0 OR ISC), pinned by commit"
 
 # --- 2. Does it build for the ABIs this app ships? -------------------------
 if [ "${1:-}" != "--host-only" ]; then
     [ -d "$NDK_DIR" ] || fail "no NDK under $SDK/ndk (set QUIC_PROBE_NDK)"
     for abi in arm64-v8a x86_64; do
         step "cross-compiling for $abi"
-        build_pair "$abi" \
-            -DCMAKE_TOOLCHAIN_FILE="$NDK_DIR/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI="$abi" -DANDROID_PLATFORM=android-26 ||
+        PREFIX="$(QUIC_CMAKE="$CMAKE" QUIC_NDK="$NDK_DIR" prefix_for "$abi")"
+        [ -n "$PREFIX" ] && [ -f "$PREFIX/lib/libngtcp2.a" ] ||
             fail "ngtcp2 + aws-lc did not build for $abi"
         format="$("$NDK_DIR"/toolchains/llvm/prebuilt/*/bin/llvm-objdump -f \
-            "$WORK/ngtcp2-$abi/lib/libngtcp2.a" 2>/dev/null | grep -m1 "file format")"
+            "$PREFIX/lib/libngtcp2.a" 2>/dev/null | grep -m1 "file format")"
         echo "OK  $abi: ${format#*file format }"
     done
 fi
 
 # --- 3. The exporter, and what a Portal makes of it ------------------------
 step "building the probe for this host"
-build_pair host || fail "ngtcp2 + aws-lc did not build for the host"
+HOST_PREFIX="$(QUIC_CMAKE="$CMAKE" prefix_for host)"
+[ -n "$HOST_PREFIX" ] && [ -f "$HOST_PREFIX/lib/libngtcp2.a" ] ||
+    fail "ngtcp2 + aws-lc did not build for the host"
 
 cc -o "$WORK/probe" "$ROOT/quic-probe/probe.c" \
-    -I"$WORK/ngtcp2/lib/includes" -I"$WORK/ngtcp2-host/lib/includes" \
-    -I"$WORK/ngtcp2/crypto/includes" -I"$WORK/aws-lc/include" \
-    "$WORK/ngtcp2-host/crypto/boringssl/libngtcp2_crypto_boringssl.a" \
-    "$WORK/ngtcp2-host/lib/libngtcp2.a" \
-    "$WORK/awslc-host/ssl/libssl.a" "$WORK/awslc-host/crypto/libcrypto.a" \
+    -I"$HOST_PREFIX/include" \
+    "$HOST_PREFIX/lib/libngtcp2_crypto_boringssl.a" \
+    "$HOST_PREFIX/lib/libngtcp2.a" \
+    "$HOST_PREFIX/lib/libssl.a" "$HOST_PREFIX/lib/libcrypto.a" \
     -lpthread -lc++ 2>&1 | grep -E "error" && fail "the probe did not compile"
 echo "OK  probe built"
 
