@@ -13,6 +13,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetSocketAddress
 import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -82,29 +83,54 @@ class QuicHandshakeTest {
     }
 
     /**
-     * A connection refuses the thread that does not own it.
+     * Many threads may use one connection, and none of them touches the native
+     * side.
      *
-     * `ngtcp2_conn` is not thread-safe. A second thread does not fail where it
-     * touches the connection — it fails later, somewhere else, as something
-     * that reads like a network problem. Needs no Portal: the refusal happens
-     * before anything is sent.
+     * This assertion replaced its opposite. `ngtcp2_conn` is not thread-safe
+     * and the bridge enforces that by comparing `pthread_self()` against the
+     * thread that opened the connection — a check a lock cannot satisfy,
+     * because it is about identity rather than exclusion. The first version of
+     * this class therefore refused foreign callers outright, and this test
+     * asserted the refusal.
+     *
+     * That could not survive C4. A QUIC connection carries many flows at once,
+     * which is the entire reason to have one, and `NowhereSession.openFlow` is
+     * documented as safe from several threads. So the connection grew a thread
+     * of its own, and callers queue work to it instead of being turned away.
+     *
+     * **The bridge's check is still there and still refuses**, which is what
+     * makes this test meaningful rather than vacuous: if any of these threads
+     * reached the native side directly, it would come back as a refusal naming
+     * the thread, not as a wrong answer. Sixteen threads getting the same
+     * exporter is evidence that all sixteen went through the owner.
      */
     @Test
-    fun aCallFromAnotherThreadIsRefusedRatherThanTolerated() {
-        connect("127.0.0.1:1").use { connection ->
-            val outcome = ArrayBlockingQueue<Result<ByteArray>>(1)
-            Thread {
-                outcome.add(runCatching { connection.exportKeyingMaterial(NOWHERE_LABEL, 32) })
-            }.start()
+    fun manyThreadsShareOneConnectionWithoutReachingTheNativeSide() {
+        val portal = E2eEnvironment.requirePortal()
+        connect(portal).use { connection ->
+            connection.completeHandshake()
+            val expected = connection.exportKeyingMaterial(NOWHERE_LABEL, 32).toList()
 
-            val result = outcome.poll(10, TimeUnit.SECONDS)
-            assertTrue("the other thread never answered", result != null)
-            val failure = result!!.exceptionOrNull()
-            assertTrue("a foreign thread was allowed through", failure is QuicException)
-            assertTrue(
-                "the refusal did not say why: ${failure?.message}",
-                failure!!.message!!.contains("does not own it"),
-            )
+            val outcomes = ArrayBlockingQueue<Result<List<Byte>>>(THREADS)
+            val start = CountDownLatch(1)
+            repeat(THREADS) {
+                Thread {
+                    start.await()
+                    outcomes.add(runCatching { connection.exportKeyingMaterial(NOWHERE_LABEL, 32).toList() })
+                }.start()
+            }
+            start.countDown()
+
+            repeat(THREADS) { index ->
+                val result = outcomes.poll(20, TimeUnit.SECONDS)
+                assertTrue("thread $index never answered", result != null)
+                val failure = result!!.exceptionOrNull()
+                assertTrue(
+                    "a thread was refused rather than routed: ${failure?.message}",
+                    failure == null,
+                )
+                assertEquals("thread $index got different keying material", expected, result.getOrNull())
+            }
         }
     }
 
@@ -140,6 +166,9 @@ class QuicHandshakeTest {
 
     private companion object {
         const val NOWHERE_LABEL = "EXPORTER-Nowhere-Auth"
+
+        /** Enough to be a burst rather than a sequence. */
+        const val THREADS = 16
 
         /**
          * The protocol's default ALPN. Passed rather than compiled in

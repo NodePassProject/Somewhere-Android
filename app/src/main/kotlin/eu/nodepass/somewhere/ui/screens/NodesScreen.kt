@@ -559,7 +559,7 @@ private fun NodeCard(
             )
         }
 
-        if (node.url.requiresQuic && !dismissed) {
+        if (node.url.needsQuicNotice && !dismissed) {
             NeedsQuicNotice(
                 onSwitchToTcp = onSwitchToTcp,
                 onKeepAsIs = onKeepAsIs,

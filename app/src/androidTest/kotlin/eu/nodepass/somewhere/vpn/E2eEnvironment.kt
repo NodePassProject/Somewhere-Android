@@ -36,6 +36,20 @@ object E2eEnvironment {
      */
     val mux: Boolean get() = argument("nowhereE2eMux") == "1"
 
+    /**
+     * Which carrier the tunnel should use.
+     *
+     * Absent means `tcp`, which is **not** the protocol's own default — that is
+     * `udp` — but is what every case in this suite was written against. Stating
+     * it explicitly here rather than relying on the default keeps a run's
+     * carrier a decision of the run rather than of the parser, which matters
+     * now that both carriers work and a bare URL selects the other one.
+     */
+    val carrier: String get() = argument("nowhereE2eCarrier") ?: "tcp"
+
+    /** True when this run is exercising the QUIC carrier. */
+    val quic: Boolean get() = carrier == "udp"
+
     /** `host:port` of a plain HTTP service the Portal can reach. */
     val target: String? get() = argument("nowhereE2eTarget")
 

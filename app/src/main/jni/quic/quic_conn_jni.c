@@ -60,6 +60,11 @@
 #define SW_ERR_HANDLE (-1000)
 #define SW_ERR_WRONG_THREAD (-1001)
 #define SW_ERR_STATE (-1002)
+// Not an error: the peer has not credited another bidirectional stream yet.
+// NW-P-19 says exactly one is credited before authentication, so this is the
+// ordinary state of a second flow opened early, and the caller waits rather
+// than failing.
+#define SW_STREAM_BLOCKED (-1003)
 
 // One bidirectional stream. QUIC gives ordered reliable bytes per stream, so
 // each of these is a byte pipe the session layer can treat exactly as it treats
@@ -75,6 +80,12 @@ struct quic_stream {
     uint8_t *send;
     size_t send_len, send_cap, sent, acked;
     int fin_requested, fin_written;
+
+    // ngtcp2 has forgotten this stream. Its buffered bytes may still be read by
+    // the caller, but its id must never reach writev again: ngtcp2 answers a
+    // write to a stream it no longer knows with ERR_STREAM_NOT_FOUND, which
+    // reads like a connection failure and takes every other flow with it.
+    int gone;
 
     // Bytes that arrived and the caller has not read.
     uint8_t *recv;
@@ -264,9 +275,11 @@ static int stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
 
     // Not freed here. The caller may still be holding unread bytes, and a
     // close that discarded them would lose the Portal's last word -- which for
-    // a rejected flow is the entire message.
+    // a rejected flow is the entire message. Marked gone so the write loop
+    // stops offering it.
     if (s) {
         s->recv_fin = 1;
+        s->gone = 1;
     }
     return 0;
 }
@@ -633,7 +646,7 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeWrite(JNIEnv *env,
 
     while (s && visited <= 1) {
         size_t pending = s->send_len > s->sent ? s->send_len - s->sent : 0;
-        if (pending > 0 || (s->fin_requested && !s->fin_written)) {
+        if (!s->gone && (pending > 0 || (s->fin_requested && !s->fin_written))) {
             stream_id = s->id;
             datav.base = s->send + s->sent;
             datav.len = pending;
@@ -712,6 +725,12 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpenStream(JNIEnv *env,
         return err;
     }
     rv = ngtcp2_conn_open_bidi_stream(c->conn, &stream_id, NULL);
+    if (rv == NGTCP2_ERR_STREAM_ID_BLOCKED) {
+        // Distinguished from every other failure, because it is not one. The
+        // caller waits for the peer to extend the limit; the loop keeps
+        // pumping in the meantime, which is how the extension arrives.
+        return SW_STREAM_BLOCKED;
+    }
     if (rv != 0) {
         say(c, ngtcp2_strerror(rv));
         return rv;
@@ -746,6 +765,10 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeSend(JNIEnv *env,
     s = stream_find(c, (int64_t)stream_id);
     if (!s) {
         say(c, "no such stream");
+        return SW_ERR_STATE;
+    }
+    if (s->gone) {
+        say(c, "this stream has been closed by the peer");
         return SW_ERR_STATE;
     }
     if (s->fin_requested) {

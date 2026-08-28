@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetAddress
@@ -41,6 +42,16 @@ import java.net.InetAddress
  * exactly the check that was run against this test to confirm it bites.
  */
 @RunWith(AndroidJUnit4::class)
+@Ignore(
+    "This case fetches over an ordinary socket from inside the app's own process, and this " +
+        "client is forced out of its own tunnel in every mode (AppSelection.ruleFor) because a " +
+        "VPN inside its own tunnel is a routing loop. Its traffic therefore never enters the TUN, " +
+        "so the case proves only that the destination was reachable some other way — which is " +
+        "exactly what happened when it was first run after per-app selection landed: every case " +
+        "passed and the Portal's byte counters had not moved. The claim now belongs to " +
+        "conformance/scripts/e2e-tunnel-fetch.sh, which drives the fetch from the shell user, who " +
+        "is inside the tunnel. See internal/NOTES.md.",
+)
 class FakeIpTunnelTest {
     @Before
     fun consentIsAlreadyGranted() {

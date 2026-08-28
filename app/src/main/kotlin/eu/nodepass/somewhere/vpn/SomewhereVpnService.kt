@@ -25,10 +25,15 @@ import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
+import eu.nodepass.somewhere.protocol.session.QuicCarrier
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.quic.QuicConnection
+import eu.nodepass.somewhere.quic.QuicStreamTransport
 import eu.nodepass.somewhere.routing.DirectDialer
 import eu.nodepass.somewhere.routing.Router
 import java.net.InetAddress
+import java.net.InetSocketAddress
 
 /**
  * The tunnel.
@@ -126,6 +131,13 @@ class SomewhereVpnService : VpnService() {
     private var pump: TunPump? = null
     private var handler: NowhereFlowHandler? = null
     private var session: NowhereSession? = null
+
+    /**
+     * The QUIC connection, when the node selected one. Held beside the session
+     * because the session owns the carrier but not the connection underneath
+     * it, and the connection has a thread that has to be stopped.
+     */
+    private var quic: QuicConnection? = null
 
     /**
      * Names, held for as long as the tunnel is up and no longer.
@@ -287,6 +299,46 @@ class SomewhereVpnService : VpnService() {
 
         val dialer = NowhereDialer(protect = { socket -> protect(socket) })
         val resolved = node.copy(host = portal)
+
+        // A node whose carriers are `udp` is a QUIC node, and that is the
+        // specification's default for both directions — so a bare
+        // `nowhere://key@host:port` arrives here, not as an exotic case.
+        //
+        // The connection is opened once and every flow becomes a stream on it,
+        // which is why `mux` has nothing to add: QUIC multiplexes by
+        // construction.
+        // Certificate verification is not implemented on the QUIC carrier, and
+        // a node that asked for it is refused rather than carried without it.
+        // The TLS path implements `pin` and `sni` with upstream's own
+        // precedence (D-11); silently dropping them here because the carrier
+        // changed would be a security downgrade the user configured against and
+        // has no way to observe. `sni=none` and `pin=none` are the documented
+        // defaults and what NowhereDash emits, so this refuses the configured
+        // case rather than the ordinary one.
+        if (resolved.requiresQuic && resolved.certificateVerification !is CertificateVerification.Skipped) {
+            Log.w(TAG, "a QUIC node asked for certificate verification, which this carrier does not do")
+            TunnelController.report(TunnelState.Failed(R.string.tunnel_quic_verification_unsupported))
+            descriptor.close()
+            stopSelf()
+            return
+        }
+
+        val quicConnection =
+            if (resolved.requiresQuic) {
+                QuicConnection.open(
+                    remote = InetSocketAddress(portal, resolved.port),
+                    alpn = resolved.alpn,
+                    // No SNI: this branch is only reached when verification is
+                    // Skipped, which is what `sni=none` means.
+                    serverName = null,
+                    protect = { socket -> protect(socket) },
+                )
+            } else {
+                null
+            }
+        quic = quicConnection
+        quicConnection?.completeHandshake()
+
         val nowhere =
             NowhereSession(
                 sharedKey = node.sharedKey,
@@ -297,6 +349,12 @@ class SomewhereVpnService : VpnService() {
                         is DecodeResult.Invalid -> error(transport.reason.detail)
                     }
                 },
+                quicStreams =
+                    quicConnection?.let { connection ->
+                        QuicCarrier.StreamFactory {
+                            QuicStreamTransport(connection, connection.openStream())
+                        }
+                    },
             )
 
         // Read once, at the moment the tunnel is built, exactly as the
@@ -350,12 +408,17 @@ class SomewhereVpnService : VpnService() {
         pump?.stop()
         handler?.shutdown()
         runCatching { session?.close() }
+        // After the session, which closes the carrier that uses it: the
+        // connection owns a thread, and stopping it first would leave the
+        // carrier writing into a bridge whose memory has gone.
+        runCatching { quic?.close() }
         // After the handlers, so that anything still releasing a hold releases
         // it into a pool that is still there.
         fakeIp.clear()
         pump = null
         handler = null
         session = null
+        quic = null
         stopForegroundCompat()
         if (TunnelController.state.value !is TunnelState.Failed) {
             TunnelController.report(TunnelState.Disconnected)

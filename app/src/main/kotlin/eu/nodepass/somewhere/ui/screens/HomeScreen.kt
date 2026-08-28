@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
@@ -533,8 +534,20 @@ fun directionChip(
     carrier: NextHopCarrier,
 ): String = "$prefix ${carrier.token.uppercase()}"
 
-/** Kept next to [carrierLabel] so the two cannot disagree about a node. */
-val NowhereUrl.needsQuicNotice: Boolean get() = requiresQuic
+/**
+ * Whether a node cannot be carried as configured.
+ *
+ * This used to mean "needs QUIC", when QUIC was not implemented. It is not that
+ * any more: a `up=udp` node — which is the specification's default, so a bare
+ * `nowhere://key@host:port` — connects. What remains unsupported is a QUIC node
+ * that also asks for certificate verification, because the QUIC carrier does
+ * not implement `sni` or `pin` and carrying it without them would be a security
+ * downgrade the user configured against and could not observe.
+ *
+ * Kept next to [carrierLabel] so the two cannot disagree about a node.
+ */
+val NowhereUrl.needsQuicNotice: Boolean
+    get() = requiresQuic && certificateVerification !is CertificateVerification.Skipped
 
 @Composable
 internal fun DividerBox(color: Color) {

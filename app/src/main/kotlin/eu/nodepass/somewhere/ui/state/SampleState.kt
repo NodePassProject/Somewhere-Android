@@ -44,11 +44,15 @@ object SampleState {
      * The design canvas draws this screen with a split configuration —
      * `up=tcp&down=udp` — because that is the protocol's distinguishing property
      * and the reason the two directions are coloured separately at all. But a
-     * `udp` direction needs QUIC, which has not shipped, so a connected node in
-     * that state is a screen the app cannot actually reach. Rendering it would
-     * make the home screen a drawing rather than a reading. The split case is
-     * still shown where it is honest: on the node list, as the node that says it
-     * needs QUIC.
+     * `udp` direction needed QUIC, which had not shipped, so a connected node in
+     * that state was a screen the app could not actually reach. Rendering it
+     * would have made the home screen a drawing rather than a reading.
+     *
+     * **QUIC has shipped since**, so a split node is now reachable and this
+     * could honestly be drawn as the canvas drew it. It is left as `tcp/tcp`
+     * for a different reason: split flows themselves — OPEN and ATTACH on two
+     * carriers — are not implemented, so `up=tcp&down=udp` is still a state the
+     * app cannot reach. Revisit when they land.
      */
     val frankfurt: NodeEntry =
         NodeEntry(
@@ -56,11 +60,37 @@ object SampleState {
             status = NodeStatus.Reachable(handshakeMillis = 38),
         )
 
-    /** Upstream defaults both directions to `udp`, so this is what a pasted
-     *  default looks like: it needs QUIC, and NW-P-25 says to say so. */
+    /**
+     * A pasted default: upstream defaults both directions to `udp`, so this is
+     * what an unadorned `nowhere://` URL is.
+     *
+     * **It used to be the node that could not be carried.** Since L3 it can, so
+     * it is an ordinary node here — and what NW-P-25's two buttons now apply to
+     * is [taipei], which asks for something the QUIC carrier does not do.
+     */
     val singapore: NodeEntry =
         NodeEntry(
             url = node("nowhere://$FAKE_KEY@sgp11.example.net:443?up=udp&down=udp#Singapore%20%C2%B7%20Portal%2011"),
+            status = NodeStatus.Reachable(handshakeMillis = 61),
+        )
+
+    /**
+     * A QUIC node that also asks for certificate pinning, which the QUIC
+     * carrier does not implement.
+     *
+     * NW-P-25 is about this shape: the client says what it cannot do and offers
+     * two ways forward, rather than rewriting the user's pasted configuration
+     * on their behalf. Carrying it without the pin would be a security
+     * downgrade the user configured against and could not observe.
+     */
+    val taipei: NodeEntry =
+        NodeEntry(
+            url =
+                node(
+                    "nowhere://$FAKE_KEY@tpe07.example.net:443?up=udp&down=udp" +
+                        "&pin=6a5c1f0b9e2d4a8c3b7f1e0d9c8b7a6958473625140f3e2d1c0b9a8877665544" +
+                        "#Taipei%20%C2%B7%20Portal%2007",
+                ),
             status = NodeStatus.Unknown,
         )
 

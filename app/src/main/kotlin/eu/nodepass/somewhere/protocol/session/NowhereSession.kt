@@ -57,11 +57,31 @@ class NowhereSession(
      * only thing that selects between the two carriers.
      */
     private val mux: Boolean = false,
+    /**
+     * Present when the node's carriers select QUIC, and then it decides:
+     * `up=udp` or `down=udp` is a different carrier, not a variation of a TLS
+     * one, so it takes precedence over [mux] rather than combining with it.
+     * QUIC multiplexes by construction — every flow is a stream on one
+     * connection — which is why there is nothing for `mux` to add here.
+     *
+     * A factory of *streams* rather than of carriers, deliberately: the carrier
+     * is built here so that its session id is **this** session's id. NW-P-01
+     * binds a session to a connection, and the pairing scope for split flows is
+     * `(session_id, flow_id)`, so a QUIC carrier holding some other id would be
+     * a different session wearing this one's name.
+     */
+    private val quicStreams: QuicCarrier.StreamFactory? = null,
 ) : Closeable {
     /** Opens a fresh authenticated-capable transport to the Portal. */
     fun interface TransportFactory {
         fun connect(): Transport
     }
+
+    /**
+     * The QUIC carrier, when the node selected one. One connection carries
+     * every flow, so there is exactly one of these or none.
+     */
+    private val quic: QuicCarrier? = quicStreams?.let { QuicCarrier(it, sharedKey, id) }
 
     private val flowIds = FlowIdAllocator()
     private val lanes = mutableListOf<DedicatedTlsLane>()
@@ -92,9 +112,18 @@ class NowhereSession(
             )
         }
 
-    /** How many TLS connections this session is holding. One per flow at L1. */
+    /**
+     * How many connections this session is holding. One per flow at L1, one per
+     * shard with Mux, and exactly one over QUIC — which is the measurement that
+     * distinguishes the three carriers from outside.
+     */
     val carrierCount: Int
-        get() = shards?.liveShardCount ?: synchronized(lock) { lanes.size }
+        get() =
+            when {
+                quic != null -> 1
+                shards != null -> shards.liveShardCount
+                else -> synchronized(lock) { lanes.size }
+            }
 
     val liveFlowCount: Int get() = flowIds.liveCount
 
@@ -119,10 +148,10 @@ class NowhereSession(
                 ?: return DecodeResult.Invalid(SessionReason.FlowIdsExhausted)
 
         val opened =
-            if (shards != null) {
-                openMultiplexed(shards, target, kind, flowId, firstPayload)
-            } else {
-                openDedicated(target, kind, flowId, firstPayload)
+            when {
+                quic != null -> quic.openFlow(target, kind, flowId, firstPayload)
+                shards != null -> openMultiplexed(shards, target, kind, flowId, firstPayload)
+                else -> openDedicated(target, kind, flowId, firstPayload)
             }
         return when (opened) {
             is DecodeResult.Ok -> DecodeResult.Ok(TrackedFlow(opened.value, flowId))
@@ -196,6 +225,7 @@ class NowhereSession(
             }
         toClose.forEach { runCatching { it.close() } }
         runCatching { shards?.close() }
+        runCatching { quic?.close() }
     }
 
     /** Releases the flow id when the caller closes the flow. */

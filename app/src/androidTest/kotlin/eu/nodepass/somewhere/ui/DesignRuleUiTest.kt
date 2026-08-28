@@ -137,14 +137,20 @@ class DesignRuleUiTest {
     }
 
     @Test
-    fun aNodeNeedingQuicOffersBothChoicesAndRewritesNothing() {
+    fun aNodeThatCannotBeCarriedAsConfiguredOffersBothChoicesAndRewritesNothing() {
         // NW-P-25. Two buttons is the requirement: rewriting the user's pasted
         // configuration on their behalf is what it forbids. A single "Fix it"
         // would satisfy a reasonable reading of "handle this gracefully" and
         // violate the rule.
+        //
+        // The node this applies to changed when QUIC shipped. It used to be any
+        // `up=udp` node — the specification's own default — and that is now an
+        // ordinary node that connects. What remains uncarriable is a QUIC node
+        // asking for certificate verification, which the QUIC carrier does not
+        // implement and must not silently drop.
         compose.setContent {
             SomewhereTheme {
-                NodeList(entries = listOf(SampleState.singapore))
+                NodeList(entries = listOf(SampleState.taipei))
             }
         }
         compose.onNodeWithText(string(R.string.node_needs_quic), substring = true).assertIsDisplayed()

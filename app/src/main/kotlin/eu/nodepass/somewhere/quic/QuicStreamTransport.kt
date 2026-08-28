@@ -6,7 +6,6 @@ package eu.nodepass.somewhere.quic
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.session.Transport
 import eu.nodepass.somewhere.protocol.session.TransportKind
-import java.io.InterruptedIOException
 
 /**
  * One QUIC stream, seen as the byte transport the session layer already knows.
@@ -24,12 +23,12 @@ import java.io.InterruptedIOException
  * derives the same tag input. It is cached because RFC 5705 derivation is not
  * free and the value cannot change once the handshake is complete.
  *
- * ## There is no pump thread
+ * ## Reads block only their own flow
  *
- * A read drives the connection's IO loop itself. That is not a shortcut: a
- * second thread touching the same `ngtcp2_conn` is the lwIP defect again, and
- * the bridge refuses it outright. So the thread that wants bytes is the thread
- * that goes and gets them.
+ * The connection has a thread of its own that owns the native side and moves
+ * what arrives into per-stream queues, so a read here waits on a queue rather
+ * than on a socket. That is what lets sixteen flows share one connection: a
+ * flow waiting for its peer blocks itself and nothing else.
  */
 class QuicStreamTransport(
     private val connection: QuicConnection,
@@ -50,46 +49,22 @@ class QuicStreamTransport(
         connection.send(streamId, bytes)
     }
 
-    override fun flush() {
-        connection.flush()
-    }
+    /**
+     * A no-op, and deliberately.
+     *
+     * The connection's own thread sends whatever the transport has ready on
+     * every pass of its loop, and [QuicConnection.send] has already handed the
+     * bytes to it by the time it returns. There is nothing left for a caller to
+     * push. Implemented rather than omitted because the session layer calls it
+     * and the contract — "the bytes are on their way" — is met.
+     */
+    override fun flush() = Unit
 
     override fun read(
         into: ByteArray,
         offset: Int,
         length: Int,
-    ): Int {
-        // Zero means wait indefinitely, which is what the interface says and
-        // what the data phase needs: quiet is the normal state of most
-        // connections most of the time, and a tunnel that hung up on an idle
-        // SSH session would be the L1 defect again.
-        val deadline =
-            if (readTimeoutMillis == 0) {
-                Long.MAX_VALUE
-            } else {
-                System.nanoTime() + readTimeoutMillis * NANOS_PER_MILLI
-            }
-
-        while (true) {
-            val n = connection.receive(streamId, into, offset, length)
-            if (n != 0) return n
-
-            val remaining =
-                if (deadline == Long.MAX_VALUE) {
-                    POLL_MILLIS
-                } else {
-                    (deadline - System.nanoTime()) / NANOS_PER_MILLI
-                }
-            if (remaining <= 0) {
-                // The same signal a socket gives, so callers that already
-                // treat a timeout as "no answer came" — which is how a
-                // rejected AuthFrame presents, since a Portal answers one with
-                // silence — need no second case.
-                throw InterruptedIOException("no bytes on stream $streamId within ${readTimeoutMillis}ms")
-            }
-            connection.pump(minOf(remaining, POLL_MILLIS))
-        }
-    }
+    ): Int = connection.receive(streamId, into, offset, length, readTimeoutMillis.toLong())
 
     override fun setReadTimeout(millis: Int) {
         readTimeoutMillis = millis
@@ -104,15 +79,19 @@ class QuicStreamTransport(
     override fun close() {
         if (closed) return
         closed = true
-        runCatching {
-            connection.send(streamId, ByteArray(0), fin = true)
-            connection.flush()
-        }
+        // A FIN on this stream only. The connection is deliberately left
+        // alone: several streams share one, and a flow ending is not a session
+        // ending.
+        runCatching { connection.send(streamId, ByteArray(0), fin = true) }
     }
 
     private companion object {
+        /**
+         * Long enough for a Portal that is working and short enough that a
+         * wrong shared key does not hang: authentication is answered with
+         * silence rather than a close, so this deadline is the only thing that
+         * ends that wait.
+         */
         const val DEFAULT_READ_TIMEOUT_MILLIS = 15_000
-        const val POLL_MILLIS = 250L
-        const val NANOS_PER_MILLI = 1_000_000L
     }
 }

@@ -78,7 +78,7 @@ run by `./gradlew testDebugUnitTest`.
 | 29 | A lane carries one flow and is not reused | covered | `DedicatedTlsLaneTest.aLaneCarriesExactlyOneFlow`, `NowhereSessionTest.eachFlowGetsItsOwnConnectionAndItsOwnId` |
 | 30 | No first FlowHeader byte within 40 s of auth → reclaimed | covered | `PortalLifecycleTest.aConnectionThatAuthenticatesAndThenSaysNothingIsReclaimed` (`portal-lifecycle.sh`). Measured at **40004 ms** against v1.8.2 |
 | 31 | Clean EOF closes the sending half; state released once both finish | covered | `DedicatedTlsLaneTest.closingTheFlowClosesTheTransport`, `NowhereSessionTest.closingAFlowReturnsItsIdToTheSession`, `.closingAFlowTwiceReleasesItsIdOnce` |
-| 32 | Large bidirectional transfer is lossless (checksum comparison) | covered | `FakeIpTunnelTest.aDomainFetchGoesOutAsANameAndComesBackIntact` (instrumentation, 20 MB with a SHA-256 the origin declares); `oracle-diff.sh` cases `tcp_ip_payload` and `tcp_domain_payload` |
+| 32 | Large bidirectional transfer is lossless (checksum comparison) | covered | `oracle-diff.sh` cases `tcp_ip_payload` and `tcp_domain_payload`; `QuicPayloadTest.aTransferOverQuicArrivesIntact` (instrumentation, 20 MB against a target only the Portal can reach, digest declared by the origin) and `.theSameBlobOverTlsAndOverQuicProducesTheSameDigest`. **The evidence changed on 2026-08-29**: this row used to cite `FakeIpTunnelTest`, which fetched over an ordinary socket from inside the app's own process — and this client is forced out of its own tunnel in every mode, so that fetch never entered the TUN and proved only that the destination was reachable some other way. That case is disabled and the claim it made now rests on evidence that cannot be satisfied without the Portal |
 
 ## 6. UDP over stream (spec 8)
 
@@ -231,6 +231,32 @@ stays outside it: a Portal that answers nothing has named no `SetupResult`, and
 inventing one would be the same mistake facing the other way.
 
 ---
+
+## A note on the device cases, added 2026-08-29
+
+**Three instrumentation classes are disabled, and they were proving nothing.**
+`FakeIpTunnelTest`, `ThroughputOnDeviceTest` and `ConcurrentFlowsTest` fetch over
+ordinary sockets from inside the app's own process. This client is forced out of
+its own tunnel in every mode (`AppSelection.ruleFor`) because a VPN inside its
+own tunnel is a routing loop, so those sockets never enter the TUN. A case that
+succeeded had reached its destination some other way.
+
+It went unnoticed for two runs because the two facts were introduced apart and
+never met: per-app selection landed on a day when no device was attached, and
+the first execution of these cases afterwards was against a host-local origin an
+emulator reaches directly. Every case passed, and the Portal's byte counters had
+not moved at all.
+
+What replaces them:
+
+- `TunnelHarness` now **refuses** a target the device can reach directly, so the
+  false pass cannot recur.
+- Claims about the protocol carrying payload moved to `QuicPayloadTest`, which
+  goes through the session layer at a target only the Portal can reach.
+- The claim about the **TUN itself** carrying an application's traffic belongs to
+  `conformance/scripts/e2e-tunnel-fetch.sh`, which drives the fetch from the
+  shell user — who is not this app and therefore is inside the tunnel. **That
+  script is written and has not yet been run end to end.**
 
 # L3
 
