@@ -1,0 +1,59 @@
+# name: Local network
+# source: NodePassProject/Somewhere-Android
+# revision: this repository
+# licence: GPL-3.0-only
+# date: 2026-08-29
+#
+# What a tunnel must not swallow.
+#
+# Every address here means "somewhere on this side of the tunnel": the router's
+# admin page, a printer, a NAS, a phone talking to a laptop over the same
+# Wi-Fi. Sending them to a Portal reaches nothing, slowly — the Portal has its
+# own 192.168.0.0/16 and it is not yours.
+#
+# It names no country and no service, and that is deliberate rather than
+# incidental. A rule set that named either would be a political claim shipped
+# under this project's name, in a public history that cannot really be deleted,
+# by a client whose stated posture is mechanisms without embedded policy. This
+# one is arithmetic about address space.
+#
+# The fake-IP range 198.18.0.0/15 is deliberately absent. A synthetic address is
+# how a name survives the trip from the resolver to the flow handler, and a
+# DIRECT rule over it would be a second, contradictory statement of something
+# the router already guarantees: a direct flow dials the name, never the address
+# that carried it.
+
+# This device.
+IP-CIDR,127.0.0.0/8,DIRECT
+IP-CIDR,0.0.0.0/8,DIRECT
+
+# RFC 1918. The private ranges, which is most of what "the local network" means.
+IP-CIDR,10.0.0.0/8,DIRECT
+IP-CIDR,172.16.0.0/12,DIRECT
+IP-CIDR,192.168.0.0/16,DIRECT
+
+# RFC 6598. Carrier-grade NAT: not the local network, but not routable to a
+# Portal either, and a mobile network's own infrastructure lives here.
+IP-CIDR,100.64.0.0/10,DIRECT
+
+# RFC 3927. Link-local, which is what a device uses when nothing gave it an
+# address — including the Android emulator's own host alias.
+IP-CIDR,169.254.0.0/16,DIRECT
+
+# RFC 5771 and the limited broadcast. Neither survives a tunnel by definition.
+IP-CIDR,224.0.0.0/4,DIRECT
+IP-CIDR,255.255.255.255/32,DIRECT
+
+# RFC 6890's documentation and benchmarking ranges. Nothing real is behind
+# them, and a flow that reaches one is a misconfiguration worth failing fast.
+IP-CIDR,192.0.2.0/24,DIRECT
+IP-CIDR,198.51.100.0/24,DIRECT
+IP-CIDR,203.0.113.0/24,DIRECT
+
+# Names that only ever mean this network. `.local` is mDNS; `.home.arpa` is
+# RFC 8375; `.lan` and `.internal` are conventions every home router uses.
+DOMAIN-SUFFIX,local,DIRECT
+DOMAIN-SUFFIX,localhost,DIRECT
+DOMAIN-SUFFIX,home.arpa,DIRECT
+DOMAIN-SUFFIX,lan,DIRECT
+DOMAIN-SUFFIX,internal,DIRECT

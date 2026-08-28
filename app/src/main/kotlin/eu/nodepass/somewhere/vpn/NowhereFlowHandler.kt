@@ -88,7 +88,7 @@ class NowhereFlowHandler(
      * Consulted once, here, and not in the DNS interceptor — see [Router] for
      * why a name still gets a synthetic address whichever way it is routed.
      */
-    private val router: Router = Router({ RoutingRules.EMPTY }, { RoutingMode.Everything }),
+    private val router: Router = Router({ listOf(RoutingRules.EMPTY) }, { RoutingMode.Everything }),
     /** Opens the connections that do not go through the Portal. */
     private val direct: DirectDialer = DirectDialer(protect = { false }),
     private val pump: () -> TunPump?,

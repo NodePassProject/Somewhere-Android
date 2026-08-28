@@ -42,7 +42,16 @@ enum class RoutingMode {
  * `DirectDialer` is where that is enforced.
  */
 class Router(
-    private val rules: () -> RoutingRules,
+    /**
+     * The rule sets, in the order they are consulted.
+     *
+     * An ordered list rather than one set, because an imported set is consulted
+     * before any bundled one: a user who imported rules has said something
+     * specific, and a bundled set is what this client thought before being
+     * told. The first set that has an opinion wins; a set with none is passed
+     * over rather than treated as a refusal.
+     */
+    private val rules: () -> List<RoutingRules>,
     private val mode: () -> RoutingMode,
     /** What a rule set that mentions nothing about a destination means. */
     val fallback: RouteAction = RouteAction.Tunnel,
@@ -57,9 +66,11 @@ class Router(
     fun decide(target: Target): RouteAction {
         if (mode() == RoutingMode.Everything) return RouteAction.Tunnel
         val decided =
-            when (target) {
-                is Target.Domain -> rules().decide(target.host)
-                is Target.Ip -> rules().decide(target.octets)
+            rules().firstNotNullOfOrNull { set ->
+                when (target) {
+                    is Target.Domain -> set.decide(target.host)
+                    is Target.Ip -> set.decide(target.octets)
+                }
             }
         return decided ?: fallback
     }

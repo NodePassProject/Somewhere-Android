@@ -14,7 +14,58 @@ class RouterTest {
         mode: RoutingMode = RoutingMode.Rules,
         fallback: RouteAction = RouteAction.Tunnel,
         vararg rules: Rule,
-    ) = Router({ RoutingRules.of(rules.toList()).getOrThrow() }, { mode }, fallback)
+    ) = Router({ listOf(RoutingRules.of(rules.toList()).getOrThrow()) }, { mode }, fallback)
+
+    /**
+     * Two sets, consulted in order.
+     *
+     * The order is the decision: an imported set is asked before any bundled
+     * one, because a user who imported rules has said something specific and a
+     * bundled set is what this client thought before being told.
+     */
+    private fun layered(
+        first: List<Rule>,
+        second: List<Rule>,
+        fallback: RouteAction = RouteAction.Tunnel,
+    ) = Router(
+        {
+            listOf(
+                RoutingRules.of(first).getOrThrow(),
+                RoutingRules.of(second).getOrThrow(),
+            )
+        },
+        { RoutingMode.Rules },
+        fallback,
+    )
+
+    @Test
+    fun theFirstSetWithAnOpinionDecides() {
+        val router =
+            layered(
+                first = listOf(Rule(RuleType.DomainSuffix, "example.com", RouteAction.Direct)),
+                second = listOf(Rule(RuleType.DomainSuffix, "example.com", RouteAction.Tunnel)),
+            )
+        assertEquals(RouteAction.Direct, router.decide(domain("a.example.com")))
+    }
+
+    @Test
+    fun aSetWithNoOpinionIsPassedOverRatherThanTreatedAsARefusal() {
+        // The failure this prevents: a first set that mentions nothing would
+        // otherwise answer for every destination, and a bundled set behind it
+        // would never be consulted at all.
+        val router =
+            layered(
+                first = emptyList(),
+                second = listOf(Rule(RuleType.IpCidr, "10.0.0.0/8", RouteAction.Direct)),
+            )
+        assertEquals(RouteAction.Direct, router.decide(ip("10.1.2.3")))
+    }
+
+    @Test
+    fun theFallbackStillAnswersWhenNoSetHasAnOpinion() {
+        val router = layered(first = emptyList(), second = emptyList(), fallback = RouteAction.Reject)
+        assertEquals(RouteAction.Reject, router.decide(domain("nothing.example")))
+    }
 
     private fun domain(host: String) = Target.Domain(host, 443)
 

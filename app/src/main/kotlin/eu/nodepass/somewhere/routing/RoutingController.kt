@@ -25,6 +25,11 @@ class RoutingController(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher,
     private val engaged: () -> Boolean,
+    /**
+     * Reads a bundled asset. Injected rather than taken from a `Context` so
+     * that the controller stays testable without one.
+     */
+    private val openAsset: (String) -> String = { throw java.io.IOException("no assets") },
 ) {
     private val mutableSettings = MutableStateFlow(RoutingPreferences.Settings())
     val settings: StateFlow<RoutingPreferences.Settings> = mutableSettings.asStateFlow()
@@ -33,6 +38,17 @@ class RoutingController(
 
     /** The rule set as stored: how many rules, and what kinds were not carried. */
     val loaded: StateFlow<RuleStore.Loaded> = mutableLoaded.asStateFlow()
+
+    private val mutableBundled = MutableStateFlow<List<BundledRules.Set>>(emptyList())
+
+    /**
+     * The sets that ship in the APK, with where each came from.
+     *
+     * Shown rather than merely applied: a bundled rule set whose origin a user
+     * cannot see is the V-05 problem in its worst form, and that stays true of
+     * a set with nothing controversial in it.
+     */
+    val bundled: StateFlow<List<BundledRules.Set>> = mutableBundled.asStateFlow()
 
     private val mutableRestartNeeded = MutableStateFlow(false)
     val restartNeeded: StateFlow<Boolean> = mutableRestartNeeded.asStateFlow()
@@ -46,6 +62,7 @@ class RoutingController(
         scope.launch {
             mutableSettings.value = withContext(io) { preferences.load() }
             mutableLoaded.value = withContext(io) { rules.load() }
+            mutableBundled.value = withContext(io) { BundledRules.load(openAsset) }
         }
     }
 

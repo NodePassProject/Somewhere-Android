@@ -68,7 +68,9 @@
     <string name="routing_everything_detail">所有流量都走隧道</string>
     <string name="routing_rule_sets">规则集</string>
     <string name="routing_per_app">分应用</string>
-    <string name="routing_no_rules">未加载规则集，所有目标都经由 Portal。</string>
+    <string name="routing_no_rules">没有导入规则集。内置的那份仍然生效，其余目的地都走 Portal。</string>
+    <string name="routing_bundled">内置：%1$s</string>
+    <string name="routing_bundled_origin">%1$s · %2$d 条规则</string>
     <string name="routing_import">导入规则文件</string>
     <string name="routing_remove_rules">移除</string>
     <string name="routing_restart_needed">隧道仍在使用建立时的规则。</string>

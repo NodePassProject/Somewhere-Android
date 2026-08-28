@@ -57,6 +57,7 @@ fun RoutingScreen(
     val colors = SomewhereTheme.colors
     val settings by routing.settings.collectAsState()
     val loaded by routing.loaded.collectAsState()
+    val bundled by routing.bundled.collectAsState()
     val importError by routing.lastImportError.collectAsState()
     val restartNeeded by routing.restartNeeded.collectAsState()
 
@@ -129,6 +130,32 @@ fun RoutingScreen(
                             color = if (loaded.count == 0) colors.muted else colors.ink,
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                    // What ships in the APK, named with where it came from.
+                    // A bundled rule set whose origin a user cannot see is the
+                    // V-05 problem in its worst form, and that stays true of a
+                    // set with nothing controversial in it.
+                    bundled.forEach { set ->
+                        PanelDivider()
+                        PanelRow(Modifier.padding(horizontal = 0.dp)) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.routing_bundled, set.name),
+                                    style = SomewhereType.bodySmall,
+                                    color = colors.ink,
+                                )
+                                Text(
+                                    text =
+                                        stringResource(
+                                            R.string.routing_bundled_origin,
+                                            set.origin,
+                                            set.loaded.count,
+                                        ),
+                                    style = SomewhereType.bodySmall,
+                                    color = colors.muted,
+                                )
+                            }
+                        }
                     }
                     if (loaded.unsupported.isNotEmpty()) {
                         PanelDivider()

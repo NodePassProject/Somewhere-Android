@@ -98,7 +98,9 @@
     <string name="routing_everything_detail">All traffic goes through the tunnel</string>
     <string name="routing_rule_sets">Rule sets</string>
     <string name="routing_per_app">Per-app</string>
-    <string name="routing_no_rules">No rule set is loaded, so every destination goes through the Portal.</string>
+    <string name="routing_no_rules">No imported rule set. The bundled one still applies, and everything else goes through the Portal.</string>
+    <string name="routing_bundled">Bundled: %1$s</string>
+    <string name="routing_bundled_origin">%1$s · %2$d rules</string>
     <string name="routing_import">Import a rule file</string>
     <string name="routing_remove_rules">Remove</string>
     <string name="routing_restart_needed">The tunnel is still using the rules it was built with.</string>

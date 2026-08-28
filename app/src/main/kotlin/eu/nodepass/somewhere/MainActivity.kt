@@ -109,6 +109,7 @@ class MainActivity : ComponentActivity() {
                 scope = lifecycleScope,
                 io = Dispatchers.IO,
                 engaged = { TunnelController.isEngaged },
+                openAsset = { assets.open(it).bufferedReader().use { reader -> reader.readText() } },
             ).also { routing = it }
 
         setContent {

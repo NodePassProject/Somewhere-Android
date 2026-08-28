@@ -33,6 +33,7 @@ import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.quic.QuicConnection
 import eu.nodepass.somewhere.quic.QuicStreamTransport
+import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.DirectDialer
 import eu.nodepass.somewhere.routing.Router
 import java.net.InetAddress
@@ -386,8 +387,13 @@ class SomewhereVpnService : VpnService() {
         // flow would decide one thing for its first packet and another for its
         // last, which is not something a user could ever reason about.
         val loadedRules = application.rules.load().rules
+        val bundled = BundledRules.load { assets.open(it).bufferedReader().use { reader -> reader.readText() } }
+        // Imported first, bundled after. A user who imported rules has said
+        // something specific; a bundled set is what this client thought before
+        // being told.
+        val ruleSets = listOf(loadedRules) + bundled.map { it.loaded.rules }
         val routingSettings = application.routing.load()
-        val router = Router({ loadedRules }, { routingSettings.mode }, routingSettings.fallback)
+        val router = Router({ ruleSets }, { routingSettings.mode }, routingSettings.fallback)
         val direct = DirectDialer(protect = { socket -> protect(socket) })
 
         val flows = NowhereFlowHandler(nowhere, fakeIp, resolvers, router, direct) { pump }
