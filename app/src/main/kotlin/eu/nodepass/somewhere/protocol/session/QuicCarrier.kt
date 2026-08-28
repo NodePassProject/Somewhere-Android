@@ -96,6 +96,22 @@ class QuicCarrier(
     /** Opens one client-initiated bidirectional stream as a byte transport. */
     fun interface StreamFactory {
         fun open(): Transport
+
+        /**
+         * Which connection the last [open] came from.
+         *
+         * A QUIC connection authenticates once — but *once per connection*, and
+         * a connection that died and was rebuilt is a new one that has never
+         * authenticated. Without this the carrier would remember having
+         * authenticated and send the first flow on the new connection with no
+         * AuthFrame, which a Portal answers with the silence it answers every
+         * unauthenticated flow with: a tunnel that survives a network change
+         * and then carries nothing.
+         *
+         * A factory that never rebuilds returns a constant, which is why this
+         * has a default.
+         */
+        fun generation(): Int = 0
     }
 
     /** The unreliable half of a QUIC connection, as this carrier needs it. */
@@ -108,15 +124,16 @@ class QuicCarrier(
         fun maxDatagram(): Int
     }
 
-    private var authenticated = false
+    /** The generation this carrier last offered an AuthFrame on, or null. */
+    private var authenticatedOn: Int? = null
     private var closed = false
     private val open = mutableListOf<Transport>()
 
     /** Section 9's UDP carriage, when this connection has a datagram side. */
     private val lane: DatagramLane? = datagrams?.let { DatagramLane(it) }
 
-    /** Whether this connection has already offered its AuthFrame. */
-    val hasAuthenticated: Boolean get() = authenticated
+    /** Whether the current connection has already offered its AuthFrame. */
+    val hasAuthenticated: Boolean get() = authenticatedOn == streams.generation()
 
     fun openFlow(
         target: Target,
@@ -147,9 +164,10 @@ class QuicCarrier(
                 is DecodeResult.Ok -> built.value
             }
 
-        // Exactly once per connection, and before anything else on the wire.
+        // Exactly once per connection — and a rebuilt connection is a new one.
+        val generation = streams.generation()
         val authFrame =
-            if (authenticated) {
+            if (authenticatedOn == generation) {
                 ByteArray(0)
             } else {
                 Authentication.encodeFrame(
@@ -159,7 +177,7 @@ class QuicCarrier(
                     sessionId = sessionId.toByteArray(),
                 )
             }
-        authenticated = true
+        authenticatedOn = generation
 
         // A UDP flow's payload does not ride the stream. Section 9 is explicit:
         // after READY on the control stream, packets travel as DATAGRAMs — so

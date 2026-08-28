@@ -27,6 +27,7 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
 import eu.nodepass.somewhere.protocol.session.SplitCarrier
+import eu.nodepass.somewhere.protocol.session.Transport
 import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
@@ -139,7 +140,7 @@ class SomewhereVpnService : VpnService() {
      * because the session owns the carrier but not the connection underneath
      * it, and the connection has a thread that has to be stopped.
      */
-    private var quic: QuicConnection? = null
+    private var quic: ReconnectingQuic? = null
 
     /**
      * Names, held for as long as the tunnel is up and no longer.
@@ -330,19 +331,23 @@ class SomewhereVpnService : VpnService() {
         // direction asks for it, which `requiresQuic` already means.
         val quicConnection =
             if (resolved.requiresQuic) {
-                QuicConnection.open(
-                    remote = InetSocketAddress(portal, resolved.port),
-                    alpn = resolved.alpn,
-                    // No SNI: this branch is only reached when verification is
-                    // Skipped, which is what `sni=none` means.
-                    serverName = null,
-                    protect = { socket -> protect(socket) },
-                )
+                ReconnectingQuic {
+                    QuicConnection.open(
+                        remote = InetSocketAddress(portal, resolved.port),
+                        alpn = resolved.alpn,
+                        // No SNI: this branch is only reached when verification
+                        // is Skipped, which is what `sni=none` means.
+                        serverName = null,
+                        protect = { socket -> protect(socket) },
+                    )
+                }
             } else {
                 null
             }
         quic = quicConnection
-        quicConnection?.completeHandshake()
+        // Fail here rather than later: a tunnel that came up and then could not
+        // reach its Portal is harder to read than one that never came up.
+        quicConnection?.current()
 
         val nowhere =
             NowhereSession(
@@ -354,16 +359,11 @@ class SomewhereVpnService : VpnService() {
                         is DecodeResult.Invalid -> error(transport.reason.detail)
                     }
                 },
-                quicStreams =
-                    quicConnection?.let { connection ->
-                        QuicCarrier.StreamFactory {
-                            QuicStreamTransport(connection, connection.openStream())
-                        }
-                    },
+                quicStreams = quicConnection?.streams(),
                 // Needed by both shapes: a duplex QUIC flow sends every packet
                 // as a DATAGRAM, and a split flow does it in whichever
                 // direction is QUIC.
-                quicDatagrams = quicConnection,
+                quicDatagrams = quicConnection?.datagrams(),
                 // Present together or not at all. `up != down` puts one
                 // direction on each carrier, and which is which is the node's
                 // choice rather than this client's.
@@ -458,13 +458,16 @@ class SomewhereVpnService : VpnService() {
      */
     private fun laneFactory(
         carrier: NextHopCarrier,
-        connection: QuicConnection,
+        connection: ReconnectingQuic,
         dialer: NowhereDialer,
         node: NowhereUrl,
     ): SplitCarrier.LaneFactory =
         when (carrier) {
             NextHopCarrier.Udp ->
-                SplitCarrier.LaneFactory { QuicStreamTransport(connection, connection.openStream()) }
+                SplitCarrier.LaneFactory {
+                    val live = connection.current()
+                    QuicStreamTransport(live, live.openStream())
+                }
             NextHopCarrier.Tcp ->
                 SplitCarrier.LaneFactory {
                     when (val transport = dialer.connect(node)) {
@@ -473,6 +476,73 @@ class SomewhereVpnService : VpnService() {
                     }
                 }
         }
+
+    /**
+     * A QUIC connection that comes back after the path under it goes away.
+     *
+     * A network change is not something QUIC recovers from here: the connection
+     * was built on a path that no longer exists, ngtcp2 gives up, and every
+     * later call answers the same way. Without this the tunnel stays up and
+     * carries nothing — which is worse than failing, because a user watching a
+     * "Connected" screen has no reason to restart it.
+     *
+     * **A rebuilt connection is a new one and has never authenticated**, which
+     * is why the stream factory reports a generation. The carrier remembers
+     * which one it authenticated on, so the first flow after a rebuild carries
+     * an AuthFrame again. Getting that wrong produces a tunnel that survives a
+     * network change and then carries nothing, for the opposite reason.
+     */
+    private class ReconnectingQuic(
+        private val open: () -> QuicConnection,
+    ) {
+        private val lock = Any()
+        private var connection: QuicConnection? = null
+        private var generation = 0
+
+        fun current(): QuicConnection =
+            synchronized(lock) {
+                connection?.takeIf { it.isAlive }?.let { return it }
+                runCatching { connection?.close() }
+                generation++
+                Log.i(TAG, "opening QUIC connection, generation $generation")
+                open().also {
+                    it.completeHandshake()
+                    connection = it
+                }
+            }
+
+        fun streams(): QuicCarrier.StreamFactory =
+            object : QuicCarrier.StreamFactory {
+                override fun open(): Transport {
+                    val live = current()
+                    return QuicStreamTransport(live, live.openStream())
+                }
+
+                override fun generation(): Int = synchronized(lock) { generation }
+            }
+
+        /**
+         * The datagram side, resolved on every call.
+         *
+         * Held as an interface rather than as the connection so that a rebuild
+         * is invisible to the carrier above: the lane it owns keeps working
+         * against whatever connection is current.
+         */
+        fun datagrams(): QuicCarrier.Datagrams =
+            object : QuicCarrier.Datagrams {
+                override fun send(bytes: ByteArray) = current().sendDatagram(bytes)
+
+                override fun receive(timeoutMillis: Long): ByteArray? = current().receiveDatagram(timeoutMillis)
+
+                override fun maxDatagram(): Int = current().maxDatagramSize()
+            }
+
+        fun close() =
+            synchronized(lock) {
+                runCatching { connection?.close() }
+                connection = null
+            }
+    }
 
     private fun startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel()

@@ -530,6 +530,8 @@ class OracleDifferentialTest {
                 NowhereSession(
                     shared,
                     { error("a QUIC session must not dial TLS") },
+                    // One connection for the life of a case, so the default
+                    // generation never moves.
                     quicStreams = QuicCarrier.StreamFactory { quicLane() },
                     quicDatagrams = connection,
                 )

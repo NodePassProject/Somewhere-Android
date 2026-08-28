@@ -15,6 +15,7 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration.Companion.nanoseconds
 
 /** Why a connection could not be opened, or could not be driven further. */
 sealed interface QuicFailure {
@@ -208,6 +209,10 @@ class QuicConnection private constructor(
                 harvestDatagrams(harvest)
                 if (!handshakeDone && nativeHandshakeCompleted(handle) == 1) {
                     handshakeDone = true
+                    // Only now: transport parameters are not known until the
+                    // handshake carries them, so an interval derived earlier
+                    // would be derived from this side's announcement alone.
+                    applyKeepAlive()
                 }
             }
         } catch (failure: Throwable) {
@@ -358,6 +363,17 @@ class QuicConnection private constructor(
     }
 
     val handshakeCompleted: Boolean get() = handshakeDone
+
+    /**
+     * Whether this connection can still carry anything.
+     *
+     * False once its loop has stopped or the transport has failed — which is
+     * what a network change looks like from here: the path the connection was
+     * built on is gone, ngtcp2 eventually gives up, and every later call
+     * answers the same way. A caller that wants to keep working past that has
+     * to build a new one; there is nothing to resume.
+     */
+    val isAlive: Boolean get() = running && fatal.get() == null
 
     /**
      * Opens one client-initiated bidirectional stream.
@@ -530,6 +546,31 @@ class QuicConnection private constructor(
             size
         }
 
+    /**
+     * The idle timeout in force, in nanoseconds — the smaller of the two ends'
+     * announcements. Zero when neither set one.
+     */
+    fun idleTimeoutNanos(): Long = onOwner { nativeIdleTimeout(handle) }
+
+    /** The keep-alive interval this connection settled on, for tests to read. */
+    @Volatile
+    var keepAliveInterval: kotlin.time.Duration? = null
+        private set
+
+    /**
+     * Sets a keep-alive derived from the negotiated idle timeout.
+     *
+     * On the owning thread, and only after the handshake: the peer's
+     * `max_idle_timeout` arrives with its transport parameters, and a value
+     * computed before that is computed from this side's announcement alone.
+     */
+    private fun applyKeepAlive() {
+        val idle = nativeIdleTimeout(handle)
+        val interval = KeepAlive.interval(idle.nanoseconds)
+        keepAliveInterval = interval
+        nativeSetKeepAlive(handle, interval?.inWholeNanoseconds ?: 0L)
+    }
+
     /** RFC 5705 keying material, which is what NW-P-01 authenticates with. */
     fun exportKeyingMaterial(
         label: String,
@@ -690,6 +731,15 @@ class QuicConnection private constructor(
 
         @JvmStatic
         private external fun nativeMaxDatagram(handle: Long): Int
+
+        @JvmStatic
+        private external fun nativeIdleTimeout(handle: Long): Long
+
+        @JvmStatic
+        private external fun nativeSetKeepAlive(
+            handle: Long,
+            nanos: Long,
+        )
 
         @JvmStatic
         private external fun nativeLastMessage(handle: Long): String?

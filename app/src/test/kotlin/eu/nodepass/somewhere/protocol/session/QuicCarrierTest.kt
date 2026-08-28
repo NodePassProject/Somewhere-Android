@@ -45,7 +45,12 @@ class QuicCarrierTest {
         var opened = 0
             private set
 
+        /** Bumped by a test to stand for a connection that was rebuilt. */
+        var generation = 0
+
         override fun open(): Transport = transports[opened++]
+
+        override fun generation(): Int = generation
     }
 
     private fun quicStream(peer: ByteArray = byteArrayOf(0)) = FakeTransport(transportKind = TransportKind.Quic, peerBytes = peer)
@@ -255,6 +260,33 @@ class QuicCarrierTest {
             "closing a UDP flow must send a CLOSE frame",
             QuicDatagram.Close(5u).encode(),
             datagrams.sent.last(),
+        )
+    }
+
+    @Test
+    fun aRebuiltConnectionAuthenticatesAgain() {
+        // A QUIC connection authenticates once — once *per connection*. A
+        // connection that died and was rebuilt is a new one that has never
+        // authenticated, and a carrier that remembered otherwise would send the
+        // first flow on it with no AuthFrame. A Portal answers that with the
+        // silence it answers every unauthenticated flow with: a tunnel that
+        // survives a network change and then carries nothing.
+        val first = quicStream()
+        val second = quicStream()
+        val streams = Streams(first, second)
+        val carrier = QuicCarrier(streams, key, session)
+
+        carrier.openFlow(target, FlowKind.Tcp, 1u)
+        assertTrue(carrier.hasAuthenticated)
+
+        streams.generation = 1
+        assertFalse("a new connection has not authenticated", carrier.hasAuthenticated)
+
+        carrier.openFlow(target, FlowKind.Tcp, 2u)
+        assertEquals(
+            "the first flow on a rebuilt connection must carry an AuthFrame",
+            Authentication.encodeFrame(key, AuthTransport.Quic, second.exporter, session.toByteArray()).toHex(),
+            second.writtenBytes().copyOf(Authentication.FRAME_LENGTH).toHex(),
         )
     }
 

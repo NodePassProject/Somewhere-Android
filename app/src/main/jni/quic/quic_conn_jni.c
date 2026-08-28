@@ -538,6 +538,13 @@ static int quic_init(struct quic_conn *c) {
     settings.initial_ts = now_ns();
 
     ngtcp2_transport_params_default(&params);
+
+    // Announced so that a quiet connection is closed rather than held open for
+    // ever by whichever end forgets it first. Two minutes matches upstream's
+    // own default (`NOW_UDP_IDLE_TIMEOUT`), and the effective timeout is the
+    // smaller of the two ends' values -- so announcing ours is how this client
+    // gets a say rather than inheriting whatever the Portal chose.
+    params.max_idle_timeout = 120 * NGTCP2_SECONDS;
     // NW-P-19: only one bidirectional stream is credited before
     // authentication, and unidirectional streams are never used. Advertising
     // none of the latter says so on the wire rather than in a comment.
@@ -1233,6 +1240,61 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeMaxDatagram(JNIEnv *env,
         usable = (size_t)peer_limit;
     }
     return (jint)usable;
+}
+
+/*
+ * The idle timeout actually in force, in nanoseconds.
+ *
+ * The smaller of the two ends' announced values, which is what governs: a
+ * client that computed its keep-alive from its own announcement alone would be
+ * safe against itself and late against a peer that announced less.
+ *
+ * Zero means neither end set one, and then nothing closes the connection for
+ * being quiet.
+ */
+JNIEXPORT jlong JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeIdleTimeout(JNIEnv *env,
+                                                                  jclass clazz,
+                                                                  jlong handle) {
+    (void)env;
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    const ngtcp2_transport_params *local, *remote;
+    ngtcp2_duration ours, theirs;
+
+    if (!c) {
+        return err;
+    }
+    local = ngtcp2_conn_get_local_transport_params(c->conn);
+    remote = ngtcp2_conn_get_remote_transport_params(c->conn);
+    ours = local ? local->max_idle_timeout : 0;
+    theirs = remote ? remote->max_idle_timeout : 0;
+
+    if (ours == 0) {
+        return (jlong)theirs;
+    }
+    if (theirs == 0) {
+        return (jlong)ours;
+    }
+    return (jlong)(ours < theirs ? ours : theirs);
+}
+
+// How often to send a PING on an otherwise quiet connection. Zero disables it.
+JNIEXPORT void JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativeSetKeepAlive(JNIEnv *env,
+                                                                   jclass clazz,
+                                                                   jlong handle,
+                                                                   jlong nanos) {
+    (void)env;
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    if (!c) {
+        return;
+    }
+    ngtcp2_conn_set_keep_alive_timeout(
+        c->conn, nanos <= 0 ? UINT64_MAX : (ngtcp2_duration)nanos);
 }
 
 JNIEXPORT jstring JNICALL

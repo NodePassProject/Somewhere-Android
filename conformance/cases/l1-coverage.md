@@ -260,7 +260,7 @@ What replaces them:
 
 # L3
 
-Twenty-seven rows. **Twenty-four are covered, one partly, two blocked** — see
+Twenty-seven rows. **Twenty-five are covered and two partly. Nothing is blocked.** — see
 the summary below, which names the eight.
 
 Everything covered here is covered *now*, not provisionally. The arithmetic and
@@ -295,16 +295,16 @@ checked against a live Portal from inside the app process.
 | 23 | Replanning after maxDatagram shrinks uses a new packetId | covered | `PacketIdsTest.replanningTakesAFreshIdRatherThanReusingTheOne`, `.aShrunkenDatagramSizeReallyDoesProduceADifferentLayout` — the second states the reason as arithmetic rather than as prose |
 | 24 | packetId allocation skips zero | covered | `PacketIdsTest.theFirstIdIsNotZero`, `.idsDoNotRepeatWhileAFlowIsBusy`, `.concurrentAllocationNeverHandsOutADuplicate` |
 | 25 | All four carrier combinations interoperate | covered | `oracle-diff.sh` runs its whole case list over `tcp/tcp`, `tcp/tcp`+mux, `udp/udp`, `udp/tcp` and `tcp/udp`, and both implementations behaved identically on every one. The comparison needs a host QUIC bridge — `conformance/scripts/build-host-quic.sh` builds the same JNI sources the app ships against the build machine — and says so loudly when there is none, rather than reporting two pairs as four |
-| 26 | Connection migrates or is rebuilt after a network change | blocked | needs a connection, and a physical device — see Phase D |
-| 27 | Keep-alive within the idle timeout, more frugal than 15 s | blocked | as row 26 |
+| 26 | Connection migrates or is rebuilt after a network change | **partly covered** | *Rebuilt*, not migrated: a QUIC connection whose path has gone is not something ngtcp2 recovers, so `ReconnectingQuic` builds a new one and `QuicCarrier` authenticates again — checked by `QuicCarrierTest.aRebuiltConnectionAuthenticatesAgain`, because a carrier that remembered having authenticated would produce a tunnel that survives a network change and then carries nothing. **What is not covered is the change itself**: an emulator's network is not a phone's, and observing a real Wi-Fi-to-cellular transition is Phase D's |
+| 27 | Keep-alive within the idle timeout, more frugal than 15 s | covered | `KeepAliveTest` checks the relation over every timeout from one second to ten minutes, and that the interval beats upstream's fixed fifteen wherever the timeout allows. `QuicKeepAliveTest` proves the PING is actually sent: an idle **authenticated** connection outlives forty-five seconds of quiet and still opens a flow |
 
 ## L3 summary
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 24 |
-| partly covered, with the gap named | 1 — row 10 |
-| blocked | 2 — rows 26 and 27, both of which need physical hardware |
+| covered by an automated test | 25 |
+| partly covered, with the gap named | 2 — rows 10 and 26 |
+| blocked | 0 |
 
 **These are counted from the table above, and the blocked ones are named
 rather than totalled.** The previous version of this summary said nine covered
@@ -316,8 +316,10 @@ by reading, which a total is not.
 Row 10 is covered in the half that is this client's behaviour and honest about
 the half that needs a peer this suite does not have. The eight blocked rows each
 name what they are waiting for rather than being called "not yet written", and
-the two left are rows 26 and 27, and they wait on the same thing: a physical
-device. Nothing else in L3 is blocked on code.
+nothing is blocked. Two rows are covered in the half that is this client's
+behaviour and honest about the half that needs hardware this project has never
+had: row 10's stream-credit refusal, which the reference Portal never produces,
+and row 26's network change, which an emulator cannot stage.
 
 **What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
 that completes a handshake against a live Portal, and C3 authenticated over it.
