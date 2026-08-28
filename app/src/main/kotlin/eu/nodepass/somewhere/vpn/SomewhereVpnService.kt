@@ -26,7 +26,9 @@ import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
+import eu.nodepass.somewhere.protocol.session.SplitCarrier
 import eu.nodepass.somewhere.protocol.url.CertificateVerification
+import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.quic.QuicConnection
 import eu.nodepass.somewhere.quic.QuicStreamTransport
@@ -323,6 +325,9 @@ class SomewhereVpnService : VpnService() {
             return
         }
 
+        // A split node uses both carriers at once: one direction on QUIC, the
+        // other on TLS. So a QUIC connection is opened whenever either
+        // direction asks for it, which `requiresQuic` already means.
         val quicConnection =
             if (resolved.requiresQuic) {
                 QuicConnection.open(
@@ -355,7 +360,22 @@ class SomewhereVpnService : VpnService() {
                             QuicStreamTransport(connection, connection.openStream())
                         }
                     },
-                quicDatagrams = quicConnection,
+                quicDatagrams = if (resolved.isSplit) null else quicConnection,
+                // Present together or not at all. `up != down` puts one
+                // direction on each carrier, and which is which is the node's
+                // choice rather than this client's.
+                splitUplink =
+                    if (resolved.isSplit) {
+                        laneFactory(resolved.up, quicConnection!!, dialer, resolved)
+                    } else {
+                        null
+                    },
+                splitDownlink =
+                    if (resolved.isSplit) {
+                        laneFactory(resolved.down, quicConnection!!, dialer, resolved)
+                    } else {
+                        null
+                    },
             )
 
         // Read once, at the moment the tunnel is built, exactly as the
@@ -425,6 +445,31 @@ class SomewhereVpnService : VpnService() {
             TunnelController.report(TunnelState.Disconnected)
         }
     }
+
+    /**
+     * A lane on whichever carrier this direction names.
+     *
+     * The two directions of a split flow are asymmetric on the wire but not
+     * here: each is simply a transport, and which carrier provides it is read
+     * off the node rather than decided by position.
+     */
+    private fun laneFactory(
+        carrier: NextHopCarrier,
+        connection: QuicConnection,
+        dialer: NowhereDialer,
+        node: NowhereUrl,
+    ): SplitCarrier.LaneFactory =
+        when (carrier) {
+            NextHopCarrier.Udp ->
+                SplitCarrier.LaneFactory { QuicStreamTransport(connection, connection.openStream()) }
+            NextHopCarrier.Tcp ->
+                SplitCarrier.LaneFactory {
+                    when (val transport = dialer.connect(node)) {
+                        is DecodeResult.Ok -> transport.value
+                        is DecodeResult.Invalid -> error(transport.reason.detail)
+                    }
+                }
+        }
 
     private fun startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel()

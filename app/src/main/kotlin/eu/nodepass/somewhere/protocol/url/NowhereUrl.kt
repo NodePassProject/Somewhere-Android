@@ -139,6 +139,16 @@ data class NowhereUrl(
     val requiresQuic: Boolean
         get() = up == NextHopCarrier.Udp || down == NextHopCarrier.Udp
 
+    /**
+     * Whether the two directions travel on different carriers.
+     *
+     * A split flow is a different shape on the wire — two client-initiated
+     * lanes, two FlowHeaders, and an answer that arrives on only one of them —
+     * rather than a variation of a duplex one, which is why this is asked
+     * rather than inferred from [requiresQuic] at each call site.
+     */
+    val isSplit: Boolean get() = up != down
+
     fun toUrl(): String {
         val query =
             buildList {

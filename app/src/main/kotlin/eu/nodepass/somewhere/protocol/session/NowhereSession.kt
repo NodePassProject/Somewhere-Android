@@ -77,6 +77,13 @@ class NowhereSession(
      * DATAGRAMs and a Portal is not listening for anything else.
      */
     private val quicDatagrams: QuicCarrier.Datagrams? = null,
+    /**
+     * The two lane sources of a split configuration, when `up` and `down` name
+     * different carriers. Present together or not at all: half a split flow is
+     * a flow the Portal will pair with nothing.
+     */
+    private val splitUplink: SplitCarrier.LaneFactory? = null,
+    private val splitDownlink: SplitCarrier.LaneFactory? = null,
 ) : Closeable {
     /** Opens a fresh authenticated-capable transport to the Portal. */
     fun interface TransportFactory {
@@ -88,6 +95,20 @@ class NowhereSession(
      * every flow, so there is exactly one of these or none.
      */
     private val quic: QuicCarrier? = quicStreams?.let { QuicCarrier(it, sharedKey, id, quicDatagrams) }
+
+    /**
+     * The split carrier, when the node's two directions differ.
+     *
+     * Takes precedence over every other branch: `up != down` is not a variation
+     * of a duplex flow but a different shape on the wire, with two lanes, two
+     * FlowHeaders and an answer that arrives on only one of them.
+     */
+    private val split: SplitCarrier? =
+        if (splitUplink != null && splitDownlink != null) {
+            SplitCarrier(splitUplink, splitDownlink, sharedKey, id)
+        } else {
+            null
+        }
 
     private val flowIds = FlowIdAllocator()
     private val lanes = mutableListOf<DedicatedTlsLane>()
@@ -126,6 +147,7 @@ class NowhereSession(
     val carrierCount: Int
         get() =
             when {
+                split != null -> split.laneCount
                 quic != null -> 1
                 shards != null -> shards.liveShardCount
                 else -> synchronized(lock) { lanes.size }
@@ -165,6 +187,7 @@ class NowhereSession(
 
         val opened =
             when {
+                split != null -> split.openFlow(target, kind, flowId, firstPayload)
                 quic != null -> quic.openFlow(target, kind, flowId, firstPayload)
                 shards != null -> openMultiplexed(shards, target, kind, flowId, firstPayload)
                 else -> openDedicated(target, kind, flowId, firstPayload)
@@ -242,6 +265,7 @@ class NowhereSession(
         toClose.forEach { runCatching { it.close() } }
         runCatching { shards?.close() }
         runCatching { quic?.close() }
+        runCatching { split?.close() }
     }
 
     /**

@@ -66,7 +66,7 @@ run by `./gradlew testDebugUnitTest`.
 |---|---|---|---|
 | 23 | All eight values have their stable wire byte | covered | `SetupResultVectorTest.everyPositiveVectorDecodesToItsNamedResult`, `.theFixtureNamesMatchTheEnumOneForOne` |
 | 24 | Values outside `0..7` are protocol errors and close the flow | covered | `SetupResultVectorTest.everyValueOutsideTheRangeIsAProtocolError` |
-| 25 | All seven rejections produce distinct messages and log lines | covered (messages) / unreachable at L1 (provocation) | `SetupResultVectorTest.allSevenRejectionReasonsAreDistinct`, `SetupResultTextTest.theSevenRejectionsReachSevenDifferentExplanations`, `StringResourceTest.theSevenRejectionsAllHaveAnExplanation`, `DesignRuleUiTest.allSevenRejectionsRenderAsSevenDistinctIdentifiers` (instrumentation). **Provoking all seven from a real Portal is not possible at L1**: `FLOW_LIMIT` needs a Mux carrier's stream cap (L2), and `PAIR_TIMEOUT`, `METADATA_CONFLICT` and `SESSION_REPLACED` all need split flows, which need QUIC (L3). Two are reachable and both are exercised — `READY` and `DIAL_FAILED` |
+| 25 | All seven rejections produce distinct messages and log lines | covered (messages) / **five of eight values now observed from a real Portal** | `SetupResultVectorTest.allSevenRejectionReasonsAreDistinct`, `SetupResultTextTest.theSevenRejectionsReachSevenDifferentExplanations`, `StringResourceTest.theSevenRejectionsAllHaveAnExplanation`, `DesignRuleUiTest.allSevenRejectionsRenderAsSevenDistinctIdentifiers` (instrumentation). Settled 2026-08-29. `READY` and `DIAL_FAILED` were reachable at L1; `PAIR_TIMEOUT`, `METADATA_CONFLICT` and `SESSION_REPLACED` are provoked from a real Portal by `QuicSplitFlowTest` now that split flows exist. **Three remain constructed rather than observed**: `FLOW_LIMIT` (this client refuses its own 257th stream, so the Portal is never asked), `INVALID_REQUEST` and `INTERNAL_ERROR` (a Portal answering either would be reporting a fault, which is not a thing a conformant client can ask for) |
 | 26 | DIAL_FAILED: unreachable target | covered | `SessionAgainstPortalTest.anUnreachableTargetIsReportedAsDialFailedNotAsSuccess`; `oracle-diff.sh` case `dial_failed`, where both implementations report it identically |
 
 ## 5. TCP payload and dedicated lanes (spec 7, spec 1)
@@ -260,7 +260,7 @@ What replaces them:
 
 # L3
 
-Twenty-seven rows. **Nineteen are covered, one partly, seven blocked** — see
+Twenty-seven rows. **Twenty-three are covered, one partly, three blocked** — see
 the summary below, which names the eight.
 
 Everything covered here is covered *now*, not provisionally. The arithmetic and
@@ -273,10 +273,10 @@ checked against a live Portal from inside the app process.
 | 1 | AuthFrame over QUIC (transport 0x02) matches | covered | `AuthVectorTest.everyPositiveVectorIsReproduced`, `.theTransportByteChangesTheTag` — the QUIC frame differs from the TLS one for the same key, which is the property the transport byte exists for |
 | 2 | `OPEN/UDP/quic-up/tls-down` encodes to `0d11223344` | covered | `FlowHeaderVectorTest.everyPositiveVectorEncodesToItsExpectedBytes` |
 | 3 | `ATTACH/UDP/tls-up/quic-down` encodes to `1600000007` | covered | as row 2 |
-| 4 | `PAIR_TIMEOUT`: OPEN without ATTACH | blocked | needs a QUIC carrier to send OPEN on. L1 row 25 named it unreachable at that layer; it is unreachable at this one too, for now |
-| 5 | `METADATA_CONFLICT`: mismatched OPEN and ATTACH | blocked | as row 4 |
-| 6 | `SESSION_REPLACED`: a newer carrier for one session | blocked | as row 4 |
-| 7 | Only the downlink of a split flow receives the result | blocked | as row 4 |
+| 4 | `PAIR_TIMEOUT`: OPEN without ATTACH | covered | `QuicSplitFlowTest.pairTimeoutIsProvokedByAnAttachThatArrivesTooLate` — OPEN sent, the Portal's pairing deadline allowed to pass, then ATTACH. Against a Portal run with `NOW_FLOW_PAIR_TIMEOUT=2s`; the default is fifteen |
+| 5 | `METADATA_CONFLICT`: mismatched OPEN and ATTACH | covered | `QuicSplitFlowTest.metadataConflictIsProvokedByHalvesThatDisagreeAboutKind` |
+| 6 | `SESSION_REPLACED`: a newer carrier for one session | covered | `QuicSplitFlowTest.sessionReplacedIsReturnedToAnAttachWhoseSessionWasTakenOver`. **The obvious provocation does not work**: this Portal implements replacement by tearing the older carrier down, so a fresh flow on it answers `ERR_DRAINING` rather than a setup byte. The shape that works is the specification's own — OPEN arrives, the session is replaced, ATTACH arrives and is told what became of it |
+| 7 | Only the downlink of a split flow receives the result | covered | `QuicSplitFlowTest.onlyTheDownlinkReceivesTheResult` on a device, and `SplitCarrierTest.theResultIsReadFromTheDownlinkAndTheUplinkIsNeverRead`, whose uplink would answer a rejection if anything read it |
 | 8 | Auth on the first bidirectional stream; later streams send none | covered | `QuicCarrierTest.theFirstStreamCarriesTheAuthFrameAndTheSecondCarriesNone`, `.aRejectedFirstFlowStillCountsAsHavingAuthenticated`; and on a device against a live Portal, `QuicAuthenticationTest.aSecondFlowOpensWithoutASecondAuthFrame` |
 | 9 | Unidirectional streams are never used | covered | Two ways, because one of them is only a claim: the client advertises `initial_max_streams_uni = 0`, and `checkNativeBridge` fails the build if `open_uni_stream` appears in the bridge. Verified to fail |
 | 10 | Only one bidirectional stream is credited before auth | **partly covered** | The client opens streams one at a time and surfaces `STREAM_ID_BLOCKED` to its caller rather than retrying behind it, so it cannot open a second and stall. **The refusal itself has never been provoked**: the reference Portal credits more than one stream, and a peer that withholds credit is a fake this suite does not have. Recorded rather than claimed |
@@ -302,9 +302,9 @@ checked against a live Portal from inside the app process.
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 19 |
+| covered by an automated test | 23 |
 | partly covered, with the gap named | 1 — row 10 |
-| blocked | 7 — rows 4, 5, 6, 7, 25, 26, 27 |
+| blocked | 3 — rows 25, 26, 27 |
 
 **These are counted from the table above, and the blocked ones are named
 rather than totalled.** The previous version of this summary said nine covered
@@ -316,8 +316,8 @@ by reading, which a total is not.
 Row 10 is covered in the half that is this client's behaviour and honest about
 the half that needs a peer this suite does not have. The eight blocked rows each
 name what they are waiting for rather than being called "not yet written", and
-all seven wait on the same two things: split flows (4, 5, 6, 7, 25) and a
-physical device (26, 27).
+the three left are row 25, which needs all four carrier combinations run
+through the differential, and rows 26 and 27, which need a physical device.
 
 **What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
 that completes a handshake against a live Portal, and C3 authenticated over it.
