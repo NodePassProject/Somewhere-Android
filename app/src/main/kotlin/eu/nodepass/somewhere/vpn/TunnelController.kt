@@ -58,6 +58,16 @@ sealed interface TunnelState {
  * outlives every activity. Anything scoped narrower would be lying about that.
  */
 object TunnelController {
+    /**
+     * What the Portal answered, flow by flow (NW-A-06).
+     *
+     * On the controller because the service that writes it is created and
+     * destroyed with each tunnel while the screen that reads it outlives both,
+     * and a log that vanished when the tunnel stopped would lose exactly the
+     * entries a user goes looking for.
+     */
+    val connectionLog: ConnectionLog = ConnectionLog()
+
     private val mutable = MutableStateFlow<TunnelState>(TunnelState.Disconnected)
     private val mutableTraffic = MutableStateFlow(TrafficSample.NONE)
 

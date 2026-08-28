@@ -9,6 +9,8 @@ import eu.nodepass.somewhere.dns.DnsMessage
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.dns.FakeIpResolver
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.frame.FlowRejected
+import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.target.Target
@@ -92,8 +94,29 @@ class NowhereFlowHandler(
     /** Opens the connections that do not go through the Portal. */
     private val direct: DirectDialer = DirectDialer(protect = { false }),
     private val pump: () -> TunPump?,
+    /**
+     * What the Portal answered, flow by flow (NW-A-06).
+     *
+     * Recorded here rather than inside the session because this is the only
+     * place that knows both the outcome and the route the flow took — a direct
+     * flow never asks a Portal anything, and a log that reported one as a
+     * Portal's answer would be inventing one.
+     */
+    private val log: ConnectionLog = ConnectionLog(),
 ) : TunPump.FlowHandler {
+    /** What the log's carrier column says for a Portal-bound flow. */
+    private fun carrierName(): String = if (session.carriesPackets) QUIC else TLS
+
+    /** The log this handler writes, for whatever draws it. */
+    val connectionLog: ConnectionLog get() = log
+
     private companion object {
+        const val QUIC = "QUIC"
+        const val TLS = "TLS"
+
+        /** Used when nothing was answered because nothing was reached. */
+        const val TRANSPORT = "transport"
+
         const val TAG = "NowhereFlow"
 
         /** Read buffer for the Portal→device direction. One TCP window's worth is wasteful; one MTU is chatty. */
@@ -411,6 +434,13 @@ class NowhereFlowHandler(
                 }
             }.getOrElse { error ->
                 Log.w(TAG, "dial failed for ${connection.target}: ${error.message}")
+                // A transport that failed before the protocol was reached. The
+                // Portal said nothing, so the nearest true SetupResult is the
+                // one that means a dial did not succeed — and the carrier
+                // column says which side could not be reached.
+                if (!connection.direct) {
+                    log.record(SetupResult.DialFailed, connection.target, null, TRANSPORT)
+                }
                 abort(connection)
                 return
             }
@@ -421,10 +451,22 @@ class NowhereFlowHandler(
                 is DecodeResult.Invalid -> {
                     val who = if (connection.direct) "the destination" else "the Portal"
                     Log.w(TAG, "$who refused ${connection.target}: ${opened.reason.detail}")
+                    // Only a Portal's own answer is logged as one. A rejection
+                    // that carries no SetupResult -- silence, most often --
+                    // has no result to report, and inventing one would put a
+                    // word in the Portal's mouth.
+                    val reason = opened.reason
+                    if (!connection.direct && reason is FlowRejected) {
+                        log.record(reason.result, connection.target, null, carrierName())
+                    }
                     abort(connection)
                     return
                 }
             }
+
+        if (!connection.direct) {
+            flow.setupResult?.let { log.record(it, connection.target, flow.id, carrierName()) }
+        }
 
         connection.flow = flow
         if (first.isNotEmpty()) {

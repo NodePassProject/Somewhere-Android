@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,7 @@ import eu.nodepass.somewhere.ui.screens.RoutingScreen
 import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.vpn.TunnelController
 
 /** The four destinations that carry a tab. Everything else is pushed over them. */
 enum class Tab(
@@ -141,7 +143,10 @@ fun SomewhereApp(
                         onImportRules = onImportRules,
                     )
                 }
-                composable(Tab.Logs.route) { DiagnosticsScreen() }
+                composable(Tab.Logs.route) {
+                    val entries by TunnelController.connectionLog.recent.collectAsState()
+                    DiagnosticsScreen(entries = entries)
+                }
                 composable(Routes.EDITOR) {
                     NodeEditorScreen(
                         nodes = nodes,

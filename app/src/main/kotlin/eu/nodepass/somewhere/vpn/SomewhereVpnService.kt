@@ -396,7 +396,8 @@ class SomewhereVpnService : VpnService() {
         val router = Router({ ruleSets }, { routingSettings.mode }, routingSettings.fallback)
         val direct = DirectDialer(protect = { socket -> protect(socket) })
 
-        val flows = NowhereFlowHandler(nowhere, fakeIp, resolvers, router, direct) { pump }
+        val flows =
+            NowhereFlowHandler(nowhere, fakeIp, resolvers, router, direct, { pump }, TunnelController.connectionLog)
         val running = TunPump(descriptor, flows)
 
         session = nowhere
