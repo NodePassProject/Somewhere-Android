@@ -360,7 +360,10 @@ class SomewhereVpnService : VpnService() {
                             QuicStreamTransport(connection, connection.openStream())
                         }
                     },
-                quicDatagrams = if (resolved.isSplit) null else quicConnection,
+                // Needed by both shapes: a duplex QUIC flow sends every packet
+                // as a DATAGRAM, and a split flow does it in whichever
+                // direction is QUIC.
+                quicDatagrams = quicConnection,
                 // Present together or not at all. `up != down` puts one
                 // direction on each carrier, and which is which is the node's
                 // choice rather than this client's.

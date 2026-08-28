@@ -260,7 +260,7 @@ What replaces them:
 
 # L3
 
-Twenty-seven rows. **Twenty-three are covered, one partly, three blocked** — see
+Twenty-seven rows. **Twenty-four are covered, one partly, two blocked** — see
 the summary below, which names the eight.
 
 Everything covered here is covered *now*, not provisionally. The arithmetic and
@@ -294,7 +294,7 @@ checked against a live Portal from inside the app process.
 | 22 | Reassembly slots and lifetime are bounded (64 slots / 10 s) | covered | `FragmentReassemblyTest.slotsAreBoundedAndAFullTableRefusesNewPacketsRatherThanGrowing`, `.bytesAreBoundedSeparatelyFromSlots`, `.aPacketWhoseLastFragmentNeverComesGivesUpItsSlot`, `.arbitraryFragmentsNeitherCrashNorGrowWithoutBound`. Verified to fail: removing the byte budget turns it red. **The byte budget is a third bound the row does not name** — 64 slots alone would let one fragment each of 64 maximum-size packets pin four megabytes |
 | 23 | Replanning after maxDatagram shrinks uses a new packetId | covered | `PacketIdsTest.replanningTakesAFreshIdRatherThanReusingTheOne`, `.aShrunkenDatagramSizeReallyDoesProduceADifferentLayout` — the second states the reason as arithmetic rather than as prose |
 | 24 | packetId allocation skips zero | covered | `PacketIdsTest.theFirstIdIsNotZero`, `.idsDoNotRepeatWhileAFlowIsBusy`, `.concurrentAllocationNeverHandsOutADuplicate` |
-| 25 | All four carrier combinations interoperate | blocked | needs three of the four to exist |
+| 25 | All four carrier combinations interoperate | covered | `oracle-diff.sh` runs its whole case list over `tcp/tcp`, `tcp/tcp`+mux, `udp/udp`, `udp/tcp` and `tcp/udp`, and both implementations behaved identically on every one. The comparison needs a host QUIC bridge — `conformance/scripts/build-host-quic.sh` builds the same JNI sources the app ships against the build machine — and says so loudly when there is none, rather than reporting two pairs as four |
 | 26 | Connection migrates or is rebuilt after a network change | blocked | needs a connection, and a physical device — see Phase D |
 | 27 | Keep-alive within the idle timeout, more frugal than 15 s | blocked | as row 26 |
 
@@ -302,9 +302,9 @@ checked against a live Portal from inside the app process.
 
 | State | Rows |
 |---|---|
-| covered by an automated test | 23 |
+| covered by an automated test | 24 |
 | partly covered, with the gap named | 1 — row 10 |
-| blocked | 3 — rows 25, 26, 27 |
+| blocked | 2 — rows 26 and 27, both of which need physical hardware |
 
 **These are counted from the table above, and the blocked ones are named
 rather than totalled.** The previous version of this summary said nine covered
@@ -316,8 +316,8 @@ by reading, which a total is not.
 Row 10 is covered in the half that is this client's behaviour and honest about
 the half that needs a peer this suite does not have. The eight blocked rows each
 name what they are waiting for rather than being called "not yet written", and
-the three left are row 25, which needs all four carrier combinations run
-through the differential, and rows 26 and 27, which need a physical device.
+the two left are rows 26 and 27, and they wait on the same thing: a physical
+device. Nothing else in L3 is blocked on code.
 
 **What changed on 2026-08-28.** C1 linked the QUIC stack, C2 made a connection
 that completes a handshake against a live Portal, and C3 authenticated over it.

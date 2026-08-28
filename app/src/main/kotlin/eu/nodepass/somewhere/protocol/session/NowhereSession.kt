@@ -105,7 +105,7 @@ class NowhereSession(
      */
     private val split: SplitCarrier? =
         if (splitUplink != null && splitDownlink != null) {
-            SplitCarrier(splitUplink, splitDownlink, sharedKey, id)
+            SplitCarrier(splitUplink, splitDownlink, sharedKey, id, quicDatagrams)
         } else {
             null
         }

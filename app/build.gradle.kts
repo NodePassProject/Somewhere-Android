@@ -590,6 +590,18 @@ val nativeLibraryChecks =
 
 tasks.named("check") { dependsOn(nativeLibraryChecks) }
 
+// The host QUIC bridge, when one was built.
+//
+// `conformance/scripts/build-host-quic.sh` compiles the same JNI sources the
+// app ships against this machine, so the oracle differential can compare the
+// two implementations over QUIC without an emulator in the loop. Absent is the
+// ordinary case and the QUIC rows are then skipped, loudly.
+tasks.withType<Test>().configureEach {
+    System.getenv("SOMEWHERE_QUIC_LIBRARY")?.takeIf { it.isNotBlank() }?.let {
+        systemProperty("somewhere.quic.library", it)
+    }
+}
+
 val classpathConsistencyTasks =
     listOf("Debug" to "debug", "Release" to "release").map { (capitalised, lowercase) ->
         tasks.register<ClasspathConsistencyTask>("checkClasspathConsistency$capitalised") {

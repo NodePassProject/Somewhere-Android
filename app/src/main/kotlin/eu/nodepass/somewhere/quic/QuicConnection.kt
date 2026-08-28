@@ -576,7 +576,7 @@ class QuicConnection private constructor(
         private const val NANOS_PER_MILLI = 1_000_000L
 
         init {
-            System.loadLibrary("somewhere_native")
+            NativeQuic.ensureLoaded()
         }
 
         /**

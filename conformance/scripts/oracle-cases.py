@@ -224,6 +224,15 @@ def main():
     parser.add_argument("--socks-wrong-key", required=True)
     parser.add_argument("--socks-mux", required=True, help="oracle SOCKS listener, mux=1")
     parser.add_argument("--socks-mux-wrong-key", required=True)
+    # The QUIC combinations are optional: a run without a host QUIC bridge on
+    # this side would have nothing to compare them with, and half a comparison
+    # is worse than none -- it reports a divergence that is only an absence.
+    parser.add_argument("--socks-quic", help="oracle SOCKS listener, up=udp&down=udp")
+    parser.add_argument("--socks-quic-wrong-key")
+    parser.add_argument("--socks-split-up", help="oracle SOCKS listener, up=udp&down=tcp")
+    parser.add_argument("--socks-split-up-wrong-key")
+    parser.add_argument("--socks-split-down", help="oracle SOCKS listener, up=tcp&down=udp")
+    parser.add_argument("--socks-split-down-wrong-key")
     parser.add_argument("--target", required=True, help="blob origin, as an address")
     parser.add_argument("--target-name", required=True, help="the same origin, as a name")
     parser.add_argument("--udp", required=True)
@@ -261,6 +270,18 @@ def main():
     verdicts = case_set(socks, wrong_key_socks, "")
     verdicts += case_set(mux_socks, mux_wrong_key_socks, "mux_")
 
+    # One case list over every carrier the two implementations share. L2's only
+    # finding was a protocol fact that had grown a second shape the moment a
+    # second carrier landed, and it was invisible to every test that asserted
+    # on one carrier's own types.
+    for flag, wrong_flag, prefix in (
+        (options.socks_quic, options.socks_quic_wrong_key, "quic_"),
+        (options.socks_split_up, options.socks_split_up_wrong_key, "split_quic_up_"),
+        (options.socks_split_down, options.socks_split_down_wrong_key, "split_quic_down_"),
+    ):
+        if flag and wrong_flag:
+            verdicts += case_set(endpoint(flag), endpoint(wrong_flag), prefix)
+
     # Each burst has an origin of its own, and the port is what labels it. The
     # Portal logs the address a flow was dialled to, so counting connections
     # per origin port attributes every one of them to a carrier and a client
@@ -277,6 +298,19 @@ def main():
             burst_case(mux_socks, hold_mux_host, hold_mux_port, options.width, timeout),
         )
     )
+    if options.socks_quic:
+        verdicts.append(
+            (
+                "quic_burst",
+                burst_case(
+                    endpoint(options.socks_quic),
+                    hold_dedicated_host,
+                    hold_dedicated_port,
+                    options.width,
+                    timeout,
+                ),
+            )
+        )
 
     # "-" rather than an empty column. `read` with a whitespace IFS collapses
     # consecutive tabs, so an empty field shifts every column after it and the

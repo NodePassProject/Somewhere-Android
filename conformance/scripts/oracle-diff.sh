@@ -47,6 +47,15 @@ SOCKS_PORT="${ORACLE_SOCKS_PORT:-21090}"
 SOCKS_WRONG_PORT="${ORACLE_SOCKS_WRONG_PORT:-21091}"
 SOCKS_MUX_PORT="${ORACLE_SOCKS_MUX_PORT:-21092}"
 SOCKS_MUX_WRONG_PORT="${ORACLE_SOCKS_MUX_WRONG_PORT:-21093}"
+# The three QUIC combinations, each with a wrong-key twin. Six more listeners
+# rather than a switch, for the same reason the Mux pair are separate: a
+# vector's carrier is chosen by its URL and one process cannot be two.
+SOCKS_QUIC_PORT="${ORACLE_SOCKS_QUIC_PORT:-21094}"
+SOCKS_QUIC_WRONG_PORT="${ORACLE_SOCKS_QUIC_WRONG_PORT:-21095}"
+SOCKS_SPLIT_UP_PORT="${ORACLE_SOCKS_SPLIT_UP_PORT:-21096}"
+SOCKS_SPLIT_UP_WRONG_PORT="${ORACLE_SOCKS_SPLIT_UP_WRONG_PORT:-21097}"
+SOCKS_SPLIT_DOWN_PORT="${ORACLE_SOCKS_SPLIT_DOWN_PORT:-21098}"
+SOCKS_SPLIT_DOWN_WRONG_PORT="${ORACLE_SOCKS_SPLIT_DOWN_WRONG_PORT:-21099}"
 HTTP_PORT="${ORACLE_HTTP_PORT:-28010}"
 UDP_PORT="${ORACLE_UDP_PORT:-28011}"
 # One burst origin per (client, carrier). See the header: the port is the label.
@@ -220,6 +229,39 @@ wait_for_port "$SOCKS_MUX_PORT" "oracle SOCKS listener (mux=1)"
 PIDS+=($!)
 wait_for_port "$SOCKS_MUX_WRONG_PORT" "oracle SOCKS listener (mux=1, wrong key)"
 
+# --- The QUIC combinations -------------------------------------------------
+# Built only if a host bridge exists on this side. Half a comparison is worse
+# than none: it reports a divergence that is only an absence.
+QUIC_ARGS=()
+if HOST_QUIC="$("$ROOT/scripts/build-host-quic.sh" 2>/dev/null | sed -n 's/^LIBRARY=//p')" && [ -n "$HOST_QUIC" ]; then
+    export SOMEWHERE_QUIC_LIBRARY="$HOST_QUIC"
+    start_oracle_vector() {
+        local up=$1 down=$2 port=$3 wrong_port=$4 label=$5
+        "$BIN" "vector://${KEY}@127.0.0.1:${PORTAL_PORT}?up=${up}&down=${down}&socks=127.0.0.1:${port}&log=info" \
+            > "$RUNDIR/vector-${label}.log" 2>&1 &
+        PIDS+=($!)
+        wait_for_port "$port" "oracle SOCKS listener ($label)"
+        "$BIN" "vector://not-the-shared-key@127.0.0.1:${PORTAL_PORT}?up=${up}&down=${down}&socks=127.0.0.1:${wrong_port}&log=info" \
+            > "$RUNDIR/vector-${label}-wrong.log" 2>&1 &
+        PIDS+=($!)
+        wait_for_port "$wrong_port" "oracle SOCKS listener ($label, wrong key)"
+    }
+    start_oracle_vector udp udp "$SOCKS_QUIC_PORT" "$SOCKS_QUIC_WRONG_PORT" quic
+    start_oracle_vector udp tcp "$SOCKS_SPLIT_UP_PORT" "$SOCKS_SPLIT_UP_WRONG_PORT" split-up
+    start_oracle_vector tcp udp "$SOCKS_SPLIT_DOWN_PORT" "$SOCKS_SPLIT_DOWN_WRONG_PORT" split-down
+    QUIC_ARGS=(
+        --socks-quic "127.0.0.1:${SOCKS_QUIC_PORT}"
+        --socks-quic-wrong-key "127.0.0.1:${SOCKS_QUIC_WRONG_PORT}"
+        --socks-split-up "127.0.0.1:${SOCKS_SPLIT_UP_PORT}"
+        --socks-split-up-wrong-key "127.0.0.1:${SOCKS_SPLIT_UP_WRONG_PORT}"
+        --socks-split-down "127.0.0.1:${SOCKS_SPLIT_DOWN_PORT}"
+        --socks-split-down-wrong-key "127.0.0.1:${SOCKS_SPLIT_DOWN_WRONG_PORT}"
+    )
+    echo "OK  QUIC bridge for this host, and three more oracle carriers"
+else
+    echo "--  no host QUIC bridge; the QUIC combinations are not compared"
+fi
+
 echo "OK  Portal :$PORTAL_PORT, oracle SOCKS :$SOCKS_PORT :$SOCKS_WRONG_PORT :$SOCKS_MUX_PORT :$SOCKS_MUX_WRONG_PORT, targets :$HTTP_PORT tcp / :$UDP_PORT udp"
 
 # --- Run both sides ---------------------------------------------------------
@@ -230,6 +272,7 @@ python3 "$ROOT/scripts/oracle-cases.py" \
     --socks-wrong-key "127.0.0.1:${SOCKS_WRONG_PORT}" \
     --socks-mux "127.0.0.1:${SOCKS_MUX_PORT}" \
     --socks-mux-wrong-key "127.0.0.1:${SOCKS_MUX_WRONG_PORT}" \
+    ${QUIC_ARGS[@]+"${QUIC_ARGS[@]}"} \
     --target "127.0.0.1:${HTTP_PORT}" \
     --target-name "localhost:${HTTP_PORT}" \
     --udp "127.0.0.1:${UDP_PORT}" \
@@ -328,11 +371,19 @@ done < "$RUNDIR/oracle.tsv"
 
 echo
 # Said rather than left to be inferred from the case list. `up` and `down` each
-# take tcp or udp, and udp means QUIC, which is L3 — so at L1 there is exactly
-# one carrier pair and the other three are not "untested", they are unreachable.
-# A run that quietly covered one of four would read as a run that covered them
-# all.
-echo "Carrier pairs: tcp/tcp only. up=udp and down=udp select QUIC, which L1 does not implement."
+# take tcp or udp, and udp selects QUIC. Until L3 there was exactly one pair and
+# the other three were not "untested" but unreachable, so this line said so
+# rather than letting a run that covered one of four read as a run that covered
+# them all.
+#
+# All four exist now. The line still names what was actually run, because a
+# QUIC-less host — one where `build-host-quic.sh` did not produce a bridge —
+# runs the same script and covers two.
+if [ ${#QUIC_ARGS[@]} -gt 0 ]; then
+    echo "Carrier pairs: tcp/tcp, tcp/tcp+mux, udp/udp, udp/tcp and tcp/udp — all four, both directions of the split."
+else
+    echo "Carrier pairs: tcp/tcp only. No host QUIC bridge was built, so the other three were not compared."
+fi
 
 # The two numbers agreeing is not enough on its own: a harness that had stopped
 # counting would report zero for both carriers and both clients, and the

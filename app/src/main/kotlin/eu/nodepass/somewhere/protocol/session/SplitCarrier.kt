@@ -14,6 +14,7 @@ import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.FlowRole
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
 import eu.nodepass.somewhere.protocol.target.Target
 
 /** Why a split flow could not be opened. */
@@ -37,6 +38,11 @@ sealed interface SplitReason : DecodeReason {
         val reason: DecodeReason,
     ) : SplitReason {
         override val detail: String = reason.detail
+    }
+
+    /** A UDP flow over a split configuration whose QUIC half carries no datagrams. */
+    data object NoDatagrams : SplitReason {
+        override val detail: String = "this QUIC connection carries no datagrams, so UDP cannot be relayed over it"
     }
 }
 
@@ -72,6 +78,12 @@ class SplitCarrier(
     private val downlink: LaneFactory,
     private val sharedKey: SharedKey,
     private val sessionId: SessionId,
+    /**
+     * The QUIC connection's DATAGRAM side, needed whenever either direction is
+     * QUIC and the flow is UDP. Absent means UDP over a split configuration is
+     * refused rather than framed the wrong way for one of its halves.
+     */
+    private val datagrams: QuicCarrier.Datagrams? = null,
 ) : AutoCloseable {
     /** Opens one lane on one carrier. */
     fun interface LaneFactory {
@@ -80,6 +92,9 @@ class SplitCarrier(
 
     private var closed = false
     private val open = mutableListOf<Transport>()
+
+    /** Section 9's UDP carriage, for whichever half of a split flow is QUIC. */
+    private val lane: DatagramLane? = datagrams?.let { DatagramLane(it) }
 
     /** How many lanes this carrier is holding, across both directions. */
     val laneCount: Int get() = open.count { it.isOpen }
@@ -122,7 +137,16 @@ class SplitCarrier(
         // half carrying the Target is the one that can start the dial, and
         // sending it first is the difference between a pairing wait and a
         // dialling wait.
-        up.write(authFrameFor(up) + openHeader.encode() + target.encode() + firstPayload)
+        // A UDP flow's first packet does not ride the opening write: over the
+        // QUIC half it is a DATAGRAM, and over the TLS half it is framed. It
+        // is sent below, once the Portal has answered.
+        val opening =
+            if (kind == FlowKind.Udp) {
+                authFrameFor(up) + openHeader.encode() + target.encode()
+            } else {
+                authFrameFor(up) + openHeader.encode() + target.encode() + firstPayload
+            }
+        up.write(opening)
         up.flush()
 
         down.write(authFrameFor(down) + attachHeader.encode())
@@ -139,6 +163,22 @@ class SplitCarrier(
         // Setup is over on the half that answers. The uplink never had a
         // deadline of its own to lift: nothing is read from it.
         down.setReadTimeout(0)
+
+        if (kind == FlowKind.Udp) {
+            // **The framing belongs to a direction, not to a flow.** With
+            // `up=udp&down=tcp` the uplink is QUIC and sends DATAGRAMs while the
+            // downlink is a TLS stream carrying length-prefixed packets; with
+            // `up=tcp&down=udp` it is the other way round. Framing both halves
+            // the same way is the shape that fails, and it fails as a flow that
+            // opens and then carries nothing.
+            if (up.transportKind == TransportKind.Quic || down.transportKind == TransportKind.Quic) {
+                if (lane == null) return invalid(SplitReason.NoDatagrams)
+                lane.markReady(flowId)
+            }
+            val flow = SplitPacketFlow(flowId, target, result, up, down)
+            if (firstPayload.isNotEmpty()) flow.sendPacket(firstPayload)
+            return flow.ok()
+        }
 
         return SplitFlow(flowId, target, kind, result, up, down).ok()
     }
@@ -192,6 +232,104 @@ class SplitCarrier(
     private fun invalid(reason: DecodeReason): DecodeResult<Flow> = DecodeResult.Invalid(reason)
 
     private fun Flow.ok(): DecodeResult<Flow> = DecodeResult.Ok(this)
+
+    private companion object {
+        const val READ_MILLIS = 15_000L
+    }
+
+    /**
+     * A UDP flow whose two directions may be framed differently.
+     *
+     * Each half asks its own transport what it is. That is the only place in
+     * this client where one flow uses two framings, and it exists because the
+     * protocol allows one flow to use two carriers.
+     */
+    private inner class SplitPacketFlow(
+        override val id: UInt,
+        override val target: Target,
+        override val setupResult: SetupResult,
+        private val up: Transport,
+        private val down: Transport,
+    ) : PacketFlow {
+        override val kind: FlowKind = FlowKind.Udp
+
+        override val isOpen: Boolean get() = up.isOpen && down.isOpen
+
+        override fun sendPacket(payload: ByteArray) {
+            if (up.transportKind == TransportKind.Quic) {
+                lane!!.send(id, payload)
+            } else {
+                when (val framed = UdpOverTcp.encode(payload)) {
+                    // Oversized: dropped, as UDP drops. Telling the caller
+                    // would add a guarantee the transport does not have.
+                    is DecodeResult.Invalid -> Unit
+                    is DecodeResult.Ok -> {
+                        up.write(framed.value)
+                        up.flush()
+                    }
+                }
+            }
+        }
+
+        override fun receivePacket(timeoutMillis: Long): ByteArray? {
+            if (down.transportKind == TransportKind.Quic) {
+                return lane!!.receive(id, timeoutMillis)
+            }
+            val prefix = ByteArray(UdpOverTcp.LENGTH_PREFIX_SIZE)
+            if (!readFully(down, prefix)) return null
+            val length = ((prefix[0].toInt() and 0xFF) shl 8) or (prefix[1].toInt() and 0xFF)
+            val payload = ByteArray(length)
+            if (length > 0 && !readFully(down, payload)) return null
+            return payload
+        }
+
+        override fun write(bytes: ByteArray) = sendPacket(bytes)
+
+        override fun flush() = Unit
+
+        override fun read(
+            into: ByteArray,
+            offset: Int,
+            length: Int,
+        ): Int {
+            val packet = receivePacket(READ_MILLIS) ?: return -1
+            val take = minOf(length, packet.size)
+            packet.copyInto(into, offset, 0, take)
+            return take
+        }
+
+        override fun close() {
+            if (up.transportKind == TransportKind.Quic || down.transportKind == TransportKind.Quic) {
+                lane?.close(id)
+            }
+            runCatching { up.close() }
+            down.close()
+        }
+
+        /**
+         * A single read may return less than asked for, and a length prefix
+         * split across two TLS records is ordinary rather than exceptional —
+         * treating a short read as the whole packet would desynchronise the
+         * stream and every packet after it would be garbage.
+         */
+        private fun readFully(
+            transport: Transport,
+            into: ByteArray,
+        ): Boolean {
+            var filled = 0
+            while (filled < into.size) {
+                val count =
+                    try {
+                        transport.read(into, filled, into.size - filled)
+                    } catch (_: java.io.IOException) {
+                        return false
+                    }
+                if (count <= 0) return false
+                filled += count
+            }
+            return true
+        }
+    }
 
     /**
      * One flow, two lanes.

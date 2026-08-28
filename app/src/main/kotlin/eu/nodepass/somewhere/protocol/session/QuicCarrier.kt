@@ -14,13 +14,7 @@ import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.FlowRole
 import eu.nodepass.somewhere.protocol.frame.SetupResult
-import eu.nodepass.somewhere.protocol.quic.DatagramFrame
-import eu.nodepass.somewhere.protocol.quic.DatagramReassembler
-import eu.nodepass.somewhere.protocol.quic.PacketIds
-import eu.nodepass.somewhere.protocol.quic.QuicDatagram
 import eu.nodepass.somewhere.protocol.target.Target
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
 
 /** Why a flow could not be opened on a QUIC carrier. */
 sealed interface QuicCarrierReason : DecodeReason {
@@ -118,16 +112,8 @@ class QuicCarrier(
     private var closed = false
     private val open = mutableListOf<Transport>()
 
-    /**
-     * Received packets, per flow.
-     *
-     * One connection's datagrams carry every UDP flow's traffic, so something
-     * has to demultiplex, and it has to be one thing: two readers pulling from
-     * the connection would each discard what belonged to the other.
-     */
-    private val inbound = ConcurrentHashMap<UInt, LinkedBlockingQueue<ByteArray>>()
-    private val reassembler = DatagramReassembler()
-    private val demultiplex = Any()
+    /** Section 9's UDP carriage, when this connection has a datagram side. */
+    private val lane: DatagramLane? = datagrams?.let { DatagramLane(it) }
 
     /** Whether this connection has already offered its AuthFrame. */
     val hasAuthenticated: Boolean get() = authenticated
@@ -203,136 +189,18 @@ class QuicCarrier(
         transport.setReadTimeout(0)
 
         if (kind == FlowKind.Udp) {
-            val flow = PacketFlowOverDatagram(flowId, target, result, transport, datagrams!!)
-            inbound[flowId] = LinkedBlockingQueue()
-            // Row 15: no DATA before READY. The reassembler refuses payload
-            // until this is called, and it is called here — after a Portal has
-            // answered a flow — rather than when the connection came up, so a
-            // datagram arriving before any flow exists is discarded rather than
-            // queued for one that may never open.
-            reassembler.markReady()
+            // Row 15: no DATA before READY. The lane refuses payload until this
+            // is called, and it is called here — after a Portal has answered a
+            // flow — rather than when the connection came up, so a datagram
+            // arriving before any flow exists is discarded rather than queued
+            // for one that may never open.
+            lane!!.markReady(flowId)
+            val flow = PacketFlowOverDatagram(flowId, target, result, transport)
             if (firstPayload.isNotEmpty()) flow.sendPacket(firstPayload)
             return flow.ok()
         }
 
         return StreamFlow(flowId, target, kind, result, transport).ok()
-    }
-
-    /**
-     * Takes one datagram off the connection and gives it to whoever it is for.
-     *
-     * Under a lock because there is one source and several readers: two
-     * threads pulling from the connection would each throw away what belonged
-     * to the other. The lock is held only across a single receive-and-route,
-     * so a flow waiting for its own packet does not hold up a flow whose packet
-     * has already arrived.
-     */
-    private fun pumpDatagrams(timeoutMillis: Long) {
-        val source = datagrams ?: return
-        synchronized(demultiplex) {
-            val raw = source.receive(timeoutMillis) ?: return
-            val frame =
-                when (val decoded = DatagramFrame.decode(raw)) {
-                    is DecodeResult.Ok -> decoded.value
-                    // A malformed datagram is dropped, not fatal. It is one
-                    // unreliable packet; tearing down every flow on the
-                    // connection because of it would turn a lost packet into
-                    // an outage.
-                    is DecodeResult.Invalid -> return
-                }
-            when (val accepted = reassembler.offer(frame, System.currentTimeMillis())) {
-                is DecodeResult.Ok ->
-                    when (val value = accepted.value) {
-                        is DatagramReassembler.Accepted.Payload ->
-                            inbound[value.flowId]?.offer(value.bytes)
-                        is DatagramReassembler.Accepted.Closed ->
-                            inbound[value.flowId]?.offer(CLOSED)
-                        DatagramReassembler.Accepted.Pending -> Unit
-                    }
-                is DecodeResult.Invalid -> Unit
-            }
-        }
-    }
-
-    /** One UDP flow: a control stream that opened it, and DATAGRAMs after. */
-    private inner class PacketFlowOverDatagram(
-        override val id: UInt,
-        override val target: Target,
-        override val setupResult: SetupResult,
-        private val control: Transport,
-        private val datagrams: Datagrams,
-    ) : PacketFlow {
-        private val packetIds = PacketIds()
-
-        override val kind: FlowKind = FlowKind.Udp
-
-        override val isOpen: Boolean get() = control.isOpen
-
-        override fun sendPacket(payload: ByteArray) {
-            val maxDatagram = datagrams.maxDatagram()
-            when (val planned = QuicDatagram.plan(payload.size, maxDatagram)) {
-                is DecodeResult.Invalid -> Unit // Oversized: dropped, as UDP drops.
-                is DecodeResult.Ok ->
-                    if (planned.value == 1) {
-                        datagrams.send(QuicDatagram.Data(id, payload).encode())
-                    } else {
-                        // A fresh packet id per packet, and per replan: a peer
-                        // reassembling two different layouts under one id would
-                        // produce a packet that is neither.
-                        val packetId = packetIds.allocate()
-                        val perFragment = maxDatagram - QuicDatagram.FRAGMENT_HEADER_SIZE
-                        for (index in 0 until planned.value) {
-                            val from = index * perFragment
-                            val to = minOf(from + perFragment, payload.size)
-                            datagrams.send(
-                                QuicDatagram
-                                    .Fragment(
-                                        flowId = id,
-                                        packetId = packetId,
-                                        index = index,
-                                        count = planned.value,
-                                        totalLength = payload.size,
-                                        payload = payload.copyOfRange(from, to),
-                                    ).encode(),
-                            )
-                        }
-                    }
-            }
-        }
-
-        override fun receivePacket(timeoutMillis: Long): ByteArray? {
-            val queue = inbound[id] ?: return null
-            val deadline = System.nanoTime() + timeoutMillis * NANOS_PER_MILLI
-            while (true) {
-                queue.poll()?.let { return if (it === CLOSED) null else it }
-                if (System.nanoTime() >= deadline) return null
-                pumpDatagrams(PUMP_MILLIS)
-            }
-        }
-
-        // The byte-stream half of Flow is not how a packet flow is used, and
-        // saying so is better than half-implementing it: a caller that reached
-        // for `write` here would be framing a packet twice.
-        override fun write(bytes: ByteArray) = sendPacket(bytes)
-
-        override fun flush() = Unit
-
-        override fun read(
-            into: ByteArray,
-            offset: Int,
-            length: Int,
-        ): Int {
-            val packet = receivePacket(READ_MILLIS) ?: return -1
-            val take = minOf(length, packet.size)
-            packet.copyInto(into, offset, 0, take)
-            return take
-        }
-
-        override fun close() {
-            inbound.remove(id)
-            runCatching { datagrams.send(QuicDatagram.Close(id).encode()) }
-            control.close()
-        }
     }
 
     /**
@@ -363,11 +231,46 @@ class QuicCarrier(
     private fun Flow.ok(): DecodeResult<Flow> = DecodeResult.Ok(this)
 
     private companion object {
-        /** A sentinel meaning "the far end closed this flow", not a payload. */
-        val CLOSED = ByteArray(0)
-        const val PUMP_MILLIS = 25L
         const val READ_MILLIS = 15_000L
-        const val NANOS_PER_MILLI = 1_000_000L
+    }
+
+    /** One UDP flow: a control stream that opened it, and DATAGRAMs after. */
+    private inner class PacketFlowOverDatagram(
+        override val id: UInt,
+        override val target: Target,
+        override val setupResult: SetupResult,
+        private val control: Transport,
+    ) : PacketFlow {
+        override val kind: FlowKind = FlowKind.Udp
+
+        override val isOpen: Boolean get() = control.isOpen
+
+        override fun sendPacket(payload: ByteArray) = lane!!.send(id, payload)
+
+        override fun receivePacket(timeoutMillis: Long): ByteArray? = lane!!.receive(id, timeoutMillis)
+
+        // The byte-stream half of Flow routes to the packet methods rather than
+        // being half-implemented: a caller reaching for `write` here would
+        // otherwise frame a packet twice.
+        override fun write(bytes: ByteArray) = sendPacket(bytes)
+
+        override fun flush() = Unit
+
+        override fun read(
+            into: ByteArray,
+            offset: Int,
+            length: Int,
+        ): Int {
+            val packet = receivePacket(READ_MILLIS) ?: return -1
+            val take = minOf(length, packet.size)
+            packet.copyInto(into, offset, 0, take)
+            return take
+        }
+
+        override fun close() {
+            lane?.close(id)
+            control.close()
+        }
     }
 
     /** The flow view over one stream. */

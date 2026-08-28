@@ -14,6 +14,8 @@ import eu.nodepass.somewhere.protocol.frame.FlowOrigin
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.FlowRole
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
+import eu.nodepass.somewhere.protocol.quic.QuicDatagram
 import eu.nodepass.somewhere.protocol.target.Target
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -163,6 +165,101 @@ class SplitCarrierTest {
             "every TLS lane carries its own AuthFrame",
             Authentication.encodeFrame(key, AuthTransport.TlsTcp, downs[1].exporter, session.toByteArray()),
             downs[1].writtenBytes().copyOf(Authentication.FRAME_LENGTH),
+        )
+    }
+
+    /** A fake DATAGRAM side: what was sent, and what to hand back. */
+    private class FakeDatagrams(
+        private val max: Int = 1200,
+    ) : QuicCarrier.Datagrams {
+        val sent: MutableList<ByteArray> = mutableListOf()
+        val incoming: ArrayDeque<ByteArray> = ArrayDeque()
+
+        override fun send(bytes: ByteArray) {
+            sent += bytes
+        }
+
+        override fun receive(timeoutMillis: Long): ByteArray? = incoming.removeFirstOrNull()
+
+        override fun maxDatagram(): Int = max
+    }
+
+    @Test
+    fun aUdpFlowFramesTheUplinkForQuicAndReadsTheDownlinkAsAStream() {
+        // The one place in this client where a single flow uses two framings,
+        // because the protocol lets one flow use two carriers.
+        val packet = ByteArray(64) { it.toByte() }
+        val up = lane(TransportKind.Quic)
+        val down =
+            FakeTransport(
+                transportKind = TransportKind.TlsTcp,
+                peerBytes = byteArrayOf(0) + (UdpOverTcp.encode(packet) as DecodeResult.Ok).value,
+            )
+        val datagrams = FakeDatagrams()
+
+        val opened =
+            SplitCarrier({ up }, { down }, key, session, datagrams)
+                .openFlow(target, FlowKind.Udp, 3u, firstPayload = packet)
+        val flow = (opened as DecodeResult.Ok).value as PacketFlow
+
+        assertArrayEquals(
+            "the uplink is QUIC, so the packet is a DATAGRAM",
+            QuicDatagram.Data(3u, packet).encode(),
+            datagrams.sent.single(),
+        )
+        assertArrayEquals(
+            "the downlink is TLS, so the packet is length-prefixed",
+            packet,
+            flow.receivePacket(1_000),
+        )
+    }
+
+    @Test
+    fun aUdpFlowFramesTheUplinkAsAStreamAndReadsTheDownlinkForQuic() {
+        val packet = ByteArray(48) { (it * 3).toByte() }
+        val up = lane(TransportKind.TlsTcp)
+        val down = lane(TransportKind.Quic, peer = byteArrayOf(0))
+        val datagrams = FakeDatagrams()
+        datagrams.incoming.add(QuicDatagram.Data(4u, packet).encode())
+
+        val opened =
+            SplitCarrier({ up }, { down }, key, session, datagrams)
+                .openFlow(target, FlowKind.Udp, 4u, firstPayload = packet)
+        val flow = (opened as DecodeResult.Ok).value as PacketFlow
+
+        val framed = (UdpOverTcp.encode(packet) as DecodeResult.Ok).value
+        val written = up.writtenBytes()
+        assertArrayEquals(
+            "the uplink is TLS, so the packet is length-prefixed after the header",
+            framed,
+            written.copyOfRange(written.size - framed.size, written.size),
+        )
+        assertTrue("no datagram should have been sent", datagrams.sent.isEmpty())
+        assertArrayEquals("the downlink is QUIC, so the packet is a DATAGRAM", packet, flow.receivePacket(1_000))
+    }
+
+    @Test
+    fun aUdpSplitFlowIsRefusedWhenTheQuicHalfCarriesNoDatagrams() {
+        val opened =
+            SplitCarrier({ lane(TransportKind.Quic) }, { lane(TransportKind.TlsTcp, byteArrayOf(0)) }, key, session)
+                .openFlow(target, FlowKind.Udp, 1u)
+        assertEquals(SplitReason.NoDatagrams, (opened as DecodeResult.Invalid).reason)
+    }
+
+    @Test
+    fun aUdpFlowsOpeningWriteCarriesNoPayload() {
+        // The first packet does not ride the opening write in either framing:
+        // bytes after the Target would be read as a second one.
+        val up = lane(TransportKind.Quic)
+        val down = lane(TransportKind.TlsTcp, peer = byteArrayOf(0))
+        SplitCarrier({ up }, { down }, key, session, FakeDatagrams())
+            .openFlow(target, FlowKind.Udp, 6u, firstPayload = ByteArray(16))
+
+        val decodedTarget = Target.decode(up.writtenBytes(), offset = Authentication.FRAME_LENGTH + 5)
+        assertEquals(
+            "the opening write carried payload",
+            Authentication.FRAME_LENGTH + 5 + (decodedTarget as DecodeResult.Ok).value.consumed,
+            up.writtenBytes().size,
         )
     }
 

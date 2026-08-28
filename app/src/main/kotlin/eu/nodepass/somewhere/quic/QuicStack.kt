@@ -38,10 +38,9 @@ package eu.nodepass.somewhere.quic
  */
 object QuicStack {
     init {
-        // The same library lwIP is in: one shared object, loaded once. Loading
-        // it here as well is harmless — the JVM's own loader is idempotent —
-        // and it means this object works without a tunnel being up.
-        System.loadLibrary("somewhere_native")
+        // On a device this is the same object lwIP is in; on a build host it
+        // is a smaller one holding only the bridge. See NativeQuic.
+        NativeQuic.ensureLoaded()
     }
 
     /**

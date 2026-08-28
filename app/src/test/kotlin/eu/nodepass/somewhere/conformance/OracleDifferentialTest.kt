@@ -12,9 +12,15 @@ import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
 import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.LaneReason
 import eu.nodepass.somewhere.protocol.session.NowhereSession
+import eu.nodepass.somewhere.protocol.session.PacketFlow
+import eu.nodepass.somewhere.protocol.session.QuicCarrier
+import eu.nodepass.somewhere.protocol.session.SplitCarrier
+import eu.nodepass.somewhere.protocol.session.Transport
 import eu.nodepass.somewhere.protocol.target.Target
 import eu.nodepass.somewhere.protocol.tls.ConscryptExporter
 import eu.nodepass.somewhere.protocol.tls.TlsTransport
+import eu.nodepass.somewhere.quic.QuicConnection
+import eu.nodepass.somewhere.quic.QuicStreamTransport
 import org.conscrypt.Conscrypt
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -77,6 +83,39 @@ import kotlin.concurrent.thread
  * the number a broken one would get wrong in its own favour.
  */
 class OracleDifferentialTest {
+    /**
+     * The carrier combinations this client can be run in.
+     *
+     * One case list over several carriers is where the differential earns its
+     * keep: L2's only finding was a protocol fact that had grown a second shape
+     * the moment a second carrier landed, and it was invisible to every test
+     * that asserted on one carrier's own types. Three more carriers are three
+     * more chances for that.
+     *
+     * The QUIC ones are skipped unless a host bridge was built — see
+     * `conformance/scripts/build-host-quic.sh`. Skipped and said so, rather
+     * than quietly reporting the TLS answer under a QUIC name.
+     */
+    private enum class Carriers(
+        val prefix: String,
+        val quicUplink: Boolean,
+        val quicDownlink: Boolean,
+        val mux: Boolean = false,
+    ) {
+        Tls("", quicUplink = false, quicDownlink = false),
+        TlsMux("mux_", quicUplink = false, quicDownlink = false, mux = true),
+        Quic("quic_", quicUplink = true, quicDownlink = true),
+        SplitQuicUplink("split_quic_up_", quicUplink = true, quicDownlink = false),
+        SplitQuicDownlink("split_quic_down_", quicUplink = false, quicDownlink = true),
+        ;
+
+        val needsQuic: Boolean get() = quicUplink || quicDownlink
+        val isSplit: Boolean get() = quicUplink != quicDownlink
+    }
+
+    /** Set when a host QUIC bridge exists; absent means the QUIC rows are skipped. */
+    private val hostQuic: String? = System.getProperty("somewhere.quic.library")
+
     private val portalEnv: String? = System.getenv("NOWHERE_E2E_PORTAL")
     private val keyText: String = System.getenv("NOWHERE_E2E_KEY") ?: "conformance-smoke-key"
     private val output: String? = System.getenv("ORACLE_DIFF_OUT")
@@ -104,20 +143,27 @@ class OracleDifferentialTest {
 
         val verdicts = LinkedHashMap<String, Verdict>()
 
-        for ((prefix, mux) in listOf("" to false, "mux_" to true)) {
+        val carriers = Carriers.entries.filter { !it.needsQuic || hostQuic != null }
+        if (carriers.none { it.needsQuic }) {
+            println("oracle-diff: no host QUIC bridge, so the QUIC combinations are not run")
+        }
+
+        for (combination in carriers) {
+            val prefix = combination.prefix
+            val mux = combination.mux
             verdicts["${prefix}tcp_ip_payload"] =
-                fetch(host, port, keyText, mux, ipTarget(targetHost, targetPort), targetHost)
+                fetch(host, port, keyText, combination, ipTarget(targetHost, targetPort), targetHost)
 
             // The same fetch by name. Both implementations send a domain target
             // and the Portal resolves it, so this is remote resolution as the
             // wire sees it — not the device-side half, which needs a real TUN.
             verdicts["${prefix}tcp_domain_payload"] =
-                fetch(host, port, keyText, mux, Target.ofDomain(nameHost, namePort), nameHost)
+                fetch(host, port, keyText, combination, Target.ofDomain(nameHost, namePort), nameHost)
 
             // A port with nothing behind it. The Portal answers DIAL_FAILED,
             // which is the one rejection reachable without a second carrier.
             verdicts["${prefix}dial_failed"] =
-                fetch(host, port, keyText, mux, ipTarget(closedHost, closedPort), closedHost)
+                fetch(host, port, keyText, combination, ipTarget(closedHost, closedPort), closedHost)
 
             // Upstream answers a bad authentication tag with silence rather
             // than a close, deliberately, so that failure is not an oracle for
@@ -126,17 +172,22 @@ class OracleDifferentialTest {
             // write, so a Portal that refuses the key is refusing a connection
             // that has already declared what it intends to become.
             verdicts["${prefix}wrong_key"] =
-                fetch(host, port, "not-the-shared-key", mux, ipTarget(targetHost, targetPort), targetHost)
+                fetch(host, port, "not-the-shared-key", combination, ipTarget(targetHost, targetPort), targetHost)
 
-            verdicts["${prefix}uot_round_trip"] = udpEcho(host, port, keyText, mux, udpHost, udpPort)
+            verdicts["${prefix}uot_round_trip"] = udpEcho(host, port, keyText, combination, udpHost, udpPort)
         }
 
         // The arithmetic L2 exists for, stated as two measurements rather than
         // one: without the dedicated half, "four connections" is a number with
         // nothing to be smaller than, and a harness that had stopped counting
         // would report it just as happily.
-        verdicts["dedicated_burst"] = burst(host, port, false, holdDedicatedHost, holdDedicatedPort)
-        verdicts["mux_burst"] = burst(host, port, true, holdMuxHost, holdMuxPort)
+        verdicts["dedicated_burst"] = burst(host, port, Carriers.Tls, holdDedicatedHost, holdDedicatedPort)
+        verdicts["mux_burst"] = burst(host, port, Carriers.TlsMux, holdMuxHost, holdMuxPort)
+        if (hostQuic != null) {
+            // QUIC multiplexes by construction: the same burst that costs
+            // sixteen connections without Mux and four with it costs one here.
+            verdicts["quic_burst"] = burst(host, port, Carriers.Quic, holdDedicatedHost, holdDedicatedPort)
+        }
 
         File(output!!).writeText(
             // "-" rather than an empty column: a reader splitting on tabs with
@@ -170,12 +221,12 @@ class OracleDifferentialTest {
         portalHost: String,
         portalPort: Int,
         key: String,
-        mux: Boolean,
+        combination: Carriers,
         target: DecodeResult<Target>,
         requestHost: String,
     ): Verdict {
         val resolved = (target as? DecodeResult.Ok)?.value ?: return Verdict(REPLY_GENERAL_FAILURE, "", "target rejected locally")
-        return withFlow(portalHost, portalPort, key, mux, resolved, FlowKind.Tcp) { flow ->
+        return withFlow(portalHost, portalPort, key, combination, resolved, FlowKind.Tcp) { flow ->
             get(flow, BLOB_PATH, requestHost)
         }
     }
@@ -212,12 +263,13 @@ class OracleDifferentialTest {
     private fun burst(
         portalHost: String,
         portalPort: Int,
-        mux: Boolean,
+        combination: Carriers,
         host: String,
         port: Int,
     ): Verdict {
         val target = (ipTarget(host, port) as DecodeResult.Ok).value
-        val session = session(portalHost, portalPort, keyText, mux)
+        val held = session(portalHost, portalPort, keyText, combination)
+        val session = held.session
         val outcomes = arrayOfNulls<Verdict>(BURST_WIDTH)
         try {
             (0 until BURST_WIDTH)
@@ -254,23 +306,38 @@ class OracleDifferentialTest {
         portalHost: String,
         portalPort: Int,
         key: String,
-        mux: Boolean,
+        combination: Carriers,
         host: String,
         port: Int,
     ): Verdict {
         val target = (ipTarget(host, port) as DecodeResult.Ok).value
-        return withFlow(portalHost, portalPort, key, mux, target, FlowKind.Udp) { flow ->
+        return withFlow(portalHost, portalPort, key, combination, target, FlowKind.Udp) { flow ->
             val payload = ByteArray(512) { (it * 31 + 7).toByte() }
-            val framed = (UdpOverTcp.encode(payload) as DecodeResult.Ok).value
-            flow.write(framed)
-            flow.flush()
 
-            val prefix = ByteArray(UdpOverTcp.LENGTH_PREFIX_SIZE)
-            readFully(flow, prefix)
-            val length = ((prefix[0].toInt() and 0xFF) shl 8) or (prefix[1].toInt() and 0xFF)
-            val echoed = ByteArray(length)
-            readFully(flow, echoed)
-            Verdict(REPLY_SUCCEEDED, sha256(echoed), "READY, $length bytes back")
+            // Which framing a UDP flow wants is the carrier's business, not
+            // this case's: over a QUIC carrier each packet is its own DATAGRAM,
+            // over TLS it is length-prefixed inside a stream. Asking the flow
+            // is the same question `UdpRelay` asks, and asking it the same way
+            // is the point — a case that framed for one carrier and ran on the
+            // other would report a divergence that is only its own assumption.
+            if (flow is PacketFlow) {
+                flow.sendPacket(payload)
+                val echoed =
+                    flow.receivePacket(SETUP_TIMEOUT_MILLIS.toLong())
+                        ?: return@withFlow Verdict(REPLY_GENERAL_FAILURE, "", "no packet came back")
+                Verdict(REPLY_SUCCEEDED, sha256(echoed), "READY, ${echoed.size} bytes back")
+            } else {
+                val framed = (UdpOverTcp.encode(payload) as DecodeResult.Ok).value
+                flow.write(framed)
+                flow.flush()
+
+                val prefix = ByteArray(UdpOverTcp.LENGTH_PREFIX_SIZE)
+                readFully(flow, prefix)
+                val length = ((prefix[0].toInt() and 0xFF) shl 8) or (prefix[1].toInt() and 0xFF)
+                val echoed = ByteArray(length)
+                readFully(flow, echoed)
+                Verdict(REPLY_SUCCEEDED, sha256(echoed), "READY, $length bytes back")
+            }
         }
     }
 
@@ -279,12 +346,13 @@ class OracleDifferentialTest {
         portalHost: String,
         portalPort: Int,
         key: String,
-        mux: Boolean,
+        combination: Carriers,
         target: Target,
         kind: FlowKind,
         body: (Flow) -> Verdict,
     ): Verdict {
-        val session = session(portalHost, portalPort, key, mux)
+        val held = session(portalHost, portalPort, key, combination)
+        val session = held.session
         return try {
             when (val opened = session.openFlow(target, kind)) {
                 is DecodeResult.Ok -> opened.value.use(body)
@@ -294,7 +362,7 @@ class OracleDifferentialTest {
             // A transport that failed before the protocol was reached.
             Verdict(REPLY_NETWORK_UNREACHABLE, "", "transport: ${error.javaClass.simpleName}")
         } finally {
-            runCatching { session.close() }
+            held.close()
         }
     }
 
@@ -383,25 +451,91 @@ class OracleDifferentialTest {
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
+    /**
+     * A session on whichever carriers the combination names, and whatever has
+     * to be closed with it.
+     *
+     * The QUIC connection is not owned by the session — several sessions could
+     * share one — so it travels alongside and is closed by the same `use`.
+     */
+    private class Held(
+        val session: NowhereSession,
+        private val connection: QuicConnection?,
+    ) : AutoCloseable {
+        override fun close() {
+            runCatching { session.close() }
+            runCatching { connection?.close() }
+        }
+    }
+
+    private fun tlsTransport(
+        host: String,
+        port: Int,
+    ): Transport {
+        val context = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
+        context.init(null, arrayOf(TrustEverything), SecureRandom())
+        val raw = Socket().apply { connect(InetSocketAddress(host, port), 5_000) }
+        val socket =
+            (context.socketFactory.createSocket(raw, host, port, true) as SSLSocket).apply {
+                soTimeout = SETUP_TIMEOUT_MILLIS
+                Conscrypt.setApplicationProtocols(this, arrayOf("now/1"))
+                startHandshake()
+            }
+        return (TlsTransport.over(socket, ConscryptExporter()) as DecodeResult.Ok).value
+    }
+
     private fun session(
         host: String,
         port: Int,
         key: String,
-        mux: Boolean,
-    ): NowhereSession {
+        combination: Carriers,
+    ): Held {
         val shared = (SharedKey.of(key) as DecodeResult.Ok).value
-        return NowhereSession(shared, {
-            val context = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
-            context.init(null, arrayOf(TrustEverything), SecureRandom())
-            val raw = Socket().apply { connect(InetSocketAddress(host, port), 5_000) }
-            val socket =
-                (context.socketFactory.createSocket(raw, host, port, true) as SSLSocket).apply {
-                    soTimeout = SETUP_TIMEOUT_MILLIS
-                    Conscrypt.setApplicationProtocols(this, arrayOf("now/1"))
-                    startHandshake()
-                }
-            (TlsTransport.over(socket, ConscryptExporter()) as DecodeResult.Ok).value
-        }, mux = mux)
+        if (!combination.needsQuic) {
+            return Held(
+                NowhereSession(shared, { tlsTransport(host, port) }, mux = combination.mux),
+                null,
+            )
+        }
+
+        val connection =
+            QuicConnection.open(
+                remote = InetSocketAddress(host, port),
+                alpn = "now/1",
+                serverName = null,
+                // Nothing to protect: this half of the differential runs on a
+                // build host, where there is no tunnel to route back into.
+                protect = { true },
+            )
+        connection.completeHandshake()
+
+        fun quicLane(): Transport = QuicStreamTransport(connection, connection.openStream())
+
+        return Held(
+            if (combination.isSplit) {
+                NowhereSession(
+                    shared,
+                    { error("a split session dials through its lane factories") },
+                    splitUplink =
+                        SplitCarrier.LaneFactory {
+                            if (combination.quicUplink) quicLane() else tlsTransport(host, port)
+                        },
+                    splitDownlink =
+                        SplitCarrier.LaneFactory {
+                            if (combination.quicDownlink) quicLane() else tlsTransport(host, port)
+                        },
+                    quicDatagrams = connection,
+                )
+            } else {
+                NowhereSession(
+                    shared,
+                    { error("a QUIC session must not dial TLS") },
+                    quicStreams = QuicCarrier.StreamFactory { quicLane() },
+                    quicDatagrams = connection,
+                )
+            },
+            connection,
+        )
     }
 
     private companion object {
