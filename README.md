@@ -8,20 +8,34 @@ engine is hand-written in Kotlin rather than wrapping an existing core.
 
 ## Status
 
-Pre-release, and **not yet usable as a VPN**: there is no `VpnService` and no TUN
-layer, so nothing routes device traffic. What exists:
+Pre-release, and **not published anywhere**. The protocol is complete: L1, L2 and
+L3 all work against a live upstream Portal, and a node URL with no parameters —
+which is a QUIC node, because the specification's default for both directions is
+`udp` — connects and carries traffic.
 
 | | |
 |---|---|
-| Protocol, L1 | Authentication, flow setup, the dedicated TLS lane, the seven setup outcomes. Verified against a live upstream Portal, not only against fixtures |
-| Transport | TLS dialing with all three certificate modes — skipped, `sni`, `pin` — each tested against a live Portal |
-| Nodes | Stored on device, imported from a `nowhere://` link, probed for reachability |
-| Subscription | Fetching and parsing, including the quota semantics upstream actually has |
-| UI | All eight screens, both themes, three locales |
-| Not yet | TUN / lwIP, `VpnService`, Mux (L2), QUIC (L3) |
+| Protocol, L1 | Authentication, flow setup, the dedicated TLS lane, the seven setup outcomes |
+| Protocol, L2 | TLS Mux. Sixteen concurrent flows measured over four connections, at upstream's stated shard density |
+| Protocol, L3 | QUIC: authentication, TCP flows over reliable streams, UDP over DATAGRAM with fragmentation, split flows across two carriers |
+| Carriers | All four combinations — `tcp/tcp`, `udp/udp`, `udp/tcp`, `tcp/udp` — compared case by case against the reference implementation, which agrees on every one |
+| Tunnel | `VpnService` + lwIP, TCP with back-pressure, UDP, DNS interception with fake-IP, live throughput |
+| Routing | A rule matcher, an import path, a bundled network-structural rule set, a direct path, a reject path |
+| Per-app | A real installed list, a persisted selection, and this client structurally outside its own tunnel |
+| Nodes | Stored, imported from a `nowhere://` link, probed for reachability |
+| Subscription | Fetching and parsing, with upstream's actual quota semantics |
+| UI | Nine screens, both themes, three locales |
 
-Delivery is layered: L1 TLS/TCP, then L2 Mux, then L3 QUIC. Each layer ships to
-internal testing before the next one starts.
+**What is not done**, stated as plainly as the rest:
+
+- **Nothing has ever run on physical hardware.** Every device result is from an
+  emulator. Private DNS over DoT, IPv6-only and NAT64 networks, a real Wi-Fi to
+  cellular change, Doze and a path MTU below 1500 are all things an emulator
+  cannot represent, and all things a VPN meets on the first real device.
+- **The QUIC carrier does no certificate verification.** A node carrying `sni`
+  or `pin` is refused rather than carried without it. The TLS carrier implements
+  both.
+- **No release has been published**, and no signing key exists.
 
 ## Protocol baseline
 
@@ -39,14 +53,22 @@ interop checks need it, and community bug reports need it to be meaningful.
 ```sh
 python3 conformance/scripts/verify-vectors.py      # 45 known-answer checks
 NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
+conformance/scripts/oracle-diff.sh                 # this client against upstream's own
 ```
+
+`oracle-diff.sh` is the one worth running. It puts the same case list through
+this implementation and the reference client, over every carrier combination
+both support, and diffs the outcomes. Its only finding to date was a protocol
+fact that had grown a second shape the moment a second carrier landed — invisible
+to every test that asserted on one carrier's own types, and about to degrade
+seven distinct rejection messages to a generic failure on a user's screen.
 
 The suite makes no assumption about where an upstream clone lives; point
 `NOWHERE_CLONE` at one.
 
 ### Tests that need a live Portal
 
-Sixteen tests dial a real Portal rather than a fake, because the failures that
+Many tests dial a real Portal rather than a fake, because the failures that
 matter most are the ones no fixture predicts — a rejected authentication frame
 is met with **silence** rather than a close, which a fake returning EOF will
 never teach you. They skip cleanly when no Portal is running, so an environment
@@ -66,6 +88,8 @@ conformance/scripts/portal-for-tests.sh --stop
 | [`docs/brand.md`](docs/brand.md) | The brand hue, which carries no protocol meaning and is derived rather than picked |
 | [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, and the rule that machine identifiers stay English while sentences translate |
 | [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Why the TLS exporter has two sources, and why `minSdk` is 26 |
+| [`docs/privacy.md`](docs/privacy.md) | What is stored, what leaves the device, and the longer list of what is not collected |
+| [`docs/store-policy.md`](docs/store-policy.md) | What a VPN-class listing requires, what is already satisfied, and what is still someone's decision |
 
 [`docs/architecture.md`](docs/architecture.md) covers the layers, which way they
 depend, and the rules that keep them apart.
@@ -79,25 +103,49 @@ claimed, because measuring has already caught defects the eye did not.
 
 ```sh
 ./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug \
-          checkClasspathConsistency assembleDebug
+          checkClasspathConsistency assembleDebug \
+          checkNativeLibraries checkNativeBridge checkReleaseArtifact
 python3 conformance/scripts/verify-vectors.py
 ```
 
-The protocol layer carries a 90% line-coverage gate. `checkClasspathConsistency`
-fails when a module resolves to different versions on the compile and runtime
-classpaths — added after exactly that shipped a crash with every other gate
-green. CI runs all of the above on every pull request, and checks upstream for
-normative protocol changes daily.
+The protocol layer carries a 90% line-coverage gate. Every other gate here was
+added after something got through: `checkClasspathConsistency` after a module
+resolved to different versions on the compile and runtime classpaths and crashed
+a screen with everything else green; `checkNativeLibraries` after linking aws-lc
+exported 1,684 of the crypto library's own symbols into a process that already
+runs a second BoringSSL; `checkNativeBridge` because the QUIC bridge must have no
+way to open a socket that escapes `VpnService.protect()`; `checkReleaseArtifact`
+because R8 renames the JNI callbacks C resolves by name, and the failure is not a
+crash but a tunnel that comes up and answers nothing.
+
+Each was verified to fail before it was trusted. CI runs all of the above on
+every pull request, and checks upstream for normative protocol changes daily.
 
 ## Build
 
-Requires JDK 21 and the Android SDK with platform 36. NDK and CMake become
-requirements once the native TUN layer is inherited.
+Requires JDK 21, the Android SDK with platform 36, the NDK pinned in
+`app/build.gradle.kts`, and CMake 3.22.1. The QUIC stack additionally needs Go
+and perl on the build host — aws-lc generates assembly with perl and its build
+tooling with Go — and it is fetched at pinned commits rather than vendored, so a
+first build has a network step. It takes about half a minute per ABI and nothing
+thereafter.
 
 ```sh
 echo "sdk.dir=/path/to/android-sdk" > local.properties
 ./gradlew assembleDebug
 ```
+
+A release build works without a keystore and produces an unsigned APK; with one
+configured in `local.properties` it is signed. Signing material lives nowhere in
+this repository.
+
+```sh
+./gradlew assembleRelease
+tools/quic/build-deps.sh --bundle-source corresponding-source.tar.gz
+```
+
+The second command produces the corresponding source for the statically linked
+ngtcp2 and aws-lc. A GPL-3.0 binary that links them must be accompanied by it.
 
 ## Security
 
@@ -117,9 +165,12 @@ Two properties worth stating plainly:
 
 GPL-3.0-only. See [LICENSE](LICENSE).
 
-Bundled fonts are OFL-1.1 and icon path geometry is ISC; see
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Bundled fonts are OFL-1.1, icon path geometry is ISC, lwIP is BSD-3-Clause,
+ngtcp2 is MIT and aws-lc is Apache-2.0 OR ISC; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which also records what was
+deliberately not taken from each.
 
-Copyright (C) 2026 The Somewhere Authors. Portions inherited from
-[Anywhere-Android](https://github.com/NodePassProject/Anywhere-Android) (GPL-3.0)
-will carry their original attribution when they land.
+Copyright (C) 2026 The Somewhere Authors. The lwIP layer and its bridge are
+inherited from
+[Anywhere-Android](https://github.com/NodePassProject/Anywhere-Android)
+(GPL-3.0) and carry their original attribution.
