@@ -32,9 +32,9 @@ which is a QUIC node, because the specification's default for both directions is
   emulator. Private DNS over DoT, IPv6-only and NAT64 networks, a real Wi-Fi to
   cellular change, Doze and a path MTU below 1500 are all things an emulator
   cannot represent, and all things a VPN meets on the first real device.
-- **The QUIC carrier does no certificate verification.** A node carrying `sni`
-  or `pin` is refused rather than carried without it. The TLS carrier implements
-  both.
+- **The QUIC carrier does not verify a certificate chain.** `pin` works on both
+  carriers; a node carrying `sni` is refused rather than carried without it. See
+  [ADR-0002](docs/adr-0002-quic-certificate-verification.md).
 - **No release has been published**, and no signing key exists.
 
 ## Roadmap
@@ -129,6 +129,7 @@ conformance/scripts/portal-for-tests.sh --stop
 | [`docs/brand.md`](docs/brand.md) | The brand hue, which carries no protocol meaning and is derived rather than picked |
 | [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, and the rule that machine identifiers stay English while sentences translate |
 | [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Why the TLS exporter has two sources, and why `minSdk` is 26 |
+| [`docs/adr-0002-quic-certificate-verification.md`](docs/adr-0002-quic-certificate-verification.md) | How `pin` is verified on the QUIC carrier, and what `sni` would cost — with the estimate that made it look expensive named as the wrong option |
 | [`docs/privacy.md`](docs/privacy.md) | What is stored, what leaves the device, and the longer list of what is not collected |
 | [`docs/store-policy.md`](docs/store-policy.md) | What a VPN-class listing requires, what is already satisfied, and what is still someone's decision |
 
