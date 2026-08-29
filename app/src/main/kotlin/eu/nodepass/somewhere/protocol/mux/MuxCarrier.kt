@@ -304,7 +304,7 @@ class MuxCarrier(
         // The Portal's answer is the first byte of this stream's payload, in
         // exactly the place a dedicated lane reads it from the socket.
         val setup = ByteArray(1)
-        if (readStream(stream, setup, 0, 1) != 1) {
+        if (!awaitSetupByte(stream, setup)) {
             releaseStream(stream)
             return invalid(stream.failure ?: MuxCarrierReason.NoSetupByte)
         }
@@ -319,7 +319,24 @@ class MuxCarrier(
             }
         stream.setupResult = result
         if (result.isRejection) {
-            reset(stream)
+            // Released, **not reset**. The rejection is the teardown: the
+            // Portal answered and forgot the stream in the same breath, and
+            // section 3 says "STREAM data for an unknown flow is a carrier
+            // error" — so a RST for a flow it has already refused does not
+            // tidy anything up, it closes the whole carrier and fails every
+            // other flow on it.
+            //
+            // Measured, because it is invisible in any test that opens one
+            // flow at a time. Android's Private DNS probes an address on port
+            // 853 the moment a tunnel comes up; the Portal answers DIAL_FAILED;
+            // this reset the stream; half a second later four unrelated fetches
+            // on the same carrier reported "the Portal closed the Mux carrier".
+            // One to four of sixteen concurrent fetches came back empty,
+            // intermittently, depending on which shard the probe landed on.
+            //
+            // The dedicated lane has always done it this way — a rejected lane
+            // is simply closed — so this is also the two carriers agreeing
+            // again.
             releaseStream(stream)
             return invalid(MuxCarrierReason.Rejected(result))
         }
@@ -528,6 +545,45 @@ class MuxCarrier(
         }
     }
 
+    /**
+     * Waits for the Portal's setup byte, for as long as a dedicated lane does.
+     *
+     * **A quiet stream is not a refused one**, and telling them apart is the
+     * whole job here. [readStream] answers three things with three values: 1 is
+     * the byte, -1 is a stream or carrier that has gone, and **0 is "nothing in
+     * the last [READ_WAIT_MILLIS]"** — which is a poll interval, not a verdict.
+     *
+     * Treating that 0 as a verdict is what this used to do, and it produced the
+     * worst failure this layer has had. Sixteen flows open at once, four land on
+     * one carrier, the Portal dials four targets and answers each as it
+     * finishes; any answer slower than a quarter of a second was read as *"the
+     * Portal did not answer on this stream — authentication most likely
+     * failed"*, which is both wrong and the most misleading sentence available.
+     * The flow then reset a stream the Portal was still setting up, the Portal
+     * closed the carrier, and **the other three flows on it died too** — three
+     * short responses out of sixteen, intermittently, with nothing in the
+     * Portal's log but a carrier that closed.
+     *
+     * The deadline is the dedicated lane's, deliberately. It is the same
+     * protocol step over the same kind of connection to the same Portal, and a
+     * carrier that gave it sixty times less patience than a lane was not making
+     * a considered choice — it was reusing a queue-polling constant as a
+     * protocol timeout.
+     */
+    private fun awaitSetupByte(
+        stream: Stream,
+        into: ByteArray,
+    ): Boolean {
+        val deadline = clock() + SETUP_DEADLINE_MILLIS
+        while (true) {
+            when (readStream(stream, into, 0, 1)) {
+                1 -> return true
+                0 -> if (clock() >= deadline) return false
+                else -> return false
+            }
+        }
+    }
+
     // ── Stream reading, from the caller's thread ────────────────────────────
 
     private fun readStream(
@@ -605,13 +661,18 @@ class MuxCarrier(
         if (stream.receiveClosed.get()) releaseStream(stream)
     }
 
-    /** RST is the only flag that may accompany it, and its value must be zero. */
-    private fun reset(stream: Stream) {
-        if (!stream.sendClosed.compareAndSet(false, true)) return
-        runCatching {
-            enqueue(MuxHeader(MuxKind.Stream, MuxHeader.FLAG_RST, 0, stream.id).encode())
-        }
-    }
+    // This client sends no RST, and that is a decision rather than an omission.
+    //
+    // RST had exactly one caller: a flow the Portal had just rejected. That was
+    // wrong for the reason written where the rejection is handled — the Portal
+    // forgets a refused stream as it answers, and section 3 makes a frame for a
+    // flow it does not know a *carrier* error, so the reset killed every other
+    // flow sharing the connection. Every other way a flow ends here is a
+    // half-close, which is what FIN is for.
+    //
+    // The frame itself stays implemented and tested in `MuxHeader`, because the
+    // Portal may send one and this client has to read it. Writing one is what
+    // no path needs.
 
     /** Gives back the carrier slot, exactly once however the stream ended. */
     private fun releaseStream(stream: Stream) {
@@ -686,7 +747,14 @@ class MuxCarrier(
         }
     }
 
-    private companion object {
+    /**
+     * Internal rather than private so that the tests can assert the *relation*
+     * between two of these numbers. `SETUP_DEADLINE_MILLIS` being sixty times
+     * `READ_WAIT_MILLIS` is the whole content of a defect that cost three of
+     * sixteen concurrent flows, and a test that can only observe it through
+     * timing would be a slow test that fails on a loaded machine.
+     */
+    internal companion object {
         /** The sentinel that means "no more data on this stream". */
         val EOF = ByteArray(0)
 
@@ -702,6 +770,17 @@ class MuxCarrier(
 
         /** The same, for a caller blocked on a stream that has gone quiet. */
         const val READ_WAIT_MILLIS = 250L
+
+        /**
+         * How long a flow waits for the Portal to answer its SYN.
+         *
+         * The dedicated lane's read timeout, because it is the same protocol
+         * step: the Portal dials the target and answers when it knows, and how
+         * long that takes is a property of the target rather than of the
+         * carrier the request arrived over. See [awaitSetupByte] for what a
+         * shorter one did.
+         */
+        const val SETUP_DEADLINE_MILLIS = 15_000L
     }
 }
 

@@ -92,6 +92,15 @@ class FakeMuxPortal(
     private val onReady: (FakeMuxPortal) -> Unit = {},
     /** Called for each STREAM frame that carries payload after the opening one. */
     private val onPayload: (FakeMuxPortal, UInt, ByteArray) -> Unit = { portal, id, bytes -> portal.sendStream(id, bytes) },
+    /**
+     * How long to think before answering a SYN.
+     *
+     * A real Portal dials the target before it answers, and how long that takes
+     * belongs to the target rather than to the carrier. Zero here would make
+     * every setup instantaneous, which is exactly the condition under which a
+     * carrier that mistook a poll interval for a refusal looked correct.
+     */
+    private val setupDelayMillis: Long = 0,
 ) {
     /** Every frame header the client sent, in order. */
     val received: MutableList<MuxHeader> = java.util.Collections.synchronizedList(mutableListOf())
@@ -307,6 +316,7 @@ class FakeMuxPortal(
             if (flowHeader is DecodeResult.Ok && target is DecodeResult.Ok) {
                 opened[header.flowId] = target.value.target
                 val result = setupResult(target.value.target)
+                if (setupDelayMillis > 0) Thread.sleep(setupDelayMillis)
                 sendStream(header.flowId, byteArrayOf(result.byte.toByte()))
                 if (result.isRejection) return
                 val consumed = FlowHeader.LENGTH + target.value.consumed

@@ -45,6 +45,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 step() { echo; echo "== $* =="; }
 
 cleanup() {
+    [ -n "${WORK_FETCH:-}" ] && rm -rf "$WORK_FETCH"
     [ -n "${KEEP:-}" ] && { echo "KEEP set; containers left running"; return; }
     docker rm -f "$ORIGIN_CONTAINER" "$PORTAL_CONTAINER" >/dev/null 2>&1
 }
@@ -205,6 +206,12 @@ fi
 MODES="${MUX_MODES:-0 1}"
 STATUS=0
 
+# The Portal's log has to be *streamed*: e2e-tunnel-fetch.sh reads the byte
+# counters either side of a fetch, and a `docker logs` snapshot never changes,
+# so a static file reports that the Portal relayed nothing.
+WORK_FETCH="$(mktemp -d)"
+PORTAL_LOG_FILE="$WORK_FETCH/portal.log"
+
 for MODE in $MODES; do
     echo
     echo "--- mux=$MODE ---"
@@ -223,18 +230,35 @@ for MODE in $MODES; do
     # without entering the APK, so switching mux mode between runs does not
     # rebuild and reinstall — and a reinstall clears the consent grant, which is
     # exactly what happened the first time this loop ran.
-    ARGS="android.testInstrumentationRunnerArguments"
-    ( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
-        -P$ARGS.nowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
-        -P$ARGS.nowhereE2eKey="$KEY" \
-        -P$ARGS.nowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
-        -P$ARGS.nowhereE2eTarget="${ORIGIN_IP}:${ORIGIN_PORT}" \
-        -P$ARGS.nowhereE2eMux="$MODE" \
-        -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
-        ${CLASSES:+-P$ARGS.class=$CLASSES} \
-        ) 2>&1 | tail -25
-    MODE_STATUS=${PIPESTATUS[0]}
-    [ "$MODE_STATUS" -eq 0 ] || STATUS=$MODE_STATUS
+    # Driven from the shell rather than from instrumentation, and this is the
+    # correction that mattered most in this suite's history. Instrumentation
+    # runs in the app's process; this client is forced out of its own tunnel in
+    # every mode, so an in-app fetch never enters the TUN and proves only that
+    # the destination was reachable some other way. Every case here passed that
+    # way once, with the Portal's byte counters unmoved.
+    #
+    # `adb shell` is the shell user, which is not this app and therefore is
+    # inside the tunnel. Both families are fetched: the v4 one is the ordinary
+    # path, and the v6 one exercises the half of the fake-IP layer that only
+    # exists because a AAAA query was answered.
+    docker logs -f "$PORTAL_CONTAINER" > "$PORTAL_LOG_FILE" 2>&1 &
+    LOG_TAIL=$!
+    sleep 1
+    for FAMILY in 4 6; do
+        if NOWHERE_E2E_PORTAL="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
+           NOWHERE_E2E_KEY="$KEY" \
+           NOWHERE_E2E_CARRIER=tcp \
+           NOWHERE_E2E_FAMILY="$FAMILY" \
+           NOWHERE_PORTAL_LOG="$PORTAL_LOG_FILE" \
+           "$ROOT/scripts/e2e-tunnel-fetch.sh" "${ORIGIN_NAME}:${ORIGIN_PORT}" /blob.bin \
+           > "$WORK_FETCH/fetch-mux$MODE-v$FAMILY.log" 2>&1; then
+            echo "  OK  mux=$MODE, IPv$FAMILY: $(grep -o 'the Portal relayed [0-9]* bytes' "$WORK_FETCH/fetch-mux$MODE-v$FAMILY.log" | head -1)"
+        else
+            echo "  FAIL  mux=$MODE, IPv$FAMILY: $(tail -3 "$WORK_FETCH/fetch-mux$MODE-v$FAMILY.log" | tr '\n' ' ')"
+            STATUS=1
+        fi
+    done
+    kill "$LOG_TAIL" 2>/dev/null; wait "$LOG_TAIL" 2>/dev/null || true
 
     # How many TLS connections the Portal really accepted, counted from the
     # source ports in its own exchange lines. Neither side can fake this: the
@@ -271,23 +295,60 @@ docker logs "$PORTAL_CONTAINER" 2>&1 | grep "exchange starting" | tail -2
 # time*, over both carriers. At a shard density of four the answer is four.
 if [ "$MODES" = "0 1" ]; then
     step "sixteen concurrent flows, one tunnel, each carrier"
+    # Driven from the shell for the same reason as everything else here: an
+    # in-app fetch never enters the TUN, so an instrumentation case counting
+    # connections would be counting connections the Portal never saw. Sixteen
+    # `nc` processes are started at once and waited for together, which is what
+    # makes the flows concurrent rather than merely numerous -- a shard density
+    # measured over sequential flows is one, whatever the density really is.
     for MODE in 0 1; do
         grant_vpn_consent || fail "could not pre-grant VPN consent"
+        adb -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null 2>&1
+        sleep 2
+        adb -s "$DEVICE" shell am instrument -w \
+            -e class eu.nodepass.somewhere.vpn.TunnelHolderTest \
+            -e nowhereHoldSeconds 120 \
+            -e nowhereE2ePortal "${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
+            -e nowhereE2eKey "$KEY" \
+            -e nowhereE2eCarrier tcp \
+            -e nowhereE2eMux "$MODE" \
+            eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner \
+            > "$WORK_FETCH/holder-$MODE.log" 2>&1 &
+        HOLDER_PID=$!
+        UP=0
+        for _ in $(seq 1 60); do
+            adb -s "$DEVICE" shell 'ip addr show tun0' >/dev/null 2>&1 && { UP=1; break; }
+            sleep 1
+        done
+        [ "$UP" = 1 ] || fail "the tunnel would not come up for the concurrency measurement at mux=$MODE"
+        # The interface exists before the session has authenticated; one warm-up
+        # fetch is what makes the sixteen below concurrent rather than fifteen
+        # waiting behind a handshake.
+        adb -s "$DEVICE" shell "printf 'GET /small.bin HTTP/1.0\r\nHost: ${ORIGIN_NAME}:${ORIGIN_PORT}\r\n\r\n' | nc -w 20 ${ORIGIN_NAME} ${ORIGIN_PORT} > /dev/null" >/dev/null 2>&1
+
         MARK="$(docker logs "$PORTAL_CONTAINER" 2>&1 | wc -l | tr -d ' ')"
-        ( cd "$PROJECT" && ./gradlew --no-daemon connectedDebugAndroidTest \
-            -Pandroid.testInstrumentationRunnerArguments.nowhereE2ePortal="${HOST_FROM_DEVICE}:${PORTAL_PORT}" \
-            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eKey="$KEY" \
-            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eOrigin="${ORIGIN_NAME}:${ORIGIN_PORT}" \
-            -Pandroid.testInstrumentationRunnerArguments.nowhereE2eMux="$MODE" \
-            -Pandroid.testInstrumentationRunnerArguments.class=eu.nodepass.somewhere.vpn.ConcurrentFlowsTest \
-            -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
-            ) >/dev/null 2>&1 || fail "the concurrent-flow case failed at mux=$MODE"
+        adb -s "$DEVICE" shell "for i in \$(seq 1 16); do (printf 'GET /small.bin HTTP/1.0\r\nHost: ${ORIGIN_NAME}:${ORIGIN_PORT}\r\n\r\n' | nc -w 30 ${ORIGIN_NAME} ${ORIGIN_PORT} > /data/local/tmp/cf.\$i) & done; wait" >/dev/null 2>&1
+        SHORT="$(adb -s "$DEVICE" shell 'for i in $(seq 1 16); do wc -c < /data/local/tmp/cf.$i; done' 2>/dev/null | tr -d '\r' | awk '$1 < 1000' | wc -l | tr -d ' ')"
+        adb -s "$DEVICE" shell 'rm -f /data/local/tmp/cf.*' >/dev/null 2>&1
+        kill "$HOLDER_PID" 2>/dev/null; wait "$HOLDER_PID" 2>/dev/null || true
+        adb -s "$DEVICE" shell am force-stop "$APP_ID" >/dev/null 2>&1
+
         N="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$MARK" | grep -c "exchange starting" || true)"
         C="$(docker logs "$PORTAL_CONTAINER" 2>&1 | tail -n "+$MARK" \
             | grep -o "UP\[TCP\] [0-9.]*:[0-9]*" | sort -u | wc -l | tr -d ' ')"
-        printf '  mux=%s: %s concurrent flows over %s TLS connection(s)\n' "$MODE" "$N" "$C"
+        printf '  mux=%s: %s concurrent flows over %s TLS connection(s), %s short response(s)\n' "$MODE" "$N" "$C" "$SHORT"
+        [ "${SHORT:-16}" -eq 0 ] || fail "mux=$MODE: $SHORT of 16 concurrent fetches came back short"
         eval "ONE_TUNNEL_FLOWS_$MODE=$N"
         eval "ONE_TUNNEL_PORTS_$MODE=$C"
+    done
+
+    # Zero flows satisfies every comparison below, and that is exactly how this
+    # arithmetic came to pass while proving nothing: the case it drives had been
+    # disabled, the run skipped it, and 0 == 0 and 0 <= 0 both held.
+    for MODE in 0 1; do
+        eval "OBSERVED=\${ONE_TUNNEL_FLOWS_$MODE:-0}"
+        [ "$OBSERVED" -gt 0 ] \
+            || fail "mux=$MODE opened no flows at all, so the shard arithmetic below would pass without measuring anything"
     done
 
     [ "${ONE_TUNNEL_PORTS_0:-0}" -eq "${ONE_TUNNEL_FLOWS_0:-0}" ] \

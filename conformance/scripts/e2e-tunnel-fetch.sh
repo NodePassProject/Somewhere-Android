@@ -66,6 +66,14 @@ fi
 HOST="${TARGET%:*}"
 PORT="${TARGET##*:}"
 
+# Which address family the fetch should use. Unset means "whatever the device
+# picks", which is the ordinary case. `6` is the one that proves something the
+# other cannot: that AAAA synthesis, the ::/0 route, lwIP's IPv6 side and the
+# fake-IP layer's v6 half all work together, using nothing but this device --
+# the synthetic address is local, and the Portal still dials the *name*, over
+# whichever family its own network prefers.
+FAMILY="${NOWHERE_E2E_FAMILY:-}"
+
 PORTAL="${NOWHERE_E2E_PORTAL:-}"
 KEY="${NOWHERE_E2E_KEY:-conformance-smoke-key}"
 CARRIER="${NOWHERE_E2E_CARRIER:-udp}"
@@ -116,6 +124,25 @@ counter() {
     grep -o "TCPTX=[0-9]*" "$PORTAL_LOG" | tail -1 | cut -d= -f2
 }
 
+# The address `nc` is pointed at. For family 6 it is resolved on the device,
+# through the tunnel's own resolver, which is the only way to obtain a synthetic
+# IPv6 address -- it exists because a AAAA query was answered, and for no other
+# reason. `ping6` is used as the resolver because Android's shell has no dig and
+# toybox has no host; it prints the address it resolved before it sends
+# anything, which is all that is wanted here.
+CONNECT="$HOST"
+if [ "$FAMILY" = "6" ]; then
+    step "resolve $HOST over IPv6, through the tunnel"
+    RESOLVED="$(adb -s "$DEVICE" shell "ping6 -c1 -w2 $HOST" 2>/dev/null | head -1 | sed -n 's/.*(\([0-9a-fA-F:]*\)).*/\1/p')"
+    [ -n "$RESOLVED" ] || fail "no AAAA came back for $HOST; the tunnel's resolver did not synthesise one"
+    echo "OK  $HOST resolved to $RESOLVED"
+    case "$RESOLVED" in
+        fc00:*) ;;
+        *) fail "$RESOLVED is not a synthetic address, so this fetch would prove nothing about the fake-IP layer" ;;
+    esac
+    CONNECT="$RESOLVED"
+fi
+
 step "fetch through the tunnel"
 BEFORE="$(counter)"
 adb -s "$DEVICE" shell "rm -f $REMOTE" >/dev/null 2>&1
@@ -155,7 +182,7 @@ SIZE=""
 for attempt in $(seq 1 5); do
     adb -s "$DEVICE" shell "rm -f $REMOTE" >/dev/null 2>&1
     adb -s "$DEVICE" shell \
-        "printf 'GET $PATH_ON_ORIGIN HTTP/1.0\r\nHost: $HOST:$PORT\r\n\r\n' | nc -w 120 $HOST $PORT > $REMOTE" \
+        "printf 'GET $PATH_ON_ORIGIN HTTP/1.0\r\nHost: $HOST:$PORT\r\n\r\n' | nc -w 120 $CONNECT $PORT > $REMOTE" \
         >/dev/null 2>&1
     SIZE="$(adb -s "$DEVICE" shell "toybox stat -c %s $REMOTE 2>/dev/null || wc -c < $REMOTE" 2>/dev/null | tr -d '\r ')"
     # Verified inside the loop rather than after it. A truncated transfer is

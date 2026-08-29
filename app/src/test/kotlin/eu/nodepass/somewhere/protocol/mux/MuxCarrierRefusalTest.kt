@@ -124,6 +124,42 @@ class MuxCarrierRefusalTest {
     }
 
     @Test
+    fun aRejectedFlowIsReleasedRatherThanReset() {
+        // The rejection is the teardown. The Portal answers and forgets the
+        // stream in the same breath, and section 3 makes a frame for a flow it
+        // does not know a *carrier* error — so a RST here does not tidy up one
+        // flow, it closes the connection and fails every other flow sharing it.
+        //
+        // Found on a device and not by any test that opens one flow at a time.
+        // Android's Private DNS probes port 853 the moment a tunnel comes up,
+        // the Portal answered DIAL_FAILED, this client reset the stream, and
+        // half a second later four unrelated fetches on the same carrier
+        // reported "the Portal closed the Mux carrier". One to four of sixteen
+        // concurrent fetches came back empty, intermittently, depending on
+        // which shard the probe happened to land on.
+        val (clientSide, portalSide) = LoopbackTransport.pair()
+        val fake = FakeMuxPortal(portalSide, { SetupResult.DialFailed }).also { it.start() }
+        val built = MuxCarrier(clientSide, key, SessionId.random())
+        assertTrue(built.start() is DecodeResult.Ok)
+        carrier = built
+        portal = fake
+
+        val refused = built.open(target, FlowKind.Tcp, 1u)
+        assertEquals(
+            MuxCarrierReason.Rejected(SetupResult.DialFailed),
+            (refused as DecodeResult.Invalid).reason,
+        )
+
+        // Give the writer thread a chance to send anything it was going to.
+        Thread.sleep(300)
+        val reset = fake.frames().filter { it.isReset }
+        assertTrue("a rejected flow must not be reset, but $reset went out", reset.isEmpty())
+
+        // And the carrier is still usable, which is the point of not resetting.
+        assertTrue("the carrier died with the flow it refused", built.isOpen)
+    }
+
+    @Test
     fun everyRefusalSaysSomethingDifferent() {
         // The seven rejections lesson, applied here: a caller that cannot tell
         // "the carrier is full" from "the Portal refused you" cannot act on

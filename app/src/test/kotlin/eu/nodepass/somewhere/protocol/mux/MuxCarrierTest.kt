@@ -45,9 +45,10 @@ class MuxCarrierTest {
         onReady: (FakeMuxPortal) -> Unit = {},
         onPayload: (FakeMuxPortal, UInt, ByteArray) -> Unit = { p, id, bytes -> p.sendStream(id, bytes) },
         clock: () -> Long = { System.nanoTime() / 1_000_000 },
+        setupDelayMillis: Long = 0,
     ): Pair<MuxCarrier, FakeMuxPortal> {
         val (clientSide, portalSide) = LoopbackTransport.pair()
-        val fake = FakeMuxPortal(portalSide, setupResult, onReady, onPayload).also { it.start() }
+        val fake = FakeMuxPortal(portalSide, setupResult, onReady, onPayload, setupDelayMillis).also { it.start() }
         val built = MuxCarrier(clientSide, key, SessionId.random(), clock)
         assertTrue("the carrier failed to start", built.start() is DecodeResult.Ok)
         carrier = built
@@ -290,5 +291,43 @@ class MuxCarrierTest {
         val (built, _) = connect()
         val reason = (openFlow(built, flowId = 0u) as DecodeResult.Invalid).reason
         assertEquals(MuxReason.StreamFlowIdZero, reason)
+    }
+
+    @Test
+    fun aPortalThatTakesItsTimeAnsweringIsNotAFailedAuthentication() {
+        // The defect this pins cost three of sixteen concurrent fetches, on a
+        // device, intermittently. `readStream` answers 0 for "nothing in the
+        // last 250 ms", and `open` used to read that as the Portal having
+        // refused — reporting "authentication most likely failed" for a flow
+        // whose answer was merely in flight, then resetting a stream the Portal
+        // was still setting up, at which point the Portal closed the carrier
+        // and took every other flow on it down too.
+        //
+        // 600 ms is comfortably past the poll interval and nowhere near the
+        // deadline, which is the window the old code could not represent.
+        val (built, _) = connect(setupDelayMillis = 600)
+        val opened = built.open(target, FlowKind.Tcp, flowId = 1u)
+        assertTrue(
+            "a Portal that answered after 600 ms was treated as a failure: " +
+                (opened as? DecodeResult.Invalid)?.reason?.detail,
+            opened is DecodeResult.Ok,
+        )
+        assertEquals(SetupResult.Ready, (opened as DecodeResult.Ok).value.setupResult)
+    }
+
+    @Test
+    fun theSetupDeadlineIsTheDedicatedLanesRatherThanAPollInterval() {
+        // Stated as a relation rather than a number: the two are the same
+        // protocol step over the same kind of connection, and the moment they
+        // differ by two orders of magnitude somebody has reused a queue
+        // constant as a protocol timeout.
+        assertTrue(
+            "a setup deadline of ${MuxCarrier.SETUP_DEADLINE_MILLIS} ms is not a protocol deadline",
+            MuxCarrier.SETUP_DEADLINE_MILLIS >= 10_000L,
+        )
+        assertTrue(
+            "the setup deadline must be far longer than a poll interval",
+            MuxCarrier.SETUP_DEADLINE_MILLIS > MuxCarrier.READ_WAIT_MILLIS * 20,
+        )
     }
 }

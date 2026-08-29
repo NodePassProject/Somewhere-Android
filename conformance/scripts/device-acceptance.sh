@@ -145,17 +145,37 @@ else
     fi
 fi
 
-head2 "3c. An IPv6 destination through the tunnel"
-# Needs an origin the Portal can reach over IPv6. The docker origin
-# e2e-fakeip.sh starts is v4-only, so this is supplied or it is a note --
-# never a silent pass.
-if [ -z "${NOWHERE_E2E_TARGET6:-}" ]; then
-    note "no NOWHERE_E2E_TARGET6 given, so nothing checked that a v6 destination is carried. Set it to [addr]:port of an HTTP origin reachable over IPv6 from the Portal, serving /blob.bin with X-Content-Sha256."
-elif NOWHERE_E2E_CARRIER=tcp "$ROOT/e2e-tunnel-fetch.sh" "$NOWHERE_E2E_TARGET6" /blob.bin > /tmp/somewhere-fetch-v6.log 2>&1; then
+head2 "3c. A synthetic IPv6 address, end to end"
+# The v6 half of the fake-IP layer, proved with nothing but this device: the
+# name is resolved through the tunnel's own resolver, which answers AAAA with an
+# address out of fc00::/96; the packet takes the ::/0 route into the TUN;
+# lwIP's IPv6 side carries it; the address is resolved back to the name; and the
+# Portal dials that name over whichever family its own network prefers. No
+# IPv6 connectivity is needed anywhere outside this device.
+#
+# It needs a NAME rather than an address, because a synthetic address exists
+# only as the answer to a query. NOWHERE_E2E_ORIGIN is that name; without one
+# this says so rather than passing.
+if [ -z "${NOWHERE_E2E_ORIGIN:-}" ]; then
+    note "no NOWHERE_E2E_ORIGIN given, so the v6 half of the fake-IP layer was not exercised. Set it to name:port of an origin only the Portal can resolve — e2e-fakeip.sh starts one at origin.somewhere.test:8080."
+elif NOWHERE_E2E_FAMILY=6 NOWHERE_E2E_CARRIER=tcp "$ROOT/e2e-tunnel-fetch.sh" "$NOWHERE_E2E_ORIGIN" /blob.bin > /tmp/somewhere-fetch-v6.log 2>&1; then
     RELAYED6="$(grep -o 'the Portal relayed [0-9]* bytes' /tmp/somewhere-fetch-v6.log | head -1)"
-    pass "an IPv6 destination is carried — ${RELAYED6:-no counter}"
+    SYNTH="$(grep -o 'resolved to [0-9a-fA-F:]*' /tmp/somewhere-fetch-v6.log | head -1)"
+    pass "a synthetic IPv6 address carried 20 MB — $SYNTH, ${RELAYED6:-no counter}"
 else
-    miss "IPv6 destination: $(tail -3 /tmp/somewhere-fetch-v6.log | tr '\n' ' ')"
+    miss "synthetic IPv6: $(tail -3 /tmp/somewhere-fetch-v6.log | tr '\n' ' ')"
+fi
+
+head2 "3d. A real IPv6 destination through the tunnel"
+# The other half, which this device cannot supply: an origin the Portal reaches
+# over IPv6. Supplied or a note, never a silent pass.
+if [ -z "${NOWHERE_E2E_TARGET6:-}" ]; then
+    note "no NOWHERE_E2E_TARGET6 given, so nothing checked that a genuinely IPv6 destination is carried. Set it to [addr]:port of an HTTP origin reachable over IPv6 from the Portal, serving /blob.bin with X-Content-Sha256."
+elif NOWHERE_E2E_CARRIER=tcp "$ROOT/e2e-tunnel-fetch.sh" "$NOWHERE_E2E_TARGET6" /blob.bin > /tmp/somewhere-fetch-v6dst.log 2>&1; then
+    RELAYED6D="$(grep -o 'the Portal relayed [0-9]* bytes' /tmp/somewhere-fetch-v6dst.log | head -1)"
+    pass "an IPv6 destination is carried — ${RELAYED6D:-no counter}"
+else
+    miss "IPv6 destination: $(tail -3 /tmp/somewhere-fetch-v6dst.log | tr '\n' ' ')"
 fi
 
 # ── 4. The tunnel actually carries traffic ──────────────────────────────────
