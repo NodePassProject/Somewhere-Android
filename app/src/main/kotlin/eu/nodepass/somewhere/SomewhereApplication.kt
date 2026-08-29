@@ -9,6 +9,7 @@ import eu.nodepass.somewhere.apps.PackageManagerApps
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.nodes.NodeHealth
 import eu.nodepass.somewhere.routing.RoutingPreferences
 import eu.nodepass.somewhere.routing.RuleStore
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
@@ -64,4 +65,15 @@ class SomewhereApplication : Application() {
     val rules: RuleStore by lazy { RuleStore(File(filesDir, "routing/rules.txt")) }
 
     val routing: RoutingPreferences by lazy { RoutingPreferences(File(filesDir, "routing/settings.txt")) }
+
+    /**
+     * How nodes have behaved, this run.
+     *
+     * Deliberately not persisted. What it measures is the device's network, and
+     * that changes when the device moves — health carried across a restart
+     * would describe the coffee shop's Wi-Fi in the user's kitchen. Latency
+     * from a probe is persisted by the repository, because a measurement is a
+     * measurement; a verdict is not.
+     */
+    val nodeHealth: NodeHealth by lazy { NodeHealth() }
 }

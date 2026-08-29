@@ -247,6 +247,11 @@ kover {
                     // worst direction: traffic leaves the device somewhere the
                     // user did not ask it to.
                     "eu.nodepass.somewhere.routing.*",
+                    // Which node carries the traffic, for the same reason
+                    // again: a failover that moved on the wrong kind of failure
+                    // sends a user's traffic through a Portal they did not pick
+                    // and reports the wrong node's error while doing it.
+                    "eu.nodepass.somewhere.nodes.*",
                 )
             }
             excludes {

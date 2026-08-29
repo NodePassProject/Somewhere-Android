@@ -226,6 +226,7 @@
     <string name="tunnel_no_node">No node was given to connect to.</string>
     <string name="tunnel_bad_node">This node could not be read.</string>
     <string name="tunnel_unresolved">This node’s address could not be looked up.</string>
+    <string name="tunnel_quic_unreachable">This node did not answer over QUIC.</string>
     <string name="tunnel_no_consent">Android did not grant permission to create a tunnel.</string>
     <string name="tunnel_no_apps">No installed application is selected, so the tunnel would carry nothing.</string>
     <string name="tunnel_quic_verification_unsupported">This node verifies the certificate chain against an sni name, which the QUIC carrier does not implement yet. A pin works on both carriers; use pin instead, or a TCP node.</string>

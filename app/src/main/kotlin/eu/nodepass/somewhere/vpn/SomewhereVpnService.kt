@@ -23,6 +23,8 @@ import eu.nodepass.somewhere.apps.carriesNothing
 import eu.nodepass.somewhere.apps.ruleFor
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.net.NowhereDialer
+import eu.nodepass.somewhere.nodes.Attempt
+import eu.nodepass.somewhere.nodes.Failover
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
@@ -133,6 +135,15 @@ class SomewhereVpnService : VpnService() {
      */
     private val fakeIp = FakeIpPool()
 
+    /**
+     * Nodes this connection attempt has already used.
+     *
+     * Reset by every start that arrives as an intent, and carried only across
+     * the internal failover below. Without it, two nodes that each fail over to
+     * the other spin until something else notices.
+     */
+    private var tried: Set<String> = emptySet()
+
     override fun onStartCommand(
         intent: Intent?,
         flags: Int,
@@ -151,6 +162,12 @@ class SomewhereVpnService : VpnService() {
                     TunnelController.report(TunnelState.Failed(R.string.tunnel_no_node))
                     stopSelf()
                 } else {
+                    // A start that came through an intent is a fresh attempt,
+                    // so whatever a previous one had already tried is
+                    // forgotten. Only the internal failover path below keeps
+                    // the set, which is what stops two nodes that each fail
+                    // over to the other from spinning.
+                    tried = emptySet()
                     startTunnel(url)
                 }
             }
@@ -204,14 +221,12 @@ class SomewhereVpnService : VpnService() {
                 InetAddress.getByName(node.host).hostAddress
             } catch (error: Exception) {
                 Log.w(TAG, "cannot resolve ${node.host}: ${error.message}")
-                TunnelController.report(TunnelState.Failed(R.string.tunnel_unresolved))
-                stopSelf()
+                unreachable(url, R.string.tunnel_unresolved)
                 return
             }
         if (portal == null) {
             Log.w(TAG, "cannot resolve ${node.host}")
-            TunnelController.report(TunnelState.Failed(R.string.tunnel_unresolved))
-            stopSelf()
+            unreachable(url, R.string.tunnel_unresolved)
             return
         }
 
@@ -338,7 +353,27 @@ class SomewhereVpnService : VpnService() {
         quic = quicConnection
         // Fail here rather than later: a tunnel that came up and then could not
         // reach its Portal is harder to read than one that never came up.
-        quicConnection?.current()
+        //
+        // And it is the one place a QUIC node's reachability is known at
+        // startup, which is what makes failing over to another node possible
+        // rather than guesswork. A refused pin is *not* unreachability — the
+        // Portal answered, and every other node will answer the same way to the
+        // same wrong pin — so it stops here instead of walking the list.
+        try {
+            quicConnection?.current()
+        } catch (error: Exception) {
+            Log.w(TAG, "the QUIC Portal did not answer: ${error.message}")
+            descriptor.close()
+            val refused = error.message?.contains("pin") == true
+            if (refused) {
+                (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Refused)
+                TunnelController.report(TunnelState.Failed(R.string.tunnel_quic_unreachable))
+                stopSelf()
+            } else {
+                unreachable(url, R.string.tunnel_quic_unreachable)
+            }
+            return
+        }
 
         val nowhere =
             NowhereSession(
@@ -400,6 +435,9 @@ class SomewhereVpnService : VpnService() {
         // any flow has reached the Portal. A probe proved the address, the
         // port, TLS and the ALPN; the shared key is only tested when a flow
         // opens, and the Portal answers a wrong key with silence.
+        // The node worked. Recorded before the state is published, so a screen
+        // that reacts to Connected already sees the health that goes with it.
+        (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Succeeded)
         TunnelController.report(
             TunnelState.Connected(
                 node = node.displayName ?: "${node.host}:${node.port}",
@@ -423,6 +461,50 @@ class SomewhereVpnService : VpnService() {
         val servers = properties.dnsServers.mapNotNull { it.address }
         Log.i(TAG, "${servers.size} resolver(s) will carry the queries we do not answer")
         return servers
+    }
+
+    /**
+     * This node could not be reached. Try the next one, or report and stop.
+     *
+     * **Only unreachability reaches here.** A Portal that answered and said no
+     * — a refused pin, a rejected key — is a configuration fact, and the next
+     * node will answer the same way; moving on would spend the whole list on
+     * one wrong character and then report the last node's failure, which is the
+     * wrong node and the wrong message.
+     *
+     * The next attempt goes straight back into [startTunnel], which takes any
+     * running tunnel down before it builds another — there is no path here that
+     * leaves two descriptors or two pumps alive, which against a NO_SYS lwIP
+     * would not complain and would break something else much later.
+     */
+    private fun unreachable(
+        url: String,
+        reason: Int,
+    ) {
+        val application = applicationContext as SomewhereApplication
+        application.nodeHealth.record(url, Attempt.Unreachable)
+
+        val attempted = tried + url
+        val candidates =
+            application.nodes.nodes.value
+                .map { it.line }
+        val next =
+            Failover.next(candidates, application.nodeHealth, attempted) ?: run {
+                Log.w(TAG, "no other node to try; ${attempted.size} attempted")
+                TunnelController.report(TunnelState.Failed(reason))
+                stopSelf()
+                return
+            }
+
+        // Not written to the connection log, which is NW-A-06's record of what
+        // the Portal answered flow by flow. A failover is not a flow, and
+        // giving it a SetupResult it never had would make the one surface a
+        // user reads for protocol answers carry something that is not one. The
+        // visible signal is the node name on the Connected state, which
+        // changes.
+        Log.i(TAG, "failing over after ${attempted.size} node(s)")
+        tried = attempted
+        startTunnel(next)
     }
 
     private fun teardown() {
