@@ -41,6 +41,14 @@
          the device sends with nothing on screen saying so. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- For one thing only: a periodic job that survives a reboot. The
+         subscription refresh is measured in hours, and a schedule that a
+         restart silently cancelled would be a switch that works until the
+         phone is turned off. Nothing here starts anything at boot — Android's
+         always-on VPN does that, before applications run, and does it better
+         than a receiver could. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:name=".SomewhereApplication"
         android:allowBackup="false"
@@ -101,6 +109,29 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="vpn" />
+        </service>
+
+        <!-- The subscription refresh. Exported false and permission-guarded to
+             the platform's own scheduler, which is the only thing that may
+             start it: a job service anything could bind to is a network call
+             anything could ask for, carrying a subscription token. -->
+        <service
+            android:name=".subscription.SubscriptionRefreshJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- The quick-settings tile. Exported true because the system UI is a
+             different process and has to bind it; guarded by BIND_QUICK_SETTINGS_TILE
+             so that only the system may. -->
+        <service
+            android:name=".vpn.TunnelTileService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:icon="@drawable/ic_notification"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
     </application>
 </manifest>

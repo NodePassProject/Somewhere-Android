@@ -437,7 +437,12 @@ class SomewhereVpnService : VpnService() {
         // opens, and the Portal answers a wrong key with silence.
         // The node worked. Recorded before the state is published, so a screen
         // that reacts to Connected already sees the health that goes with it.
-        (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Succeeded)
+        val app = applicationContext as SomewhereApplication
+        app.nodeHealth.record(url, Attempt.Succeeded)
+        // And remembered, for the quick-settings tile — which runs in a process
+        // that may have been started for the tile alone and cannot ask a
+        // screen what was connected.
+        app.nodes.recordConnected(url)
         TunnelController.report(
             TunnelState.Connected(
                 node = node.displayName ?: "${node.host}:${node.port}",

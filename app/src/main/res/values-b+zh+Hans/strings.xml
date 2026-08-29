@@ -186,6 +186,9 @@
     <string name="tunnel_bad_node">无法读取该节点。</string>
     <string name="tunnel_unresolved">无法解析该节点的地址。</string>
     <string name="tunnel_quic_unreachable">该节点没有通过 QUIC 应答。</string>
+    <string name="tile_connecting">正在连接…</string>
+    <string name="settings_refresh_auto">自动刷新</string>
+    <string name="settings_refresh_auto_detail">每 %1$d 小时一次，需有网络。默认关闭：刷新会把订阅令牌发往面板。</string>
     <string name="tunnel_no_consent">Android 未授予创建隧道的权限。</string>
     <string name="tunnel_no_apps">没有选中任何已安装的应用，隧道将不传输任何流量。</string>
     <string name="tunnel_quic_verification_unsupported">该节点要按 sni 名称校验证书链，而 QUIC 载体尚未实现它。pin 在两种载体上都可用，请改用 pin，或改用 TCP 节点。</string>

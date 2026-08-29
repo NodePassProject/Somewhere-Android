@@ -44,6 +44,7 @@ import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
+import eu.nodepass.somewhere.subscription.RefreshPreferences
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.screens.AppsScreen
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
@@ -86,6 +87,15 @@ fun SomewhereApp(
     onToggleTunnel: (NowhereUrl) -> Unit = {},
     onReconnect: () -> Unit = {},
     onImportRules: () -> Unit = {},
+    /**
+     * Whether the subscription refreshes on its own, and how often.
+     *
+     * Passed in rather than read here so that a preview and a UI test can hand
+     * the screen a value without a filesystem.
+     */
+    refresh: RefreshPreferences = RefreshPreferences(java.io.File("")),
+    /** Called after the preference changes, to put the schedule where it says. */
+    onRefreshScheduleChanged: () -> Unit = {},
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -174,7 +184,24 @@ fun SomewhereApp(
                         onReconnect = onReconnect,
                     )
                 }
-                composable(Routes.SETTINGS) { SettingsScreen(onBack = { navController.popBackStack() }) }
+                composable(Routes.SETTINGS) {
+                    // Read on entry rather than held in a view model: the
+                    // preference is a file the scheduled job also reads, and a
+                    // screen holding a cached copy would disagree with it after
+                    // the job cancelled its own schedule.
+                    val refreshSettings = remember { refresh.load() }
+                    var automatic by remember { mutableStateOf(refreshSettings.automatic) }
+                    SettingsScreen(
+                        onBack = { navController.popBackStack() },
+                        automaticRefresh = automatic,
+                        refreshIntervalHours = refreshSettings.effectiveIntervalHours,
+                        onToggleAutomaticRefresh = { wanted ->
+                            automatic = wanted
+                            refresh.save(refreshSettings.copy(automatic = wanted))
+                            onRefreshScheduleChanged()
+                        },
+                    )
+                }
             }
         }
 

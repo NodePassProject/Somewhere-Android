@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
+import eu.nodepass.somewhere.subscription.SubscriptionRefreshJob
 import eu.nodepass.somewhere.ui.SomewhereApp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
@@ -128,6 +129,8 @@ class MainActivity : ComponentActivity() {
                         onToggleTunnel = ::toggleTunnel,
                         onReconnect = { running?.let(::startTunnel) },
                         onImportRules = { importRules.launch(ruleMimeTypes) },
+                        refresh = application.refreshPreferences,
+                        onRefreshScheduleChanged = { SubscriptionRefreshJob.apply(this@MainActivity) },
                     )
                 }
             }

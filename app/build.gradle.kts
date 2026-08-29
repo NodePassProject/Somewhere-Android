@@ -263,6 +263,16 @@ kover {
                     // so that the exemption is visible rather than achieved by
                     // leaving the whole package out.
                     "eu.nodepass.somewhere.apps.PackageManagerApps",
+                    // The other class in a gated package that a JVM test cannot
+                    // reach: a JobService the platform constructs and calls.
+                    // Everything it could get wrong that is not the platform's
+                    // own scheduling — whether the switch is on, what interval
+                    // a scheduler will honour — lives in RefreshPreferences,
+                    // which is inside the gate. Excluded by name so that the
+                    // exemption is visible rather than achieved by leaving the
+                    // whole package out.
+                    "eu.nodepass.somewhere.subscription.SubscriptionRefreshJob",
+                    "eu.nodepass.somewhere.subscription.SubscriptionRefreshJob\$Companion",
                     "eu.nodepass.somewhere.BuildConfig",
                     "*.R",
                     "*.R$*",

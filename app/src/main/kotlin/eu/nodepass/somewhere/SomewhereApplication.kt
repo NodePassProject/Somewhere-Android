@@ -12,6 +12,7 @@ import eu.nodepass.somewhere.data.SubscriptionStore
 import eu.nodepass.somewhere.nodes.NodeHealth
 import eu.nodepass.somewhere.routing.RoutingPreferences
 import eu.nodepass.somewhere.routing.RuleStore
+import eu.nodepass.somewhere.subscription.RefreshPreferences
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,7 @@ class SomewhereApplication : Application() {
             // Application-lifetime, and supervised so one failed fetch does not
             // take the scope down with it.
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            lastConnectedFile = File(filesDir, "nodes/last-connected.txt"),
         )
     }
 
@@ -76,4 +78,14 @@ class SomewhereApplication : Application() {
      * measurement; a verdict is not.
      */
     val nodeHealth: NodeHealth by lazy { NodeHealth() }
+
+    /**
+     * Whether the subscription refreshes on its own.
+     *
+     * Its own file, read by a scheduled job that may run in a process this
+     * screen is not part of.
+     */
+    val refreshPreferences: RefreshPreferences by lazy {
+        RefreshPreferences(File(filesDir, "subscription/refresh.txt"))
+    }
 }

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /**
  * What a probe found out about one node.
@@ -69,6 +70,20 @@ class NodeRepository(
      */
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Where the last node a tunnel came up on is remembered.
+     *
+     * A file rather than memory because the reader is a quick-settings tile,
+     * which runs in a process that may have been started for the tile alone and
+     * has nothing else in it.
+     *
+     * It holds a node URL, which carries a shared key — the same material
+     * `nodes.txt` beside it already holds, in the same directory, with the same
+     * permissions. It is not a second exposure, and it is deliberately not a
+     * second *copy*: what comes back is matched against the live list, so a
+     * node the user deleted is gone from here the moment it is gone from there.
+     */
+    private val lastConnectedFile: File? = null,
 ) {
     private val _nodes = MutableStateFlow(store.load())
     val nodes: StateFlow<List<NodeStore.Entry>> = _nodes.asStateFlow()
@@ -88,6 +103,39 @@ class NodeRepository(
 
     /** Probe results, keyed by the node's rendered URL. */
     val probes: StateFlow<Map<String, ProbeResult>> = _probes.asStateFlow()
+
+    /**
+     * The node a tunnel last came up on, if it is still in the list.
+     *
+     * Null when there is none, when the file cannot be read, or when the node
+     * has since been deleted — and the last of the three is why this checks
+     * rather than simply returning what it stored. A tile that connected to a
+     * node the user removed would be the app disagreeing with its own list.
+     */
+    fun lastConnected(): String? {
+        val file = lastConnectedFile ?: return null
+        val remembered =
+            try {
+                if (!file.exists()) return null
+                file.readText().trim()
+            } catch (_: java.io.IOException) {
+                return null
+            }
+        if (remembered.isEmpty()) return null
+        return _nodes.value.firstOrNull { it.line == remembered }?.line
+    }
+
+    /** Remembers [line] as the node a tunnel came up on. Best effort. */
+    fun recordConnected(line: String) {
+        val file = lastConnectedFile ?: return
+        try {
+            file.parentFile?.mkdirs()
+            file.writeText(line)
+        } catch (_: java.io.IOException) {
+            // A tile that offers the app instead of a node is a smaller failure
+            // than a tunnel that refuses to come up over a preference.
+        }
+    }
 
     fun refresh() {
         _nodes.value = store.load()

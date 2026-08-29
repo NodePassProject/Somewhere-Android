@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,7 +46,12 @@ import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    automaticRefresh: Boolean = false,
+    refreshIntervalHours: Int = 0,
+    onToggleAutomaticRefresh: (Boolean) -> Unit = {},
+) {
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
 
@@ -69,10 +75,18 @@ fun SettingsScreen(onBack: () -> Unit) {
                     // control that looked like it did something and did not,
                     // so this opens the place where the real one is.
                     //
-                    // Start-on-boot and the quick-settings tile were switches
-                    // over nothing at all — there is no BOOT_COMPLETED
-                    // receiver and no TileService — and are gone until there
-                    // is something for them to turn on.
+                    // The quick-settings tile exists now and needs no switch:
+                    // a tile is added from the shade's own editor, and an
+                    // in-app toggle for it would be a second place to say
+                    // something the system already asks.
+                    //
+                    // Start-on-boot is still absent, and now deliberately
+                    // rather than for want of a receiver. Always-on VPN starts
+                    // the tunnel *before* applications run, keeps it running,
+                    // and can block traffic while it is down; a BOOT_COMPLETED
+                    // receiver starts later, can be killed, and cannot block
+                    // anything. Shipping one would be offering a worse version
+                    // of the feature the row below already opens.
                     PanelRow(onClick = { context.openVpnSettings() }) {
                         Column(
                             modifier = Modifier.weight(1f),
@@ -98,15 +112,43 @@ fun SettingsScreen(onBack: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionLabel(stringResource(R.string.nodes_subscription))
                 Panel {
-                    // "Every 6 hours" described a scheduler that does not
-                    // exist — no WorkManager, no alarm, nothing periodic
-                    // anywhere in the app — and "only over HTTPS" was a switch
-                    // over an enforcement that was never written. What is real
-                    // is the warning: a plaintext subscription URL is reported
-                    // as plaintext when it is fetched, by
-                    // SubscriptionFetcher, whether or not anybody has been
-                    // offered a switch. Both are gone rather than left saying
-                    // something the app does not do.
+                    // "Every 6 hours" once described a scheduler that did not
+                    // exist. It exists now — a periodic JobService, off unless
+                    // this switch turns it on — so the row is back, over the
+                    // mechanism rather than in front of nothing.
+                    //
+                    // Off by default and stated as such in the detail line: a
+                    // refresh sends a bearer token to a dashboard, and a client
+                    // that started doing that on a schedule because it was
+                    // installed would be deciding something that is the user's.
+                    PanelRow(onClick = { onToggleAutomaticRefresh(!automaticRefresh) }) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.settings_refresh_auto),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                text = stringResource(R.string.settings_refresh_auto_detail, refreshIntervalHours),
+                                style = SomewhereType.bodySmall,
+                                color = colors.muted,
+                            )
+                        }
+                        Switch(
+                            checked = automaticRefresh,
+                            onCheckedChange = onToggleAutomaticRefresh,
+                        )
+                    }
+                    PanelDivider()
+                    // "Only over HTTPS" was a switch over an enforcement that
+                    // was never written, and is still gone. What is real is the
+                    // warning: a plaintext subscription URL is reported as
+                    // plaintext when it is fetched, by SubscriptionFetcher,
+                    // whether or not anybody has been offered a switch.
                     PanelRow {
                         Text(
                             text = stringResource(R.string.settings_https_only_detail),
