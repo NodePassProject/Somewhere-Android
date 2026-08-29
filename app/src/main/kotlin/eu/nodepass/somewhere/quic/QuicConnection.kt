@@ -41,9 +41,23 @@ sealed interface QuicFailure {
         override val detail: String = cause
     }
 
-    /** The handshake did not finish inside the time allowed. */
-    data object HandshakeTimeout : QuicFailure {
-        override val detail: String = "the peer did not complete the QUIC handshake in time"
+    /**
+     * The handshake did not finish inside the time allowed.
+     *
+     * [why] carries whatever the bridge last said, when it said anything. A
+     * refused certificate ends the handshake without ending the *wait* — the
+     * connection simply never completes — so without this the one failure a
+     * user configured for reads as a timeout.
+     */
+    data class HandshakeTimeout(
+        val why: String? = null,
+    ) : QuicFailure {
+        override val detail: String =
+            if (why == null) {
+                "the peer did not complete the QUIC handshake in time"
+            } else {
+                "the QUIC handshake did not complete: $why"
+            }
     }
 
     /** The connection has been closed, by this side or by the peer. */
@@ -100,6 +114,15 @@ class QuicConnection private constructor(
     private val remote: InetSocketAddress,
     private val alpn: String,
     private val serverName: String?,
+    /**
+     * SHA-256 of the leaf certificate this connection will accept, or null.
+     *
+     * Null means no verification at all, which is upstream's behaviour for a
+     * node naming neither `sni` nor `pin` and what every URL current dashboards
+     * emit produces. It is not a default this class chose; it is the one the
+     * protocol has.
+     */
+    private val pinSha256: ByteArray?,
     private val protect: (DatagramSocket) -> Boolean,
     private val openSocket: () -> DatagramSocket,
 ) : Closeable,
@@ -188,6 +211,7 @@ class QuicConnection private constructor(
                     remote.port,
                     serverName,
                     alpn.toByteArray(Charsets.US_ASCII),
+                    pinSha256,
                 )
             if (handle == 0L) {
                 throw QuicException(QuicFailure.NotOpened("the transport refused the parameters"))
@@ -357,7 +381,9 @@ class QuicConnection private constructor(
         while (!handshakeDone) {
             fatal.get()?.let { throw QuicException(it) }
             if (!running) throw QuicException(QuicFailure.Closed("the connection closed during the handshake"))
-            if (System.nanoTime() >= deadline) throw QuicException(QuicFailure.HandshakeTimeout)
+            if (System.nanoTime() >= deadline) {
+                throw QuicException(QuicFailure.HandshakeTimeout(nativeLastMessage(handle)))
+            }
             Thread.sleep(HANDSHAKE_POLL_MILLIS)
         }
     }
@@ -598,6 +624,16 @@ class QuicConnection private constructor(
          */
         const val MAX_DATAGRAM = 1452
 
+        /**
+         * A pin is a SHA-256 of the leaf's DER encoding, so it is 32 bytes.
+         *
+         * Checked at the boundary rather than trusted: the bridge refuses a
+         * wrong length too, and neither pads nor truncates, because either
+         * would produce a connection verifying against something nobody asked
+         * for.
+         */
+        const val PIN_LENGTH = 32
+
         private const val HARVEST_BYTES = 64 * 1024
         private const val DEFAULT_HANDSHAKE_TIMEOUT_MILLIS = 15_000L
         private const val POLL_MILLIS = 25L
@@ -631,10 +667,15 @@ class QuicConnection private constructor(
             remote: InetSocketAddress,
             alpn: String,
             serverName: String?,
+            /** The leaf's SHA-256, or null for no verification. See [pinSha256]. */
+            pinSha256: ByteArray? = null,
             protect: (DatagramSocket) -> Boolean,
             openSocket: () -> DatagramSocket = ::DatagramSocket,
         ): QuicConnection {
-            val connection = QuicConnection(remote, alpn, serverName, protect, openSocket)
+            require(pinSha256 == null || pinSha256.size == PIN_LENGTH) {
+                "a pin is $PIN_LENGTH bytes, got ${pinSha256?.size}"
+            }
+            val connection = QuicConnection(remote, alpn, serverName, pinSha256, protect, openSocket)
             connection.owner.start()
             connection.ready.await()
             connection.startupFailure.get()?.let { throw it }
@@ -656,6 +697,7 @@ class QuicConnection private constructor(
             remotePort: Int,
             serverName: String?,
             alpn: ByteArray,
+            pin: ByteArray?,
         ): Long
 
         @JvmStatic

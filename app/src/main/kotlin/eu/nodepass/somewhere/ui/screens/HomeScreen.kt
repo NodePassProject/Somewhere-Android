@@ -537,17 +537,20 @@ fun directionChip(
 /**
  * Whether a node cannot be carried as configured.
  *
- * This used to mean "needs QUIC", when QUIC was not implemented. It is not that
- * any more: a `up=udp` node — which is the specification's default, so a bare
- * `nowhere://key@host:port` — connects. What remains unsupported is a QUIC node
- * that also asks for certificate verification, because the QUIC carrier does
- * not implement `sni` or `pin` and carrying it without them would be a security
- * downgrade the user configured against and could not observe.
+ * This used to mean "needs QUIC", when QUIC was not implemented, and then "needs
+ * certificate verification", when neither `sni` nor `pin` worked on it. It has
+ * narrowed twice and now means one thing: **a QUIC node verifying the chain
+ * against an `sni` name.** A bare `nowhere://key@host:port` connects, and so
+ * does one carrying `pin`, which the QUIC carrier compares against the leaf the
+ * peer presents. `sni` needs a trust store fed into the QUIC stack's TLS
+ * backend, which is a different order of work, and carrying such a node without
+ * it would be a security downgrade the user configured against and could not
+ * observe.
  *
  * Kept next to [carrierLabel] so the two cannot disagree about a node.
  */
 val NowhereUrl.needsQuicNotice: Boolean
-    get() = requiresQuic && certificateVerification !is CertificateVerification.Skipped
+    get() = requiresQuic && certificateVerification is CertificateVerification.Sni
 
 @Composable
 internal fun DividerBox(color: Color) {

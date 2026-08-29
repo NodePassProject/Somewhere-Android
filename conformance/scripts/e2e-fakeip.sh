@@ -145,7 +145,14 @@ echo "OK  $ORIGIN_NAME resolves inside the network, and only there (at $ORIGIN_I
 # script exists to observe would be invisible.
 step "Portal"
 docker rm -f "$PORTAL_CONTAINER" >/dev/null 2>&1
-docker run -d --name "$PORTAL_CONTAINER" --network "$NETWORK" -p "$PORTAL_PORT:$PORTAL_PORT" \
+# Both protocols, because the two carriers use different ones and publishing
+# only TCP is invisible: a QUIC test against this Portal does not fail with
+# "refused", it waits out the handshake deadline and reports a timeout, which
+# reads as a broken client. Cost of getting it wrong, measured: a QUIC
+# certificate test that had nothing to do with docker spent a round being
+# debugged as a verification defect.
+docker run -d --name "$PORTAL_CONTAINER" --network "$NETWORK" \
+    -p "$PORTAL_PORT:$PORTAL_PORT/tcp" -p "$PORTAL_PORT:$PORTAL_PORT/udp" \
     "$IMAGE" "portal://${KEY}@0.0.0.0:${PORTAL_PORT}?log=debug" >/dev/null \
     || fail "could not start the Portal"
 

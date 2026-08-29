@@ -52,7 +52,33 @@ sealed interface CertificateVerification {
      */
     data class Pin(
         val sha256: String,
-    ) : CertificateVerification
+    ) : CertificateVerification {
+        /**
+         * The same value as bytes, for the carriers that compare it there.
+         *
+         * The TLS path compares hex strings because it has a certificate object
+         * to hash; the QUIC path hands 32 bytes across a JNI boundary to be
+         * compared in C. One conversion, here, so the two cannot disagree about
+         * what a pin is.
+         */
+        val bytes: ByteArray
+            get() =
+                ByteArray(sha256.length / 2) { index ->
+                    ((digit(sha256[index * 2]) shl 4) or digit(sha256[index * 2 + 1])).toByte()
+                }
+
+        private fun digit(character: Char): Int =
+            when (character) {
+                in '0'..'9' -> character - '0'
+                in 'a'..'f' -> character - 'a' + 10
+                in 'A'..'F' -> character - 'A' + 10
+                // Unreachable through the parser, which accepts lower-case hex
+                // of exactly the right length and nothing else. Stated rather
+                // than assumed, because a pin built by hand and silently
+                // mistranslated would verify against an arbitrary digest.
+                else -> throw IllegalStateException("a pin holds hex and nothing else")
+            }
+    }
 
     val isVerified: Boolean get() = this !is Skipped
 }

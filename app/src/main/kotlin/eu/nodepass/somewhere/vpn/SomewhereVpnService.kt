@@ -298,15 +298,14 @@ class SomewhereVpnService : VpnService() {
         // The connection is opened once and every flow becomes a stream on it,
         // which is why `mux` has nothing to add: QUIC multiplexes by
         // construction.
-        // Certificate verification is not implemented on the QUIC carrier, and
-        // a node that asked for it is refused rather than carried without it.
-        // The TLS path implements `pin` and `sni` with upstream's own
-        // precedence (D-11); silently dropping them here because the carrier
-        // changed would be a security downgrade the user configured against and
-        // has no way to observe. `sni=none` and `pin=none` are the documented
-        // defaults and what NowhereDash emits, so this refuses the configured
-        // case rather than the ordinary one.
-        if (resolved.requiresQuic && resolved.certificateVerification !is CertificateVerification.Skipped) {
+        // `pin` works on both carriers; chain verification against an `sni`
+        // name does not work on QUIC yet, and a node that asked for it is
+        // refused rather than carried without it. Silently dropping it because
+        // the carrier changed would be a security downgrade the user configured
+        // against and has no way to observe. `sni=none` and `pin=none` are the
+        // documented defaults and what NowhereDash emits, so this refuses the
+        // configured case rather than the ordinary one.
+        if (resolved.requiresQuic && resolved.certificateVerification is CertificateVerification.Sni) {
             Log.w(TAG, "a QUIC node asked for certificate verification, which this carrier does not do")
             TunnelController.report(TunnelState.Failed(R.string.tunnel_quic_verification_unsupported))
             descriptor.close()
@@ -323,9 +322,13 @@ class SomewhereVpnService : VpnService() {
                     QuicConnection.open(
                         remote = InetSocketAddress(portal, resolved.port),
                         alpn = resolved.alpn,
-                        // No SNI: this branch is only reached when verification
-                        // is Skipped, which is what `sni=none` means.
+                        // No SNI: an `sni` node was refused above, so what is
+                        // left is `pin` or nothing, and neither names a host to
+                        // send. A literal address as SNI is both wrong and a
+                        // fingerprint.
                         serverName = null,
+                        pinSha256 =
+                            (resolved.certificateVerification as? CertificateVerification.Pin)?.bytes,
                         protect = { socket -> protect(socket) },
                     )
                 }

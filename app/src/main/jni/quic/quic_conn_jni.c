@@ -54,6 +54,9 @@
 #include <openssl/ssl.h>
 #include <openssl/rand.h>
 #include <openssl/err.h>
+#include <openssl/sha.h>
+#include <openssl/mem.h>
+#include <openssl/pool.h>
 
 // Refusals that are this bridge's own, kept clear of ngtcp2's error space,
 // which is negative and small.
@@ -126,6 +129,16 @@ struct quic_conn {
 
     ngtcp2_ccerr last_error;
     char message[192];
+
+    // The certificate this connection will accept, and nothing else.
+    //
+    // SHA-256 of the leaf's DER encoding, which is what a `pin=` parameter
+    // carries and what the TLS carrier already compares. Absent is the ordinary
+    // case and means no verification at all -- upstream's own behaviour when a
+    // node names neither `sni` nor `pin`, and what every URL current dashboards
+    // emit produces.
+    uint8_t pin[SHA256_DIGEST_LENGTH];
+    int has_pin;
 
     // Datagrams waiting to go out, and ones that arrived. Both are FIFO, kept
     // as head/tail so a busy flow does not walk the list to append.
@@ -450,6 +463,62 @@ static int fill_addr(struct sockaddr_storage *out, socklen_t *outlen,
     return -1;
 }
 
+// Accepts exactly one certificate: the one whose DER encoding hashes to the pin.
+//
+// The chain is deliberately not consulted. A pinned certificate is commonly
+// self-signed, and checking the chain first would reject the very certificate
+// the pin names -- the TLS carrier makes the same choice for the same reason.
+//
+// Constant time, through CRYPTO_memcmp. A short-circuiting comparison leaks how
+// many leading bytes matched, which is enough to find a matching prefix one byte
+// at a time; that it would take a new handshake per byte makes it slow, not
+// impossible.
+static enum ssl_verify_result_t verify_pin(SSL *ssl, uint8_t *out_alert) {
+    ngtcp2_crypto_conn_ref *ref;
+    struct quic_conn *c;
+    const STACK_OF(CRYPTO_BUFFER) *chain;
+    const CRYPTO_BUFFER *leaf;
+    uint8_t digest[SHA256_DIGEST_LENGTH];
+
+    ref = (ngtcp2_crypto_conn_ref *)SSL_get_app_data(ssl);
+    c = ref ? (struct quic_conn *)ref->user_data : NULL;
+    if (!c || !c->has_pin) {
+        // Installed without a pin to compare against. Refusing is the only safe
+        // answer: this callback exists because verification was asked for.
+        if (c) {
+            say(c, "the verification callback could not find the pin it was installed for");
+        }
+        *out_alert = SSL_AD_INTERNAL_ERROR;
+        return ssl_verify_invalid;
+    }
+
+    chain = SSL_get0_peer_certificates(ssl);
+    if (!chain || sk_CRYPTO_BUFFER_num(chain) == 0) {
+        say(c, "the peer presented no certificate to pin against");
+        *out_alert = SSL_AD_BAD_CERTIFICATE;
+        return ssl_verify_invalid;
+    }
+
+    leaf = sk_CRYPTO_BUFFER_value(chain, 0);
+    SHA256(CRYPTO_BUFFER_data(leaf), CRYPTO_BUFFER_len(leaf), digest);
+    if (CRYPTO_memcmp(digest, c->pin, sizeof(digest)) != 0) {
+        // The presented digest goes into the message. A mismatch has two very
+        // different causes -- a wrong `pin=`, or a Portal serving a different
+        // certificate on this listener than on the one the pin was taken from
+        // -- and they are indistinguishable without it.
+        char hex[2 * SHA256_DIGEST_LENGTH + 1];
+        size_t i;
+        for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+            snprintf(hex + i * 2, 3, "%02x", digest[i]);
+        }
+        snprintf(c->message, sizeof(c->message),
+                 "the certificate does not match the pin; it presented %s", hex);
+        *out_alert = SSL_AD_BAD_CERTIFICATE;
+        return ssl_verify_invalid;
+    }
+    return ssl_verify_ok;
+}
+
 static int ssl_init(struct quic_conn *c, const char *server_name,
                     const uint8_t *alpn, size_t alpnlen) {
     uint8_t wire[256];
@@ -491,6 +560,13 @@ static int ssl_init(struct quic_conn *c, const char *server_name,
     // caller decides.
     if (server_name && server_name[0] != '\0') {
         SSL_set_tlsext_host_name(c->ssl, server_name);
+    }
+
+    // Only when a pin was given. Without one this stays at BoringSSL's client
+    // default, which verifies nothing -- the state every node that names
+    // neither `sni` nor `pin` is in, and the one upstream is in too.
+    if (c->has_pin) {
+        SSL_set_custom_verify(c->ssl, SSL_VERIFY_PEER, verify_pin);
     }
     return 0;
 }
@@ -614,11 +690,11 @@ JNIEXPORT jlong JNICALL
 Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
     JNIEnv *env, jclass clazz, jbyteArray local_ip, jint local_port,
     jbyteArray remote_ip, jint remote_port, jstring server_name,
-    jbyteArray alpn) {
+    jbyteArray alpn, jbyteArray pin) {
     (void)clazz;
     struct quic_conn *c;
     jbyte local_buf[16], remote_buf[16], alpn_buf[255];
-    jsize local_len, remote_len, alpn_len;
+    jsize local_len, remote_len, alpn_len, pin_len = 0;
     const char *name = NULL;
     int ok;
 
@@ -629,6 +705,15 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
         (remote_len != 4 && remote_len != 16) || alpn_len < 1 ||
         alpn_len > 255) {
         return 0;
+    }
+    // A pin of the wrong length is refused here rather than truncated or
+    // padded. Either would produce a connection that verifies against
+    // something nobody asked for, which is worse than not connecting.
+    if (pin) {
+        pin_len = (*env)->GetArrayLength(env, pin);
+        if (pin_len != SHA256_DIGEST_LENGTH) {
+            return 0;
+        }
     }
     (*env)->GetByteArrayRegion(env, local_ip, 0, local_len, local_buf);
     (*env)->GetByteArrayRegion(env, remote_ip, 0, remote_len, remote_buf);
@@ -642,6 +727,11 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
     c->conn_ref.get_conn = get_conn;
     c->conn_ref.user_data = c;
     ngtcp2_ccerr_default(&c->last_error);
+
+    if (pin_len == SHA256_DIGEST_LENGTH) {
+        (*env)->GetByteArrayRegion(env, pin, 0, pin_len, (jbyte *)c->pin);
+        c->has_pin = 1;
+    }
 
     if (fill_addr(&c->local_addr, &c->local_addrlen, (uint8_t *)local_buf,
                   (size_t)local_len, local_port) != 0 ||

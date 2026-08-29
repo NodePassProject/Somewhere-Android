@@ -186,6 +186,51 @@ class NowhereUrlTest {
     }
 
     @Test
+    fun aPinConvertsToTheSameBytesTheCarriersCompare() {
+        // Two carriers compare a pin in two places: the TLS path hashes a
+        // certificate object and compares hex, the QUIC path hands 32 bytes
+        // across a JNI boundary. One conversion serves both, so a mistake here
+        // would make a node verify against an arbitrary digest on one carrier
+        // and the right one on the other.
+        val pin = CertificateVerification.Pin("00112233445566778899aabbccddeeff" + "ffeeddccbbaa99887766554433221100")
+        val bytes = pin.bytes
+        assertEquals("a pin is a SHA-256, so 32 bytes", 32, bytes.size)
+        assertEquals(0x00.toByte(), bytes[0])
+        assertEquals(0x11.toByte(), bytes[1])
+        assertEquals(0xff.toByte(), bytes[15])
+        assertEquals(0xff.toByte(), bytes[16])
+        assertEquals(0x00.toByte(), bytes[31])
+        assertEquals(
+            "the bytes must render back to the pin they came from",
+            pin.sha256,
+            bytes.joinToString("") { "%02x".format(it) },
+        )
+    }
+
+    @Test
+    fun aPinParsedFromAUrlSurvivesTheRoundTripToBytes() {
+        // Through the parser rather than constructed, because the parser is
+        // what normalises case and it is the normalised form the carriers see.
+        val url = parsed("$minimal?pin=${"AB".repeat(32)}")
+        val pin = url.certificateVerification as CertificateVerification.Pin
+        assertEquals(32, pin.bytes.size)
+        assertTrue("every byte should be 0xab", pin.bytes.all { it == 0xab.toByte() })
+    }
+
+    @Test
+    fun aPinBuiltByHandFromSomethingThatIsNotHexFailsLoudly() {
+        // The parser accepts 64 lower-case hex characters and nothing else, so
+        // this is unreachable through it. It is reachable by constructing the
+        // value directly, which is what a later caller will eventually do, and
+        // the alternative to throwing is silently translating a non-hex
+        // character into a digit — a pin that then verifies against a digest
+        // nobody chose.
+        val bogus = CertificateVerification.Pin("z".repeat(64))
+        val failure = runCatching { bogus.bytes }.exceptionOrNull()
+        assertTrue("a non-hex pin must not be quietly translated", failure is IllegalStateException)
+    }
+
+    @Test
     fun aPinIsNormalisedToLowerCase() {
         val url = parsed("$minimal?pin=${"AB".repeat(32)}")
         assertEquals(CertificateVerification.Pin("ab".repeat(32)), url.certificateVerification)
