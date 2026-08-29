@@ -131,6 +131,79 @@ class BundledRulesTest {
         if (reserved.any { cidr.startsWith(it) }) return true
         // 172.16.0.0/12 and 100.64.0.0/10 need their prefix length read.
         if (cidr == "172.16.0.0/12" || cidr == "100.64.0.0/10" || cidr == "192.168.0.0/16") return true
-        return false
+        // IPv6, spelled out for the same reason: the list is the claim.
+        return cidr in reservedIpv6
+    }
+
+    private val reservedIpv6 =
+        setOf(
+            "::1/128",
+            "::/128",
+            "fc00::/7",
+            "fe80::/10",
+            "ff00::/8",
+            "2001:db8::/32",
+            "100::/64",
+        )
+
+    @Test
+    fun theBundledSetCoversBothFamilies() {
+        // A rule set that keeps local IPv4 out of the tunnel and lets local
+        // IPv6 into it is worse than one that does neither: it looks correct on
+        // the screen that lists it, and the printer stops working only for
+        // whichever family the device happened to prefer.
+        val rules = bundled().flatMap { RuleDocument.parse(it.readText()).getOrThrow().rules }
+        val cidrs = rules.filter { it.type == RuleType.IpCidr }.map { it.value }
+        assertTrue("no IPv4 rule ships", cidrs.any { !it.contains(':') })
+        assertTrue("no IPv6 rule ships", cidrs.any { it.contains(':') })
+    }
+
+    @Test
+    fun theStructuralIpv6RangesAreAllPresent() {
+        // Named individually rather than counted, so that deleting one fails
+        // here with the name of what stopped being kept out of the tunnel.
+        val cidrs =
+            bundled()
+                .flatMap { RuleDocument.parse(it.readText()).getOrThrow().rules }
+                .map { it.value }
+                .toSet()
+        listOf("::1/128", "fc00::/7", "fe80::/10", "ff00::/8").forEach { range ->
+            assertTrue("$range is not kept out of the tunnel", range in cidrs)
+        }
+    }
+
+    @Test
+    fun theNat64WellKnownPrefixIsNotDirect() {
+        // 64:ff9b::/96 is how a v6-only network reaches v4 hosts: the address
+        // is synthesised by the network's own DNS64 and the packet must go
+        // wherever every other packet goes. A DIRECT rule over it would take
+        // every IPv4 destination out of the tunnel on exactly the networks
+        // where this client is most needed, and would look like a sensible
+        // "reserved range" line to anyone adding it.
+        val cidrs =
+            bundled()
+                .flatMap { RuleDocument.parse(it.readText()).getOrThrow().rules }
+                .map { it.value }
+        assertFalse("the NAT64 prefix must not be routed around the tunnel", "64:ff9b::/96" in cidrs)
+    }
+
+    @Test
+    fun theBundledSetRoutesBothFamiliesWhenItIsLoaded() {
+        // The rules are text until something builds a matcher out of them; this
+        // is the check that the v6 half survives that step, which the v4 half
+        // has always had by way of the router's own tests.
+        val rules =
+            RoutingRules
+                .of(bundled().flatMap { RuleDocument.parse(it.readText()).getOrThrow().rules })
+                .getOrThrow()
+        assertEquals(RouteAction.Direct, rules.decide(RoutingRules.parseAddress("192.168.1.1")!!))
+        assertEquals(RouteAction.Direct, rules.decide(RoutingRules.parseAddress("fd12:3456::1")!!))
+        assertEquals(RouteAction.Direct, rules.decide(RoutingRules.parseAddress("fe80::1")!!))
+        assertEquals(RouteAction.Direct, rules.decide(RoutingRules.parseAddress("ff02::1")!!))
+        assertEquals(
+            "a public v6 address must not be pulled out of the tunnel",
+            null,
+            rules.decide(RoutingRules.parseAddress("2606:4700::1111")!!),
+        )
     }
 }

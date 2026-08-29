@@ -60,6 +60,29 @@ class DnsInterceptorTest {
     }
 
     @Test
+    fun `A and AAAA for one name share one pool entry`() {
+        // The families are two placeholders for one name, not two names. If
+        // they took an entry each, a pool sized for a day of browsing would
+        // hold half as many names as it says it does, and the eviction that
+        // followed would be twice as eager — a mapping dropped under a live
+        // flow is exactly what the retain rule exists to prevent.
+        val v6 = DnsInterceptor(pool, synthesiseIpv6 = true)
+        val a = v6.handle(dnsQuery("example.com", DnsMessage.TYPE_A)) as DnsInterceptor.Outcome.Answer
+        val aaaa = v6.handle(dnsQuery("example.com", DnsMessage.TYPE_AAAA)) as DnsInterceptor.Outcome.Answer
+        assertEquals("one name, one entry", 1, pool.size)
+
+        val four = a.message.copyOfRange(a.message.size - 4, a.message.size)
+        val sixteen = aaaa.message.copyOfRange(aaaa.message.size - 16, aaaa.message.size)
+        assertEquals("example.com", pool.nameFor(four))
+        assertEquals("example.com", pool.nameFor(sixteen))
+        assertEquals(
+            "and both addresses are the same entry, so a flow over either resolves the same name",
+            pool.nameFor(four),
+            pool.nameFor(sixteen),
+        )
+    }
+
+    @Test
     fun `queries that are not for an address are relayed untouched`() {
         // MX, TXT, SRV, PTR, NS, SOA, HTTPS, and ANY: every one of them needs a
         // real resolver, and none of them can be answered with an address.

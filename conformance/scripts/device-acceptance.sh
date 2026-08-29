@@ -103,20 +103,59 @@ elif [ "${LAUNCHABLE:-0}" -gt 0 ] && [ "$INSTALLED" -gt 0 ]; then
 fi
 
 # ── 3. Address families ─────────────────────────────────────────────────────
-# The TUN carries a v4 address and a v4 default route and nothing else, and
-# fake-IP answers AAAA with NODATA by design. On an IPv6-only mobile network
-# that may carry nothing at all.
+# The TUN carries both families since L4: an address and a default route for
+# each, and the DNS layer synthesises AAAA behind that route. Two things can go
+# wrong on a device and neither raises anything: the platform can decline a
+# family it did not like the look of, and the network can be one this tunnel has
+# never met.
 head2 "3. Address families on the current network"
 V4="$(sh 'ip -4 addr show scope global' | grep -c 'inet ' || true)"
 V6="$(sh 'ip -6 addr show scope global' | grep -c 'inet6' || true)"
 echo "  global IPv4 addresses: $V4"
 echo "  global IPv6 addresses: $V6"
 if [ "${V4:-0}" -eq 0 ] && [ "${V6:-0}" -gt 0 ]; then
-    miss "IPv6-only network. This client's TUN carries no IPv6 route, so it will carry nothing here. This is the case Phase D exists to find."
+    note "IPv6-only network. The tunnel itself carries both families, but the socket to the Portal must still reach it — over IPv6, or over NAT64 if the Portal is v4-only. Watch for a tunnel that comes up and carries nothing."
 elif [ "${V6:-0}" -gt 0 ]; then
-    note "dual-stack. v6 traffic takes the underlying network rather than the tunnel, by design and unchanged."
+    pass "dual-stack, which is the case the v6 route exists for"
 else
-    pass "IPv4 only; the TUN's single route covers it"
+    note "IPv4 only, so nothing here exercises the v6 half. Re-run on a network that has it."
+fi
+
+head2 "3b. What the platform actually built"
+# Read from the device rather than from the source: Builder.addAddress accepts
+# what it is given and establish() returns null rather than explaining itself,
+# so a family Android declined looks exactly like one it did not.
+TUN_IFACE="$(sh 'ip -4 addr show' | grep -B2 '10\.66\.0\.2' | head -1 | sed 's/^[0-9]*: \([^:]*\).*/\1/')"
+if [ -z "$TUN_IFACE" ]; then
+    note "no interface carries 10.66.0.2, so the tunnel is not up. Start it and re-run; §4 brings it up on its own."
+else
+    echo "  tunnel interface: $TUN_IFACE"
+    TUN_V4="$(sh "ip -4 addr show dev $TUN_IFACE" | grep -c 'inet ' || true)"
+    TUN_V6="$(sh "ip -6 addr show dev $TUN_IFACE" | grep -c 'inet6' || true)"
+    TUN_ROUTE6="$(sh "ip -6 route show dev $TUN_IFACE" | grep -c 'default\|^::/0' || true)"
+    if [ "${TUN_V4:-0}" -gt 0 ] && [ "${TUN_V6:-0}" -gt 0 ]; then
+        pass "$TUN_IFACE carries both families"
+    else
+        miss "$TUN_IFACE carries v4=$TUN_V4 v6=$TUN_V6 — the platform declined a family this client declares, and the DNS layer is minting placeholders for it"
+    fi
+    if [ "${TUN_ROUTE6:-0}" -gt 0 ]; then
+        pass "an IPv6 default route points into $TUN_IFACE"
+    else
+        miss "no IPv6 default route into $TUN_IFACE, so v6 traffic leaves the device outside the tunnel"
+    fi
+fi
+
+head2 "3c. An IPv6 destination through the tunnel"
+# Needs an origin the Portal can reach over IPv6. The docker origin
+# e2e-fakeip.sh starts is v4-only, so this is supplied or it is a note --
+# never a silent pass.
+if [ -z "${NOWHERE_E2E_TARGET6:-}" ]; then
+    note "no NOWHERE_E2E_TARGET6 given, so nothing checked that a v6 destination is carried. Set it to [addr]:port of an HTTP origin reachable over IPv6 from the Portal, serving /blob.bin with X-Content-Sha256."
+elif NOWHERE_E2E_CARRIER=tcp "$ROOT/e2e-tunnel-fetch.sh" "$NOWHERE_E2E_TARGET6" /blob.bin > /tmp/somewhere-fetch-v6.log 2>&1; then
+    RELAYED6="$(grep -o 'the Portal relayed [0-9]* bytes' /tmp/somewhere-fetch-v6.log | head -1)"
+    pass "an IPv6 destination is carried — ${RELAYED6:-no counter}"
+else
+    miss "IPv6 destination: $(tail -3 /tmp/somewhere-fetch-v6.log | tr '\n' ' ')"
 fi
 
 # ── 4. The tunnel actually carries traffic ──────────────────────────────────

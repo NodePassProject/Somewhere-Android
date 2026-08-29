@@ -22,6 +22,17 @@
 # DIRECT rule over it would be a second, contradictory statement of something
 # the router already guarantees: a direct flow dials the name, never the address
 # that carried it.
+#
+# Its IPv6 counterpart, fc00::/96, cannot be kept out the same way: it sits
+# inside fc00::/7, which is the whole unique-local range and belongs here for
+# exactly the reason 192.168.0.0/16 does. That overlap is safe, and it is worth
+# saying why rather than leaving a reader to work it out. A synthetic address is
+# resolved back to its name *before* the router is consulted, so a live mapping
+# never reaches these rules as an address at all. What can reach them is a
+# synthetic address whose mapping has expired — and DIRECT is the better answer
+# for it than TUNNEL: the direct path refuses a synthetic address by name, with
+# a reason that says so, instead of spending a Portal flow on an address that
+# exists only inside this device.
 
 # This device.
 IP-CIDR,127.0.0.0/8,DIRECT
@@ -57,3 +68,29 @@ DOMAIN-SUFFIX,localhost,DIRECT
 DOMAIN-SUFFIX,home.arpa,DIRECT
 DOMAIN-SUFFIX,lan,DIRECT
 DOMAIN-SUFFIX,internal,DIRECT
+
+# --- IPv6, which is the same arithmetic ---
+#
+# Written as IP-CIDR6 for readers of Clash-family lists, though this client
+# routes on the address family rather than on the keyword.
+
+# This device, and the address that means "no address".
+IP-CIDR6,::1/128,DIRECT
+IP-CIDR6,::/128,DIRECT
+
+# RFC 4193. Unique-local: the private ranges of IPv6, and what a home router
+# hands out when it has no delegated prefix.
+IP-CIDR6,fc00::/7,DIRECT
+
+# RFC 4291. Link-local, which every IPv6 interface has whether or not anything
+# configured it, and which is meaningless off the link it belongs to.
+IP-CIDR6,fe80::/10,DIRECT
+
+# RFC 4291. Multicast, which does not survive a tunnel by definition.
+IP-CIDR6,ff00::/8,DIRECT
+
+# RFC 3849 and RFC 6666. Documentation, and the range whose entire purpose is
+# to be dropped. A flow reaching either is a misconfiguration worth failing
+# fast.
+IP-CIDR6,2001:db8::/32,DIRECT
+IP-CIDR6,100::/64,DIRECT

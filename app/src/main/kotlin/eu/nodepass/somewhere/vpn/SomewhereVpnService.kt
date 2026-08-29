@@ -50,17 +50,17 @@ import java.net.InetSocketAddress
  *
  * ## Names
  *
- * The TUN announces **its own resolver**, at [TUN_DNS], and that is what makes
- * the fake-IP layer work at all. Android's resolver does not simply emit a UDP
+ * The TUN announces **its own resolvers**, from [TunConfiguration], and that is
+ * what makes the fake-IP layer work at all. Android's resolver does not simply emit a UDP
  * packet and let the routing table decide: it asks `netd`, and `netd` queries
  * the servers configured for the network the app is on. A tunnel that announces
  * none leaves those queries on the underlying network, where this client never
  * sees them — the names would be resolved on the device, and every flow would
  * open to an address again.
  *
- * Announcing one has a cost, and it is paid two lines below. [TUN_DNS] exists
- * nowhere but inside this TUN, so a query that the interceptor declines cannot
- * simply be forwarded to where it was addressed. The device's **own** resolvers
+ * Announcing one has a cost, and it is paid in [underlyingResolvers]. Those
+ * addresses exist nowhere but inside this TUN, so a query that the interceptor
+ * declines cannot simply be forwarded to where it was addressed. The device's **own** resolvers
  * are therefore read off the underlying network before the tunnel replaces
  * them, and the declined queries go there. Choosing a public resolver instead
  * would be a policy decision a tunnel has no business making; the user's
@@ -91,27 +91,8 @@ class SomewhereVpnService : VpnService() {
         const val ACTION_STOP = "eu.nodepass.somewhere.STOP"
         const val EXTRA_NODE_URL = "node"
 
-        /**
-         * The address the TUN presents to the device.
-         *
-         * `10.66.0.0/24` rather than one of the ranges every other tunnel picks
-         * — a collision with the device's real network makes the LAN
-         * unreachable while connected, and the symptom ("my printer stopped
-         * working") is never attributed to this.
-         */
-        private const val TUN_ADDRESS = "10.66.0.2"
-        private const val TUN_PREFIX = 24
-        private const val TUN_MTU = 1500
-
-        /**
-         * The resolver this tunnel announces.
-         *
-         * Inside the TUN's own subnet, so a query to it is routed here rather
-         * than anywhere. Nothing listens on it in the ordinary sense — the
-         * packets arrive at lwIP and are answered by
-         * [NowhereFlowHandler.onUdpDatagram].
-         */
-        private const val TUN_DNS = "10.66.0.1"
+        // Addresses, routes, resolvers and MTU live in [TunConfiguration],
+        // which is a value a test can read. What is left here is applying it.
 
         fun start(
             context: Context,
@@ -241,13 +222,19 @@ class SomewhereVpnService : VpnService() {
         val builder =
             Builder()
                 .setSession(getString(R.string.app_name))
-                .addAddress(TUN_ADDRESS, TUN_PREFIX)
-                .addRoute("0.0.0.0", 0)
-                .addDnsServer(TUN_DNS)
-                .setMtu(TUN_MTU)
+                .setMtu(TunConfiguration.MTU)
                 // Blocking reads: a non-blocking TUN returns 0 in a tight loop
                 // and burns a core doing nothing.
                 .setBlocking(true)
+
+        // Both families, addresses before routes, and a resolver per family.
+        // Applied from the configuration rather than written out here so that
+        // the relationships between them — a resolver that must be routed, an
+        // address that must not be one the fake-IP pool could mint — stay
+        // checkable by a test that needs no device.
+        TunConfiguration.addresses.forEach { builder.addAddress(it.address, it.prefix) }
+        TunConfiguration.routes.forEach { builder.addRoute(it.address, it.prefix) }
+        TunConfiguration.dnsServers.forEach { builder.addDnsServer(it) }
 
         // Fixed here for the life of this descriptor: Android has no way to
         // change the per-application set on a tunnel that is already up, which

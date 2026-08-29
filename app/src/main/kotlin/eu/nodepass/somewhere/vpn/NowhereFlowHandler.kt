@@ -8,6 +8,7 @@ import eu.nodepass.somewhere.dns.DnsInterceptor
 import eu.nodepass.somewhere.dns.DnsMessage
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.dns.FakeIpResolver
+import eu.nodepass.somewhere.dns.UpstreamResolvers
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.SetupResult
@@ -214,7 +215,7 @@ class NowhereFlowHandler(
      * not: this is parsing and a map lookup over a datagram-sized buffer, and
      * it finishes in microseconds rather than in round trips.
      */
-    private val dns = DnsInterceptor(fakeIp)
+    private val dns = DnsInterceptor(fakeIp, synthesiseIpv6 = TunConfiguration.carriesIpv6)
 
     /** Datagrams, carried as UDP over stream. Everything DNS cannot answer lands here. */
     private val udp = UdpRelay(session, fakeIp, meter, pump, scope)
@@ -332,7 +333,8 @@ class NowhereFlowHandler(
         isIpv6: Boolean,
         data: ByteArray,
     ) {
-        val resolver = upstreamResolvers.firstOrNull { it.size == destination.size }
+        // Family is a preference rather than a requirement; see [UpstreamResolvers].
+        val resolver = UpstreamResolvers.choose(upstreamResolvers, destination.size)
         if (resolver == null) {
             answerLocally(source, sourcePort, destination, destinationPort, isIpv6, serverFailure(data))
             return
