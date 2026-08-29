@@ -168,7 +168,8 @@ Three things, which is the argument for writing it rather than assuming it:
 
 # L2
 
-Twenty-one rows, added when the Mux carrier landed. The same three states, and
+Twenty-three rows, added when the Mux carrier landed and extended when a
+concurrency measurement that had been passing vacuously was repaired. The same three states, and
 the same rule: no row is silent.
 
 | # | Case | State | Covered by |
@@ -183,6 +184,8 @@ the same rule: no row is silent.
 | 8 | RST must be the only flag with `value=0` | covered | `MuxHeaderVectorTest.everyRejectionVectorIsRefused` (both halves: `ResetNotAlone` and `ResetWithValue`) |
 | 9 | Any other flag bit set is rejected | covered | `MuxHeaderVectorTest.everyReservedFlagBitIsRejected` |
 | 10 | Late FIN and RST processing is idempotent | covered | `MuxCarrierTest.lateFinAndResetAreIdempotent`. This row found a real defect: the first carrier treated a late FIN as data for an unknown flow and tore itself down whenever any flow closed |
+| 10a | A rejected flow is released, never reset | covered | `MuxCarrierRefusalTest.aRejectedFlowIsReleasedRatherThanReset`. **The mirror of row 10, from this client's side, and a defect until 2026-08-29.** Section 3 makes STREAM data for an unknown flow a *carrier* error, and the Portal forgets a refused stream as it answers — so a RST after a rejection closed the connection and failed every other flow multiplexed onto it. Found on a device: Android's Private DNS probes port 853 the moment a tunnel comes up, the Portal answers `DIAL_FAILED`, and one to four of sixteen concurrent fetches came back empty depending on which shard the probe landed on. This client now writes no RST at all |
+| 10b | A slow SYN answer is waited for, not called a refusal | covered | `MuxCarrierTest.aPortalThatTakesItsTimeAnsweringIsNotAFailedAuthentication`, `.theSetupDeadlineIsTheDedicatedLanesRatherThanAPollInterval`. The carrier gave the setup byte a 250 ms queue-poll interval where a dedicated lane gives the identical protocol step fifteen seconds, and reported anything slower as "authentication most likely failed" |
 | 11 | Payload needs both credits before queueing | covered | `MuxCarrierCreditTest.aWindowWithFlowZeroReplenishesTheConnection` — stream credit alone is shown not to be enough. Verified to fail: removing the connection-credit check turns it red |
 | 12 | WINDOW with `flowId=0` replenishes connection credit | covered | as row 11 |
 | 13 | Credit beyond the configured window closes the carrier | covered | `MuxCreditTest.creditBeyondTheWindowIsRefused`, `MuxCarrierCreditTest.creditBeyondTheWindowClosesTheCarrier` |

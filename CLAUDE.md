@@ -17,7 +17,8 @@ comments, everything. Do not emit Chinese in project files.
 - **Delivered in layers**: L1 TLS/TCP → L2 Mux → L3 QUIC. Each layer ships to
   internal testing and leaves a fix-back window. No big-bang release.
 - **All three layers are delivered** (L1 and L2 on 2026-08-27, L3 on 2026-08-29),
-  together with the release tail. A bare `nowhere://key@host:port` — a QUIC node,
+  together with the release tail and L4 — IPv6 end to end, `pin` on the QUIC
+  carrier, node failover, a scheduled subscription refresh and a tile. A bare `nowhere://key@host:port` — a QUIC node,
   because the specification defaults both directions to `udp` — connects and
   carries traffic, and the oracle differential agrees on every case over every
   carrier combination. What has *not* happened is a physical device: every device
@@ -32,7 +33,7 @@ comments, everything. Do not emit Chinese in project files.
 | `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor, plus the QUIC bridge and the library's export map |
 | `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
-| `app/src/main/assets/rules/` | The bundled rule set (D-14), network-structural tier only, carrying a provenance header |
+| `app/src/main/assets/rules/` | The bundled rule set (D-14), network-structural tier only, both address families, carrying a provenance header |
 | `docs/` | Architecture, the design system, i18n, brand, privacy, store policy, and the TLS exporter ADR |
 
 The lwIP layer is inherited from `NodePassProject/Anywhere-Android` (GPL-3.0) at
@@ -324,6 +325,59 @@ Two rules from those documents that reach into protocol code:
     carriers, and section 9 carriage has to be applied per direction — the
     oracle differential caught split-UDP diverging when the framing was attached
     to the flow instead. `DatagramLane` is the shared piece both directions use.
+
+33. **A poll interval is not a protocol deadline.** `MuxCarrier.readStream`
+    answers three things with three values, and **0 means "nothing in the last
+    250 ms"** rather than a verdict. `open` read it as one, so a Portal that
+    answered a SYN slower than a quarter of a second was reported as
+    "authentication most likely failed" — the most misleading sentence
+    available. A dedicated lane gives the same protocol step fifteen seconds;
+    the carrier now gives it the same, because how long a Portal takes to dial
+    a target belongs to the target rather than to the carrier.
+34. **A rejected flow must not be reset.** The rejection *is* the teardown — the
+    Portal answers and forgets the stream in the same breath — and section 3
+    says STREAM data for an unknown flow is a **carrier** error. So a RST after
+    a rejection closes the whole connection and fails every other flow on it.
+    The trigger is ordinary and permanent: Android's Private DNS probes port 853
+    the moment a tunnel comes up, the Portal answers `DIAL_FAILED`, and whichever
+    shard the probe landed on lost its other flows half a second later. One to
+    four of sixteen concurrent fetches came back empty, intermittently. This
+    client now sends no RST at all; reading one stays implemented, because the
+    Portal may send one.
+35. **The TUN was one route away from carrying IPv6.** `LWIP_IPV6` was on, the
+    netif had a valid v6 address, the bridge threaded `is_ipv6` through every
+    callback, `FakeIpPool` minted `fc00::/96`, `RoutingRules` had a v6 trie, and
+    an IPv6 Portal host parsed — all switched off by a builder that added one
+    IPv4 address and one `0.0.0.0/0` route. And the leak was narrower than it
+    looked: a destination reached by *name* never leaked, because AAAA is
+    answered NODATA by design and the **name** is what travels to the Portal.
+    Only a literal IPv6 destination left the tunnel.
+36. **A declined DNS query must be forwarded to whatever resolver exists**, not
+    only to one of the family it arrived over. The reply is written back from
+    the address the device addressed, whatever family the forward was dialled
+    over. Requiring a match meant that on an IPv6-only network every query the
+    interceptor declines — MX, SRV, PTR, and the HTTPS records a browser asks
+    for before it connects — was answered SERVFAIL while A and AAAA kept
+    working, which reads as the site being broken.
+37. **`getHostAddress` does not agree with itself across implementations for
+    IPv6.** One prints `fd66::2` and another `fd66:0:0:0:0:0:0:2`. A device test
+    comparing printed forms passes or fails for reasons unrelated to the
+    tunnel; compare `InetAddress.address` bytes.
+38. **A Portal container that publishes only TCP makes every QUIC connection
+    look like a client defect.** It does not refuse — it waits out the handshake
+    deadline and reports a timeout. A round of the certificate work was spent
+    debugging that as a verification failure before `-p PORT:PORT/udp` was the
+    answer.
+39. **`TunnelController.state` is process-wide and outlives the test that set
+    it.** "Wait until it is not Connecting" is true before the service has run,
+    because the state before a start is Disconnected; "wait until it is Failed"
+    is true because the *previous* test failed. Both were written and both
+    passed vacuously. Wait on something `@Before` clears.
+40. **Lint's `StartActivityAndCollapseDeprecated` is not suppressible.** Neither
+    `@Suppress` nor `@SuppressLint` on the enclosing function silences it, even
+    inside the `Build.VERSION` check that makes the call safe. The tile
+    therefore calls `startActivity` below API 34 and opens the app with the
+    shade still over it, which is recorded rather than left to be rediscovered.
 
 ## Already verified — do not redo
 

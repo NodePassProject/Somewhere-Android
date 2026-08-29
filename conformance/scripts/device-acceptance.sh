@@ -121,30 +121,6 @@ else
     note "IPv4 only, so nothing here exercises the v6 half. Re-run on a network that has it."
 fi
 
-head2 "3b. What the platform actually built"
-# Read from the device rather than from the source: Builder.addAddress accepts
-# what it is given and establish() returns null rather than explaining itself,
-# so a family Android declined looks exactly like one it did not.
-TUN_IFACE="$(sh 'ip -4 addr show' | grep -B2 '10\.66\.0\.2' | head -1 | sed 's/^[0-9]*: \([^:]*\).*/\1/')"
-if [ -z "$TUN_IFACE" ]; then
-    note "no interface carries 10.66.0.2, so the tunnel is not up. Start it and re-run; §4 brings it up on its own."
-else
-    echo "  tunnel interface: $TUN_IFACE"
-    TUN_V4="$(sh "ip -4 addr show dev $TUN_IFACE" | grep -c 'inet ' || true)"
-    TUN_V6="$(sh "ip -6 addr show dev $TUN_IFACE" | grep -c 'inet6' || true)"
-    TUN_ROUTE6="$(sh "ip -6 route show dev $TUN_IFACE" | grep -c 'default\|^::/0' || true)"
-    if [ "${TUN_V4:-0}" -gt 0 ] && [ "${TUN_V6:-0}" -gt 0 ]; then
-        pass "$TUN_IFACE carries both families"
-    else
-        miss "$TUN_IFACE carries v4=$TUN_V4 v6=$TUN_V6 — the platform declined a family this client declares, and the DNS layer is minting placeholders for it"
-    fi
-    if [ "${TUN_ROUTE6:-0}" -gt 0 ]; then
-        pass "an IPv6 default route points into $TUN_IFACE"
-    else
-        miss "no IPv6 default route into $TUN_IFACE, so v6 traffic leaves the device outside the tunnel"
-    fi
-fi
-
 head2 "3c. A synthetic IPv6 address, end to end"
 # The v6 half of the fake-IP layer, proved with nothing but this device: the
 # name is resolved through the tunnel's own resolver, which answers AAAA with an
@@ -191,6 +167,67 @@ for CARRIER in tcp udp; do
         miss "$CARRIER: $(tail -3 "/tmp/somewhere-fetch-$CARRIER.log" | tr '\n' ' ')"
     fi
 done
+
+head2 "4a. What the platform actually built"
+# Read from the device rather than from the source: Builder.addAddress accepts
+# what it is given and establish() returns null rather than explaining itself,
+# so a family Android declined looks exactly like one it did not. The
+# instrumentation case brings the tunnel up itself and reads the interface while
+# it is there, which a shell probe between two other checks cannot.
+if adb -s "$DEVICE" shell am instrument -w \
+        -e class eu.nodepass.somewhere.vpn.TunFamiliesOnDeviceTest \
+        -e nowhereE2ePortal "$PORTAL" \
+        -e nowhereE2eKey "${NOWHERE_E2E_KEY:-conformance-smoke-key}" \
+        eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner 2>/dev/null \
+        | tee /tmp/somewhere-families.log | grep -q "^OK ("; then
+    pass "the TUN carries both families at the MTU asked for"
+else
+    miss "TUN families: $(grep -m1 'stack=' /tmp/somewhere-families.log | cut -c1-200)"
+fi
+
+# ── 4b. Failing over to another node ────────────────────────────────────────
+# Two nodes, one that cannot be reached. The instrumentation case is the
+# assertion; this runs it here so the whole device pass is still one command,
+# and so a phone with a real network is what it runs on.
+head2 "4b. Failover"
+if adb -s "$DEVICE" shell am instrument -w \
+        -e class eu.nodepass.somewhere.vpn.FailoverOnDeviceTest \
+        -e nowhereE2ePortal "$PORTAL" \
+        eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner 2>/dev/null \
+        | tee /tmp/somewhere-failover.log | grep -q "^OK ("; then
+    pass "an unreachable node is recorded as unreachable, and a refused one is not"
+else
+    miss "failover: $(grep -m1 'stack=' /tmp/somewhere-failover.log | cut -c1-160)"
+fi
+
+# ── 4c. The background surface ──────────────────────────────────────────────
+head2 "4c. Subscription refresh, and the tile"
+if adb -s "$DEVICE" shell am instrument -w \
+        -e class eu.nodepass.somewhere.subscription.SubscriptionRefreshScheduleTest \
+        eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner 2>/dev/null \
+        | tee /tmp/somewhere-refresh.log | grep -q "^OK ("; then
+    pass "the platform accepts the refresh schedule, persists it, and drops it with the switch"
+else
+    miss "refresh schedule: $(grep -m1 'stack=' /tmp/somewhere-refresh.log | cut -c1-160)"
+fi
+
+# Whether the job ever *fires* is Doze's decision and cannot be asserted from
+# here; it can be provoked, which is a different thing and worth saying so.
+if [ "${EMULATED:-0}" = "1" ]; then
+    note "Doze is not real on an emulator. On a phone: adb shell cmd deviceidle force-idle, wait, then adb shell cmd jobscheduler run -f $APP_ID 0x50FA, and check the subscription's timestamp moved."
+else
+    note "to see the refresh actually fire under Doze: adb shell cmd deviceidle force-idle, then adb shell cmd jobscheduler run -f $APP_ID 0x50FA, then look at the subscription timestamp on the Nodes screen."
+fi
+
+# Asked of the package manager's own resolution rather than of the manifest:
+# a tile declared but not resolvable — a missing intent-filter, a permission
+# the system does not accept — is a service that exists and can never be added.
+TILE="$(adb -s "$DEVICE" shell pm query-services --brief -a android.service.quicksettings.action.QS_TILE 2>/dev/null | grep -F "$APP_ID/.vpn.TunnelTileService" | tr -d ' \r')"
+if [ -n "$TILE" ]; then
+    note "the tile is registered as $TILE. Add it from the shade's editor and check by hand: it shows the node name, it opens the app when no node has ever connected, and it refuses to start without VPN consent."
+else
+    miss "the quick-settings tile is not registered on this device"
+fi
 
 # ── 5. Doze and battery management ──────────────────────────────────────────
 # Vendor battery managers kill foreground services that survive indefinitely on

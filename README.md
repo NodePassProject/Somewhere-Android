@@ -19,12 +19,12 @@ which is a QUIC node, because the specification's default for both directions is
 | Protocol, L2 | TLS Mux. Sixteen concurrent flows measured over four connections, at upstream's stated shard density |
 | Protocol, L3 | QUIC: authentication, TCP flows over reliable streams, UDP over DATAGRAM with fragmentation, split flows across two carriers |
 | Carriers | All four combinations — `tcp/tcp`, `udp/udp`, `udp/tcp`, `tcp/udp` — compared case by case against the reference implementation, which agrees on every one |
-| Tunnel | `VpnService` + lwIP, TCP with back-pressure, UDP, DNS interception with fake-IP, live throughput |
-| Routing | A rule matcher, an import path, a bundled network-structural rule set, a direct path, a reject path |
+| Tunnel | `VpnService` + lwIP, **both address families**, TCP with back-pressure, UDP, DNS interception with fake-IP over IPv4 and IPv6, live throughput |
+| Routing | A rule matcher, an import path, a bundled network-structural rule set for both families, a direct path, a reject path |
 | Per-app | A real installed list, a persisted selection, and this client structurally outside its own tunnel |
-| Nodes | Stored, imported from a `nowhere://` link, probed for reachability |
-| Subscription | Fetching and parsing, with upstream's actual quota semantics |
-| UI | Nine screens, both themes, three locales |
+| Nodes | Stored, imported from a `nowhere://` link, probed for reachability, and failed over when one cannot be reached |
+| Subscription | Fetching and parsing with upstream's actual quota semantics, and a periodic refresh that is off until asked for |
+| UI | Nine screens, both themes, three locales, and a quick-settings tile |
 
 **What is not done**, stated as plainly as the rest:
 
@@ -32,6 +32,10 @@ which is a QUIC node, because the specification's default for both directions is
   emulator. Private DNS over DoT, IPv6-only and NAT64 networks, a real Wi-Fi to
   cellular change, Doze and a path MTU below 1500 are all things an emulator
   cannot represent, and all things a VPN meets on the first real device.
+- **Start on boot is deliberately absent.** Android's always-on VPN starts the
+  tunnel before applications run and can block traffic while it is down; an
+  in-app boot receiver would be a worse version of it. Settings links to the
+  system switch instead.
 - **The QUIC carrier does not verify a certificate chain.** `pin` works on both
   carriers; a node carrying `sni` is refused rather than carried without it. See
   [ADR-0002](docs/adr-0002-quic-certificate-verification.md).
@@ -50,8 +54,9 @@ There is no big-bang release.
 | **L2** · TLS Mux | The Mux carrier at upstream's own shard density, and concurrency measured over it | **Done**, 2026-08-27 |
 | **L3** · QUIC | ngtcp2 over aws-lc, authentication, TCP over reliable streams, UDP over DATAGRAM, split flows across two carriers, keep-alive, and every carrier combination compared against the reference implementation | **Done**, 2026-08-29 |
 | **Release tail** | A bundled rule set, a connection log that shows what the Portal actually said, a launcher icon, a release build that has been run rather than only produced, and the documents a VPN-class listing requires | **Done**, 2026-08-29 |
+| **L4** · product surface | IPv6 end to end, `pin` on the QUIC carrier, node health and failover, a scheduled subscription refresh and a quick-settings tile | **Done**, 2026-08-29 |
 | **Device pass** | The first run on physical hardware: Private DNS, a real per-app list, a Wi-Fi to cellular change, Doze, a path MTU below 1500 | **Not started.** No physical device has ever been attached to this project |
-| **L4** · product surface | Subscription refresh, latency testing, encrypted DNS. Scope deliberately not fixed before a device pass says what the product actually needs | **Not started** |
+| **L5** · what the device pass asks for | Chain verification against `sni` on QUIC ([ADR-0002](docs/adr-0002-quic-certificate-verification.md)), and whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
 | **Publication** | A signing key, a distribution channel, a first release | **Waiting on decisions rather than on code** |
 
 ### How much of it is done
@@ -66,9 +71,9 @@ from the table.
 | Layer | Rows | Covered by a test | Partly, with the gap named | Blocked |
 |---|---|---|---|---|
 | L1 | 63 | 62 | 1 | 0 |
-| L2 | 21 | 20 | 1 | 0 |
+| L2 | 23 | 22 | 1 | 0 |
 | L3 | 27 | 25 | 2 | 0 |
-| **Total** | **111** | **107** | **4** | **0** |
+| **Total** | **113** | **109** | **4** | **0** |
 
 The four partial rows are each half of a pair: this client's half is tested, and
 the other half needs something no repository can contain — a running dashboard, a
