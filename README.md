@@ -37,6 +37,47 @@ which is a QUIC node, because the specification's default for both directions is
   both.
 - **No release has been published**, and no signing key exists.
 
+## Roadmap
+
+Delivery is layered, and each layer is a working client rather than a stage of
+one: it ships to internal testing and leaves a window to fix what testing finds.
+There is no big-bang release.
+
+| Stage | What it delivers | State |
+|---|---|---|
+| **M0** · foundations | Public repository, CI, the quality gates, and the conformance suite the later layers are judged by | **Done**, 2026-08-24 |
+| **L1** · TLS over TCP | Authentication, FlowHeader, Target, the seven setup outcomes, the dedicated lane, UDP over a stream — and, pulled forward because a client nobody can feed nodes to cannot be tested, the TUN, DNS with fake-IP, node storage and subscription import | **Done**, 2026-08-27 |
+| **L2** · TLS Mux | The Mux carrier at upstream's own shard density, and concurrency measured over it | **Done**, 2026-08-27 |
+| **L3** · QUIC | ngtcp2 over aws-lc, authentication, TCP over reliable streams, UDP over DATAGRAM, split flows across two carriers, keep-alive, and every carrier combination compared against the reference implementation | **Done**, 2026-08-29 |
+| **Release tail** | A bundled rule set, a connection log that shows what the Portal actually said, a launcher icon, a release build that has been run rather than only produced, and the documents a VPN-class listing requires | **Done**, 2026-08-29 |
+| **Device pass** | The first run on physical hardware: Private DNS, a real per-app list, a Wi-Fi to cellular change, Doze, a path MTU below 1500 | **Not started.** No physical device has ever been attached to this project |
+| **L4** · product surface | Subscription refresh, latency testing, encrypted DNS. Scope deliberately not fixed before a device pass says what the product actually needs | **Not started** |
+| **Publication** | A signing key, a distribution channel, a first release | **Waiting on decisions rather than on code** |
+
+### How much of it is done
+
+[`conformance/cases/l1-coverage.md`](conformance/cases/l1-coverage.md) is the
+measure. It carries one row per specification obligation, and every row either
+names the test that covers it or says what it is waiting for — so these counts
+can be re-derived by reading it rather than taken on trust. They were wrong once,
+carried forward through two runs by hand, and that is why they are now counted
+from the table.
+
+| Layer | Rows | Covered by a test | Partly, with the gap named | Blocked |
+|---|---|---|---|---|
+| L1 | 63 | 62 | 1 | 0 |
+| L2 | 21 | 20 | 1 | 0 |
+| L3 | 27 | 25 | 2 | 0 |
+| **Total** | **111** | **107** | **4** | **0** |
+
+The four partial rows are each half of a pair: this client's half is tested, and
+the other half needs something no repository can contain — a running dashboard, a
+Portal that refuses stream credit, a phone.
+
+**The protocol is finished and the product is not.** Between this repository and
+a release stand a physical device, a decision about certificate verification on
+the QUIC carrier, and a signing key that will never live here.
+
 ## Protocol baseline
 
 Pinned in [`conformance/PROTOCOL_BASELINE`](conformance/PROTOCOL_BASELINE):

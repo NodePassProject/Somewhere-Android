@@ -16,21 +16,30 @@ comments, everything. Do not emit Chinese in project files.
   cross-compiled for Android.
 - **Delivered in layers**: L1 TLS/TCP → L2 Mux → L3 QUIC. Each layer ships to
   internal testing and leaves a fix-back window. No big-bang release.
+- **All three layers are delivered** (L1 and L2 on 2026-08-27, L3 on 2026-08-29),
+  together with the release tail. A bare `nowhere://key@host:port` — a QUIC node,
+  because the specification defaults both directions to `udp` — connects and
+  carries traffic, and the oracle differential agrees on every case over every
+  carrier combination. What has *not* happened is a physical device: every device
+  result in this repository is from an emulator. The README's roadmap carries the
+  stage view and the conformance row counts behind it.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36 |
+| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36. Nine screens, three locales, and the protocol, TUN, DNS, routing and per-app layers |
 | `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor, plus the QUIC bridge and the library's export map |
 | `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
-| `docs/` | Architecture, the design system, i18n, brand, and the TLS exporter ADR |
+| `app/src/main/assets/rules/` | The bundled rule set (D-14), network-structural tier only, carrying a provenance header |
+| `docs/` | Architecture, the design system, i18n, brand, privacy, store policy, and the TLS exporter ADR |
 
 The lwIP layer is inherited from `NodePassProject/Anywhere-Android` (GPL-3.0) at
 **e9a9274, 2026-04-28** — recorded because the donor is under active development
-and fixes landing there will not arrive on their own. The TUN and routing layers
-are not present yet.
+and fixes landing there will not arrive on their own. The TUN, routing and
+per-app layers are present, and follow the donor's shape rather than copying its
+code beyond the lwIP bridge.
 
 **BLAKE3 and libyaml were deliberately not inherited.** The donor's
 `CMakeLists.txt` builds both; BLAKE3 serves a protocol this client does not
@@ -60,18 +69,21 @@ automation from the first protocol commit rather than retrofitted later.
 
 ```sh
 ./gradlew ktlintCheck testDebugUnitTest koverVerifyDebug lintDebug \
-          checkClasspathConsistency assembleDebug checkNativeLibraries
+          checkClasspathConsistency assembleDebug \
+          checkNativeLibraries checkNativeBridge checkReleaseArtifact
 python3 conformance/scripts/verify-vectors.py
 ```
 
 | Gate | What it enforces |
 |---|---|
 | `ktlintCheck` | Style. `@Composable` PascalCase is exempted through ktlint's own `.editorconfig` switch, not suppressed |
-| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*` and `.subscription.*`.** Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
+| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`, `.subscription.*`, `.dns.*`, `.apps.*` and `.routing.*`** — the last three joined the protocol layer's gate because they are the same kind of code: a wrong answer is wrong silently, and in `routing` it is wrong in the worst direction, with traffic leaving the device somewhere the user did not ask it to. Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
 | `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
 | `verify-vectors.py` | 45 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
 | `checkNativeLibraries` | **What the shipped `.so` files export, how they are aligned, and what they need.** Reads the APK rather than a build intermediate. Verified to fail: removing the version script reports 1,684 non-JNI exports on arm64-v8a, starting with `AES_CMAC` |
+| `checkNativeBridge` | **That the QUIC bridge cannot open a socket.** A source rule over `app/src/main/jni/quic/`: no `socket`, `bind`, `connect`, `sendto` or `recvfrom`. Addresses and packets cross the JNI boundary as bytes, so there is no path by which a datagram escapes `VpnService.protect()`, and no way for one to grow later without the gate saying so |
+| `checkReleaseArtifact` | **What R8 left in the APK that ships.** R8 renames the JNI callbacks C resolves by name, and the failure is not a crash but a tunnel that comes up and answers nothing. The gate reads the artifact rather than running instrumentation against a second R8 output — two R8 runs produce two name sets, so that test would be checking a build nobody ships |
 | `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired for the first time on 2026-08-26 and the pin moved to v1.8.2 |
 
 Both gates that can silently pass were verified to actually fail. The coverage
@@ -268,6 +280,50 @@ Two rules from those documents that reach into protocol code:
     so a corrected map and an unchanged library look identical. `LINK_DEPENDS`
     declares it. This cost a whole debugging round: the fix was right, the
     tests failed the same way, and the library on the device predated the edit.
+
+25. **Exactly one bidirectional stream is credited before authentication**
+    (NW-P-19). Sixteen concurrent opens meet `ERR_STREAM_ID_BLOCKED`, which is
+    the protocol working rather than a failure. The wait for credit has to
+    happen **outside** the connection's owner thread: the owner is what pumps,
+    and the peer's extension cannot arrive while it is blocked waiting for it.
+26. **A closed QUIC stream must leave the write round-robin.** `writev` handed
+    an id ngtcp2 no longer knows answers `ERR_STREAM_NOT_FOUND`, which reads
+    like a connection failure and takes every other flow on that connection
+    down with it. Streams carry a `gone` flag for exactly this.
+27. **One datagram per loop pass hangs a large transfer, silently.** Twenty
+    megabytes is fourteen thousand datagrams; the kernel buffer overflows, QUIC
+    retransmits, the window collapses, and **nothing reports an error** — the
+    transfer simply stops making progress while looking healthy. Bursts of
+    sixty-four into a 4 MB receive buffer take the same transfer to six seconds.
+28. **This client is forced out of its own tunnel in every mode**
+    (`AppSelection.ruleFor` — a VPN inside its own tunnel is a routing loop), so
+    **a fetch made from inside the app's own process never enters the TUN**.
+    Three device test classes passed for two runs while proving only that their
+    destination was reachable some other way, and one of them was the evidence
+    for a conformance row. The decisive check is a target only the Portal can
+    reach: the case fails instantly and the Portal's counters stay put.
+    `TunnelHarness` now refuses a target the device can reach directly.
+29. **Loopback never enters a VPN's TUN.** The kernel routes 127.0.0.0/8 to `lo`
+    rather than to the default route, so the trick that works from inside the app
+    — choosing an address only the Portal can reach — proves nothing when the
+    fetch is driven from a shell. The evidence there is the Portal's own byte
+    counters, which move **on a timer**, so a check must poll until they move
+    rather than read them once. And a **truncated transfer is non-empty**: a
+    retry loop that accepts any non-empty file reports a corrupt tunnel when what
+    it had was a hold window expiring mid-transfer.
+30. **Kotlin's `by` delegation erases every interface you did not name.**
+    `class TrackedFlow(flow: Flow) : Flow by flow` wrapping a `PacketFlow` is no
+    longer a `PacketFlow`, so an `is` check downstream falls through to the
+    stream path and UDP quietly loses its packet boundaries. `NowhereSession`
+    keeps two wrappers and picks between them.
+31. **An unauthenticated QUIC connection dies at the handshake deadline**, about
+    five seconds in. A keep-alive test that never opens a flow therefore measures
+    nothing: the connection was going to close on its own regardless of whether
+    a PING was ever sent.
+32. **UDP framing belongs to a direction, not to a flow.** A split flow has two
+    carriers, and section 9 carriage has to be applied per direction — the
+    oracle differential caught split-UDP diverging when the framing was attached
+    to the flow instead. `DatagramLane` is the shared piece both directions use.
 
 ## Already verified — do not redo
 
