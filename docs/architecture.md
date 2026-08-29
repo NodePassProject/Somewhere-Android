@@ -7,13 +7,25 @@ What the layers are, which way they depend, and the rules that keep them apart.
 ```
 ui/            screens, theme, icons, presentation state
   ↓
+vpn/           VpnService · TUN configuration · lwIP bridge · flow handler · tile
+  ↓
 data/          NodeStore · SubscriptionStore · NodeRepository
+nodes/         NodeHealth · Failover — which node carries the traffic
+routing/       rules, the direct path, the reject path
+dns/           interception, the fake-IP pool, both families
+apps/          which applications the tunnel carries
   ↓
 net/           NowhereDialer — TLS, ALPN, certificate verification
   ↓
 protocol/      the wire. auth · frame · mux · quic · session · target · tls · url
-subscription/  the dashboard's HTTP surface
+subscription/  the dashboard's HTTP surface, and its scheduled refresh
 ```
+
+Six of those packages carry the 90% coverage gate rather than one:
+`protocol/`, `subscription/`, `dns/`, `apps/`, `routing/` and `nodes/`. They are
+not all the wire, but they are all the same *kind* of code — a wrong answer is
+wrong silently, and in `routing/` and `nodes/` it is wrong in the worst
+direction, with traffic leaving the device somewhere the user did not ask.
 
 **Dependencies point down and never up.** `protocol/` knows nothing about
 Android — no `Context`, no resource, no `Log` — which is why every protocol test
