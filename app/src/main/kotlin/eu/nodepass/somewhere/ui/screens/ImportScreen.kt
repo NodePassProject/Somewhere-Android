@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -70,8 +71,10 @@ fun ImportScreen(
     nodes: NodeRepository,
     link: String?,
     onClose: () -> Unit,
+    onScan: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
+    val clipboard = LocalClipboardManager.current
     var typed by remember(link) { mutableStateOf(link.orEmpty()) }
 
     // One field, two outcomes, and the parser decides which. A person holding a
@@ -112,11 +115,22 @@ fun ImportScreen(
                 icon = SomewhereIcons.QrCode,
                 title = stringResource(R.string.import_scan_qr),
                 detail = stringResource(R.string.import_scan_qr_detail),
+                onClick = onScan,
             )
+            // Pastes rather than opening a second input: the field below is
+            // already where a link goes, and the card's job is to save the
+            // long-press that putting one there would otherwise take.
             SourceCard(
                 icon = SomewhereIcons.Link,
                 title = stringResource(R.string.import_subscription_link),
                 detail = stringResource(R.string.import_subscription_link_detail),
+                onClick = {
+                    clipboard
+                        .getText()
+                        ?.text
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { typed = it }
+                },
             )
 
             Column(
@@ -341,10 +355,11 @@ private fun SourceCard(
     icon: ImageVector,
     title: String,
     detail: String,
+    onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
     Card(
-        modifier = Modifier.clickable {},
+        modifier = Modifier.clickable(onClick = onClick),
         padding = PaddingValues(horizontal = 18.dp, vertical = 17.dp),
     ) {
         Row(

@@ -55,6 +55,7 @@ import eu.nodepass.somewhere.ui.screens.ImportScreen
 import eu.nodepass.somewhere.ui.screens.NodeEditorScreen
 import eu.nodepass.somewhere.ui.screens.NodesScreen
 import eu.nodepass.somewhere.ui.screens.RoutingScreen
+import eu.nodepass.somewhere.ui.screens.ScanScreen
 import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
@@ -77,6 +78,7 @@ object Routes {
     const val IMPORT = "import"
     const val APPS = "apps"
     const val SETTINGS = "settings"
+    const val SCAN = "scan"
 }
 
 @Composable
@@ -121,6 +123,10 @@ fun SomewhereApp(
     // because a route argument carrying a node URL would put a shared key in
     // the navigation back stack, and from there into logs and crash reports.
     var editing by remember { mutableStateOf<NowhereUrl?>(null) }
+
+    // What the scanner read, on its way to the import screen. Held here for the
+    // same reason as [editing]: it may be a node URL with its shared key.
+    var scanned by remember { mutableStateOf<String?>(null) }
 
     Column(
         Modifier
@@ -180,9 +186,20 @@ fun SomewhereApp(
                 composable(Routes.IMPORT) {
                     ImportScreen(
                         nodes = nodes,
-                        link = pendingLink,
+                        link = scanned ?: pendingLink,
                         onClose = {
+                            scanned = null
                             onLinkHandled()
+                            navController.popBackStack()
+                        },
+                        onScan = { navController.navigate(Routes.SCAN) },
+                    )
+                }
+                composable(Routes.SCAN) {
+                    ScanScreen(
+                        onBack = { navController.popBackStack() },
+                        onScanned = { text ->
+                            scanned = text
                             navController.popBackStack()
                         },
                     )

@@ -226,4 +226,10 @@
     <string name="nodes_sort_name">Name</string>
     <string name="nodes_hide_unreachable">Hide unreachable</string>
     <string name="nodes_hidden">%1$d hidden</string>
+    <string name="scan_title">Scan QR code</string>
+    <string name="scan_hint">Point the camera at a node or subscription QR code.</string>
+    <string name="scan_choose_image">Choose an image</string>
+    <string name="scan_no_camera">Camera access was not granted. An image that contains a QR code works too.</string>
+    <string name="scan_allow_camera">Allow camera</string>
+    <string name="scan_not_found">No QR code was found in that image.</string>
 </resources>

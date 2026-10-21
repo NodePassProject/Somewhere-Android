@@ -195,6 +195,15 @@ dependencies {
     // minSdk. See docs/adr-0001-tls-exporter.md.
     implementation(libs.conscrypt.android)
 
+    // Scanning a node's QR code. ZXing decodes, CameraX supplies frames.
+    // ZXing rather than ML Kit because ML Kit is a Play-services binary: no
+    // source, and nothing a GPL-3.0 client published with its corresponding
+    // source should depend on. ZXing core is plain Java under Apache-2.0.
+    implementation(libs.zxing.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+
     testImplementation(libs.junit)
     // Needed by the tests that drive the repository, which is suspend-shaped
     // because a subscription fetch is a network call.

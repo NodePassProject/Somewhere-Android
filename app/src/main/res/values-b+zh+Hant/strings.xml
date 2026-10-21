@@ -191,4 +191,10 @@
     <string name="nodes_sort_name">名稱</string>
     <string name="nodes_hide_unreachable">隱藏無法連線</string>
     <string name="nodes_hidden">已隱藏 %1$d 個</string>
+    <string name="scan_title">掃描 QR 碼</string>
+    <string name="scan_hint">將相機對準節點或訂閱的 QR 碼。</string>
+    <string name="scan_choose_image">從圖片中選擇</string>
+    <string name="scan_no_camera">未取得相機權限。也可以選擇一張含有 QR 碼的圖片。</string>
+    <string name="scan_allow_camera">允許使用相機</string>
+    <string name="scan_not_found">這張圖片中沒有找到 QR 碼。</string>
 </resources>

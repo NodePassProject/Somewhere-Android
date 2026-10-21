@@ -189,4 +189,10 @@
     <string name="nodes_sort_name">名称</string>
     <string name="nodes_hide_unreachable">隐藏不可达</string>
     <string name="nodes_hidden">已隐藏 %1$d 个</string>
+    <string name="scan_title">扫描二维码</string>
+    <string name="scan_hint">将相机对准节点或订阅的二维码。</string>
+    <string name="scan_choose_image">从图片中选择</string>
+    <string name="scan_no_camera">未获得相机权限。也可以选择一张含有二维码的图片。</string>
+    <string name="scan_allow_camera">允许使用相机</string>
+    <string name="scan_not_found">这张图片中没有找到二维码。</string>
 </resources>

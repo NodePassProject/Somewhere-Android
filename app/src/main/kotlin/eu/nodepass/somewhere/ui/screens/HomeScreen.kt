@@ -183,11 +183,11 @@ private fun NoNodeYet(onOpenNodes: () -> Unit) {
 internal fun Home(
     node: NodeEntry,
     session: SessionSnapshot,
-    automatic: Boolean = false,
-    connectedName: String? = null,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleTunnel: () -> Unit = {},
+    automatic: Boolean = false,
+    connectedName: String? = null,
 ) {
     val colors = SomewhereTheme.colors
     Column(Modifier.fillMaxSize()) {
