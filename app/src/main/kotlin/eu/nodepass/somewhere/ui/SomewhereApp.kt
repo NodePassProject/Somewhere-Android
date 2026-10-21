@@ -41,7 +41,9 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.data.AppSettingsStore
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.subscription.RefreshPreferences
@@ -84,7 +86,9 @@ fun SomewhereApp(
     routing: RoutingController,
     pendingLink: String? = null,
     onLinkHandled: () -> Unit = {},
-    onToggleTunnel: (NowhereUrl) -> Unit = {},
+    onToggleTunnel: () -> Unit = {},
+    /** The user picked a node, or automatic. Persisting it, and reconnecting, is the caller's. */
+    onChoose: (NodeChoice) -> Unit = {},
     onReconnect: () -> Unit = {},
     onImportRules: () -> Unit = {},
     /**
@@ -96,6 +100,8 @@ fun SomewhereApp(
     refresh: RefreshPreferences = RefreshPreferences(java.io.File("")),
     /** Called after the preference changes, to put the schedule where it says. */
     onRefreshScheduleChanged: () -> Unit = {},
+    /** The app's own preferences. A default store with no file serves previews and tests. */
+    settings: AppSettingsStore = AppSettingsStore(null),
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -132,8 +138,12 @@ fun SomewhereApp(
                     )
                 }
                 composable(Tab.Nodes.route) {
+                    val current by settings.settings.collectAsState()
                     NodesScreen(
                         nodes = nodes,
+                        onChoose = onChoose,
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onAdd = {
                             onLinkHandled()
                             navController.navigate(Routes.IMPORT)

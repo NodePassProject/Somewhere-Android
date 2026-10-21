@@ -6,6 +6,7 @@ package eu.nodepass.somewhere
 import android.app.Application
 import eu.nodepass.somewhere.apps.AppSelectionStore
 import eu.nodepass.somewhere.apps.PackageManagerApps
+import eu.nodepass.somewhere.data.AppSettingsStore
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
@@ -39,7 +40,8 @@ class SomewhereApplication : Application() {
             // Application-lifetime, and supervised so one failed fetch does not
             // take the scope down with it.
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-            lastConnectedFile = File(filesDir, "nodes/last-connected.txt"),
+            choiceFile = File(filesDir, "nodes/choice.txt"),
+            health = nodeHealth,
         )
     }
 
@@ -53,6 +55,9 @@ class SomewhereApplication : Application() {
     val appSelection: AppSelectionStore by lazy {
         AppSelectionStore(File(filesDir, "apps/selection.txt"))
     }
+
+    /** The app's own preferences: how screens look, what the app does unasked. */
+    val settings: AppSettingsStore by lazy { AppSettingsStore(File(filesDir, "settings/app.txt")) }
 
     /** What the device has installed, for the screen that offers a choice. */
     val installedApps: PackageManagerApps by lazy { PackageManagerApps(this) }

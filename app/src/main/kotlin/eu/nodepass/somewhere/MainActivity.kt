@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.subscription.SubscriptionRefreshJob
@@ -50,7 +51,13 @@ class MainActivity : ComponentActivity() {
      * refusal, so a second tap starts a fresh request rather than reusing a
      * node the user may since have changed.
      */
-    private var awaitingConsent: NowhereUrl? = null
+    private var awaitingConsent: Start? = null
+
+    /** A node to start on, and whether the service may move off it. */
+    private data class Start(
+        val node: NowhereUrl,
+        val mayFailOver: Boolean,
+    )
 
     /**
      * The node the running tunnel was started with.
@@ -59,7 +66,10 @@ class MainActivity : ComponentActivity() {
      * than asking the user which node they meant. Android fixes that set at
      * `establish()`, so rebuilding is the only way a change takes effect.
      */
-    private var running: NowhereUrl? = null
+    private var running: Start? = null
+
+    /** The application's node list, once [onCreate] has run. */
+    private lateinit var repository: eu.nodepass.somewhere.data.NodeRepository
 
     /**
      * The routing controller, once the composition has been built.
@@ -77,10 +87,10 @@ class MainActivity : ComponentActivity() {
      */
     private val consent =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val node = awaitingConsent
+            val start = awaitingConsent
             awaitingConsent = null
-            if (result.resultCode == RESULT_OK && node != null) {
-                startTunnel(node)
+            if (result.resultCode == RESULT_OK && start != null) {
+                startTunnel(start)
             } else {
                 // Refusing is a decision, not an error. Saying so beats a
                 // button that was pressed and did nothing.
@@ -94,7 +104,7 @@ class MainActivity : ComponentActivity() {
         pendingLink = linkFrom(intent)
 
         val application = application as SomewhereApplication
-        val repository = application.nodes
+        repository = application.nodes
         val apps =
             AppsController(
                 store = application.appSelection,
@@ -127,10 +137,12 @@ class MainActivity : ComponentActivity() {
                         pendingLink = pendingLink,
                         onLinkHandled = { pendingLink = null },
                         onToggleTunnel = ::toggleTunnel,
+                        onChoose = ::choose,
                         onReconnect = { running?.let(::startTunnel) },
                         onImportRules = { importRules.launch(ruleMimeTypes) },
                         refresh = application.refreshPreferences,
                         onRefreshScheduleChanged = { SubscriptionRefreshJob.apply(this@MainActivity) },
+                        settings = application.settings,
                     )
                 }
             }
@@ -144,23 +156,48 @@ class MainActivity : ComponentActivity() {
      * `prepare()` returns null once the user has agreed, and asking again every
      * time would put a system dialog in front of an ordinary reconnect.
      */
-    private fun toggleTunnel(node: NowhereUrl) {
+    private fun toggleTunnel() {
         if (TunnelController.isEngaged) {
             SomewhereVpnService.stop(this)
             return
         }
+        val start = resolveStart()
+        if (start == null) {
+            TunnelController.report(TunnelState.Failed(R.string.tunnel_no_node))
+            return
+        }
         val request = VpnService.prepare(this)
         if (request == null) {
-            startTunnel(node)
+            startTunnel(start)
         } else {
-            awaitingConsent = node
+            awaitingConsent = start
             consent.launch(request)
         }
     }
 
-    private fun startTunnel(node: NowhereUrl) {
-        running = node
-        SomewhereVpnService.start(this, node)
+    /**
+     * Records a new choice and, if a tunnel is up, moves it there.
+     *
+     * Moving rather than waiting for the next connect: a user who picks a
+     * different node while connected means "use this one", and a tunnel that
+     * stayed on the old node would make the list's tick a lie until they
+     * thought to reconnect. Consent is already held while a tunnel is up, so
+     * no dialog stands in the way.
+     */
+    private fun choose(choice: NodeChoice) {
+        repository.choose(choice)
+        if (!TunnelController.isEngaged) return
+        resolveStart()?.let(::startTunnel)
+    }
+
+    private fun resolveStart(): Start? {
+        val target = repository.target() ?: return null
+        return Start(target.url, mayFailOver = repository.effectiveChoice().mayFailOver)
+    }
+
+    private fun startTunnel(start: Start) {
+        running = start
+        SomewhereVpnService.start(this, start.node, start.mayFailOver)
     }
 
     /**

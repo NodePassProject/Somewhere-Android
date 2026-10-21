@@ -6,10 +6,10 @@ package eu.nodepass.somewhere.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -24,14 +25,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -40,10 +44,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.AppSettings
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.data.NodeSort
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.ProbeResult
 import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.subscription.SubscriptionUsage
 import eu.nodepass.somewhere.ui.components.Card
@@ -52,11 +59,13 @@ import eu.nodepass.somewhere.ui.components.Meter
 import eu.nodepass.somewhere.ui.components.MonoChip
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.SectionLabel
+import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SmallButton
 import eu.nodepass.somewhere.ui.components.StatusDot
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
 import eu.nodepass.somewhere.ui.state.NodeEntry
+import eu.nodepass.somewhere.ui.state.NodeOrdering
 import eu.nodepass.somewhere.ui.state.NodeStatus
 import eu.nodepass.somewhere.ui.state.SubscriptionState
 import eu.nodepass.somewhere.ui.state.asMessage
@@ -78,9 +87,13 @@ fun NodesScreen(
     nodes: NodeRepository,
     onAdd: () -> Unit,
     onEdit: (NodeEntry) -> Unit,
+    onChoose: (NodeChoice) -> Unit = {},
+    settings: AppSettings = AppSettings(),
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
 ) {
     val stored by nodes.nodes.collectAsState()
     val probes by nodes.probes.collectAsState()
+    val choice by nodes.choice.collectAsState()
     val record by nodes.subscription.collectAsState()
     val refreshFailure by nodes.lastRefreshFailure.collectAsState()
     val refreshing by nodes.refreshing.collectAsState()
@@ -126,6 +139,13 @@ fun NodesScreen(
                 color = SomewhereTheme.colors.ink,
                 modifier = Modifier.weight(1f),
             )
+            if (stored.isNotEmpty()) {
+                IconSquare(
+                    icon = SomewhereIcons.Zap,
+                    contentDescription = stringResource(R.string.nodes_test_all),
+                    onClick = nodes::probeAllInBackground,
+                )
+            }
             IconSquare(
                 icon = SomewhereIcons.Plus,
                 contentDescription = stringResource(R.string.nodes_add),
@@ -141,8 +161,27 @@ fun NodesScreen(
             return@Column
         }
 
+        val effective = remember(stored, choice) { nodes.effectiveChoice() }
+        val shown =
+            NodeOrdering.arrange(
+                entries,
+                sort = settings.nodeSort,
+                hideUnreachable = settings.hideUnreachable,
+                chosen = (effective as? NodeChoice.Chosen)?.node,
+            )
         NodeList(
-            entries = entries,
+            entries = shown,
+            total = entries.size,
+            sort = settings.nodeSort,
+            hideUnreachable = settings.hideUnreachable,
+            onSort = { sort -> onSettingsChange { it.copy(nodeSort = sort) } },
+            onHideUnreachable = { hide -> onSettingsChange { it.copy(hideUnreachable = hide) } },
+            choice = effective,
+            automaticTarget =
+                remember(stored, probes) {
+                    nodes.automaticTarget()?.let { NodeEntry(it.url).displayName }
+                },
+            onChoose = onChoose,
             subscription = record?.asState(clock = System::currentTimeMillis),
             // A refresh that failed has to say so here. It was previously kept
             // in the repository and shown nowhere, which meant a subscription
@@ -167,6 +206,16 @@ fun NodesScreen(
 @Composable
 internal fun NodeList(
     entries: List<NodeEntry>,
+    /** How many nodes there are before any are hidden. */
+    total: Int = entries.size,
+    sort: NodeSort = NodeSort.ListOrder,
+    hideUnreachable: Boolean = false,
+    onSort: (NodeSort) -> Unit = {},
+    onHideUnreachable: (Boolean) -> Unit = {},
+    choice: NodeChoice = NodeChoice.Automatic,
+    /** The display name automatic selection would use now, or null if none. */
+    automaticTarget: String? = null,
+    onChoose: (NodeChoice) -> Unit = {},
     subscription: SubscriptionState? = null,
     refreshFailure: String? = null,
     refreshing: Boolean = false,
@@ -185,15 +234,30 @@ internal fun NodeList(
         if (refreshFailure != null) {
             item { RefreshFailure(refreshFailure) }
         }
-        item {
-            Box(Modifier.padding(top = if (subscription != null) 8.dp else 0.dp)) {
-                SectionLabel(pluralStringResource(R.plurals.nodes_count, entries.size, entries.size))
-            }
+        item(key = "controls") {
+            ListControls(
+                total = total,
+                hidden = total - entries.size,
+                sort = sort,
+                hideUnreachable = hideUnreachable,
+                onSort = onSort,
+                onHideUnreachable = onHideUnreachable,
+                modifier = Modifier.padding(top = if (subscription != null) 8.dp else 0.dp),
+            )
+        }
+        item(key = "automatic") {
+            AutomaticCard(
+                selected = choice == NodeChoice.Automatic,
+                target = automaticTarget,
+                onClick = { onChoose(NodeChoice.Automatic) },
+            )
         }
         items(entries, key = { it.url.toUrl() }) { node ->
             NodeCard(
                 node = node,
-                onClick = { onEdit(node) },
+                selected = choice == NodeChoice.Chosen(node.url.toUrl()),
+                onChoose = { onChoose(NodeChoice.Chosen(node.url.toUrl())) },
+                onEdit = { onEdit(node) },
             )
         }
     }
@@ -418,19 +482,134 @@ private fun quotaText(usage: SubscriptionUsage): AnnotatedString {
     }
 }
 
+/**
+ * The count, the order, and the filter.
+ *
+ * The count is of every node, not of the ones showing: a list that says "3
+ * nodes" while the user has five, two of them hidden, is the list contradicting
+ * its owner. The number hidden is said beside the switch that hid them.
+ */
 @Composable
-private fun NodeCard(
-    node: NodeEntry,
+private fun ListControls(
+    total: Int,
+    hidden: Int,
+    sort: NodeSort,
+    hideUnreachable: Boolean,
+    onSort: (NodeSort) -> Unit,
+    onHideUnreachable: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = SomewhereTheme.colors
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SectionLabel(pluralStringResource(R.plurals.nodes_count, total, total), Modifier.weight(1f))
+            Text(
+                text =
+                    if (hideUnreachable && hidden > 0) {
+                        stringResource(R.string.nodes_hidden, hidden)
+                    } else {
+                        stringResource(R.string.nodes_hide_unreachable)
+                    },
+                fontFamily = SomewhereType.Body,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                color = if (hideUnreachable) colors.brand else colors.faint,
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .toggleable(value = hideUnreachable, role = Role.Switch, onValueChange = onHideUnreachable)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+        val sorts = NodeSort.entries
+        Segmented(
+            options =
+                sorts.map {
+                    stringResource(
+                        when (it) {
+                            NodeSort.ListOrder -> R.string.nodes_sort_list
+                            NodeSort.Latency -> R.string.nodes_sort_latency
+                            NodeSort.Name -> R.string.nodes_sort_name
+                        },
+                    )
+                },
+            selectedIndex = sorts.indexOf(sort),
+            onSelect = { onSort(sorts[it]) },
+            height = 30.dp,
+        )
+    }
+}
+
+/**
+ * The choice that hands the decision to the client.
+ *
+ * It names the node it would use now, because "automatic" on its own is a
+ * promise with nothing behind it: the user should be able to see where their
+ * traffic would go before they tap.
+ */
+@Composable
+private fun AutomaticCard(
+    selected: Boolean,
+    target: String?,
     onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
+    val selectedLabel = stringResource(R.string.nodes_selected)
+    Card(
+        modifier =
+            Modifier
+                .clickable(onClick = onClick)
+                .then(if (selected) Modifier.semantics { stateDescription = selectedLabel } else Modifier),
+        borderColor = if (selected) colors.brandLine else colors.line,
+        background = if (selected) colors.brandTint else colors.surface,
+        padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = stringResource(R.string.nodes_automatic),
+                fontFamily = SomewhereType.Display,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.5.sp,
+                color = colors.ink,
+                modifier = Modifier.weight(1f),
+            )
+            if (selected) Icon(SomewhereIcons.Check, null, Modifier.size(16.dp), tint = colors.brand)
+        }
+        Text(
+            text =
+                if (target != null) {
+                    stringResource(R.string.nodes_automatic_detail, target)
+                } else {
+                    stringResource(R.string.nodes_automatic_none)
+                },
+            fontFamily = SomewhereType.Body,
+            fontSize = 11.5.sp,
+            lineHeight = 16.sp,
+            color = colors.muted,
+        )
+    }
+}
+
+@Composable
+private fun NodeCard(
+    node: NodeEntry,
+    selected: Boolean,
+    onChoose: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    val selectedLabel = stringResource(R.string.nodes_selected)
 
     if (node.status is NodeStatus.RemovedByProvider) {
         // NW-D-04: the dashboard drops nodes when a subscription lapses. The
         // node stays visible and says which it was — expiry or quota — because
         // "network error" and an empty list are both wrong.
+        //
+        // Tapping it edits rather than selects: the provider has withdrawn it,
+        // and the one useful thing left to do with it is remove it.
         Card(
-            modifier = Modifier.alpha(0.55f),
+            modifier = Modifier.alpha(0.55f).clickable(onClick = onEdit),
             padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
         ) {
             Row(
@@ -438,7 +617,7 @@ private fun NodeCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 StatusDot(colors.inactive)
-                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = node.displayName,
                         fontFamily = SomewhereType.Display,
@@ -461,8 +640,20 @@ private fun NodeCard(
 
     val active = node.status is NodeStatus.Reachable
     Card(
-        modifier = Modifier.clickable(onClick = onClick),
-        borderColor = if (active) colors.goodLine else colors.line,
+        modifier =
+            Modifier
+                .clickable(onClick = onChoose)
+                .then(if (selected) Modifier.semantics { stateDescription = selectedLabel } else Modifier),
+        // The selection outranks reachability for the border: which node is
+        // chosen is the question this list answers first, and the status dot
+        // and latency still say whether it answers.
+        borderColor =
+            when {
+                selected -> colors.brandLine
+                active -> colors.goodLine
+                else -> colors.line
+            },
+        background = if (selected) colors.brandTint else colors.surface,
         padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Row(
@@ -500,6 +691,7 @@ private fun NodeCard(
                     },
                 fontSize = 11.5.sp,
             )
+            if (selected) Icon(SomewhereIcons.Check, null, Modifier.size(16.dp), tint = colors.brand)
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -513,6 +705,8 @@ private fun NodeCard(
             if (node.url.certificateVerification is CertificateVerification.Pin) {
                 MonoChip("PIN", colors.muted, colors.surfaceAlt)
             }
+            Spacer(Modifier.weight(1f))
+            EditButton(onEdit)
         }
 
         (node.status as? NodeStatus.Unreachable)?.let { unreachable ->
@@ -531,3 +725,26 @@ private fun NodeCard(
 }
 
 private fun Long.asIsoDate(): String = DateTimeFormatter.ISO_LOCAL_DATE.format(Instant.ofEpochSecond(this).atZone(ZoneId.systemDefault()))
+
+/**
+ * Opens the editor. Its own target, because tapping the card selects.
+ *
+ * Text rather than an icon: a pencil glyph is one more thing to learn, and
+ * "Edit" says the one thing it does in every locale this app ships.
+ */
+@Composable
+private fun EditButton(onClick: () -> Unit) {
+    val colors = SomewhereTheme.colors
+    Text(
+        text = stringResource(R.string.action_edit),
+        fontFamily = SomewhereType.Body,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        color = colors.brand,
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}

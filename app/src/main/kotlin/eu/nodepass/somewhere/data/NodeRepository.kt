@@ -4,6 +4,9 @@
 package eu.nodepass.somewhere.data
 
 import eu.nodepass.somewhere.net.NowhereDialer
+import eu.nodepass.somewhere.nodes.NodeChoice
+import eu.nodepass.somewhere.nodes.NodeChoice.Companion.toStored
+import eu.nodepass.somewhere.nodes.NodeHealth
 import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
@@ -12,11 +15,14 @@ import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import eu.nodepass.somewhere.subscription.SubscriptionReason
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -71,22 +77,31 @@ class NodeRepository(
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
     /**
-     * Where the last node a tunnel came up on is remembered.
+     * Where the user's [NodeChoice] is kept.
      *
-     * A file rather than memory because the reader is a quick-settings tile,
-     * which runs in a process that may have been started for the tile alone and
-     * has nothing else in it.
-     *
-     * It holds a node URL, which carries a shared key — the same material
-     * `nodes.txt` beside it already holds, in the same directory, with the same
-     * permissions. It is not a second exposure, and it is deliberately not a
-     * second *copy*: what comes back is matched against the live list, so a
-     * node the user deleted is gone from here the moment it is gone from there.
+     * A file rather than memory because a quick-settings tile reads it, from a
+     * process that may have been started for the tile alone. It holds a node
+     * URL, shared key included — the same material `nodes.txt` beside it
+     * already holds, with the same permissions, so not a second exposure.
      */
-    private val lastConnectedFile: File? = null,
+    private val choiceFile: File? = null,
+    /** How nodes have behaved, which is what an automatic choice is made from. */
+    private val health: NodeHealth = NodeHealth(),
 ) {
     private val _nodes = MutableStateFlow(store.load())
     val nodes: StateFlow<List<NodeStore.Entry>> = _nodes.asStateFlow()
+
+    private val _choice = MutableStateFlow(readChoice())
+
+    /**
+     * What the user asked for, exactly as stored.
+     *
+     * Not corrected for a node that has since gone — [effectiveChoice] is that.
+     * Kept raw so that a node which comes back on the next subscription refresh
+     * is chosen again, rather than having been quietly forgotten while it was
+     * away.
+     */
+    val choice: StateFlow<NodeChoice> = _choice.asStateFlow()
 
     private val _subscription = MutableStateFlow(subscriptions.load())
     val subscription: StateFlow<SubscriptionStore.Record?> = _subscription.asStateFlow()
@@ -104,36 +119,66 @@ class NodeRepository(
     /** Probe results, keyed by the node's rendered URL. */
     val probes: StateFlow<Map<String, ProbeResult>> = _probes.asStateFlow()
 
-    /**
-     * The node a tunnel last came up on, if it is still in the list.
-     *
-     * Null when there is none, when the file cannot be read, or when the node
-     * has since been deleted — and the last of the three is why this checks
-     * rather than simply returning what it stored. A tile that connected to a
-     * node the user removed would be the app disagreeing with its own list.
-     */
-    fun lastConnected(): String? {
-        val file = lastConnectedFile ?: return null
-        val remembered =
-            try {
-                if (!file.exists()) return null
-                file.readText().trim()
-            } catch (_: java.io.IOException) {
-                return null
-            }
-        if (remembered.isEmpty()) return null
-        return _nodes.value.firstOrNull { it.line == remembered }?.line
-    }
+    /** The choice as a screen should show it: a chosen node that is gone reads as automatic. */
+    fun effectiveChoice(): NodeChoice = NodeChoice.effective(_choice.value, _nodes.value.map { it.url.toUrl() })
 
-    /** Remembers [line] as the node a tunnel came up on. Best effort. */
-    fun recordConnected(line: String) {
-        val file = lastConnectedFile ?: return
+    /** Records what the user picked. Best effort: losing it costs a tap, not a connection. */
+    fun choose(choice: NodeChoice) {
+        _choice.value = choice
+        val file = choiceFile ?: return
         try {
             file.parentFile?.mkdirs()
-            file.writeText(line)
+            file.writeText(choice.toStored())
         } catch (_: java.io.IOException) {
-            // A tile that offers the app instead of a node is a smaller failure
-            // than a tunnel that refuses to come up over a preference.
+            // Held in memory for this run regardless. Losing it at the next
+            // launch costs a tap; refusing the choice would cost the connection.
+        }
+    }
+
+    /**
+     * The node a connection should use now, or null when there is none.
+     *
+     * Automatic selection never picks a node the subscription has withdrawn:
+     * NW-D-04 says those are expired or out of quota, and dialling one would
+     * only produce a failure that points at the network. A person who chooses
+     * one explicitly still gets it — it is their call, and the card says what
+     * the subscription said about it.
+     */
+    fun target(): NodeStore.Entry? = resolve(_choice.value)
+
+    /**
+     * What automatic selection would pick now, whatever is chosen.
+     *
+     * For the card that offers it: "automatic" alone is a promise with nothing
+     * behind it, and the user should see where it would send traffic first.
+     */
+    fun automaticTarget(): NodeStore.Entry? = resolve(NodeChoice.Automatic)
+
+    private fun resolve(choice: NodeChoice): NodeStore.Entry? {
+        val listed = _nodes.value
+        val line =
+            NodeChoice.resolve(
+                choice = choice,
+                listed = listed.map { it.url.toUrl() },
+                automaticCandidates =
+                    listed
+                        .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+                        .map { it.url.toUrl() },
+                health = health,
+                latencyMillis = ::latencyOf,
+            ) ?: return null
+        return listed.firstOrNull { it.url.toUrl() == line }
+    }
+
+    /** The last probe's handshake time for [node], if it answered. */
+    fun latencyOf(node: String): Int? = (_probes.value[node] as? ProbeResult.Reachable)?.handshakeMillis
+
+    private fun readChoice(): NodeChoice {
+        val file = choiceFile ?: return NodeChoice.Automatic
+        return try {
+            NodeChoice.fromStored(if (file.exists()) file.readText() else null)
+        } catch (_: java.io.IOException) {
+            NodeChoice.Automatic
         }
     }
 
@@ -155,6 +200,34 @@ class NodeRepository(
     /** Fire-and-forget [probe], for the same reason. */
     fun probeInBackground(node: NowhereUrl) {
         scope.launch { probe(node) }
+    }
+
+    /** Fire-and-forget [probeAll]. */
+    fun probeAllInBackground() {
+        scope.launch { probeAll() }
+    }
+
+    /**
+     * Probes every node the subscription has not withdrawn, a few at a time.
+     *
+     * A few rather than all at once, because the figure being measured is a
+     * handshake time: forty TLS handshakes started together queue behind each
+     * other on the device's own link, and the list would come back ranked by
+     * who started first. [PROBE_PARALLELISM] keeps the measurement about the
+     * Portals.
+     */
+    suspend fun probeAll() {
+        val targets =
+            _nodes.value
+                .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+                .map { it.url }
+        // Every one is marked first, so the whole list shows that a re-test is
+        // under way rather than only the nodes whose turn has come.
+        _probes.update { current -> current + targets.associate { it.toUrl() to ProbeResult.Probing } }
+        val permits = Semaphore(PROBE_PARALLELISM)
+        coroutineScope {
+            targets.forEach { node -> launch { permits.withPermit { probe(node) } } }
+        }
     }
 
     /**
@@ -232,6 +305,9 @@ class NodeRepository(
     fun remove(node: NowhereUrl) {
         _probes.update { it - node.toUrl() }
         _nodes.value = store.remove(node)
+        // A deliberate deletion, unlike a refresh that dropped the node: the
+        // choice goes with it, so it cannot come back with a later import.
+        if (_choice.value == NodeChoice.Chosen(node.toUrl())) choose(NodeChoice.Automatic)
     }
 
     fun replace(
@@ -240,6 +316,10 @@ class NodeRepository(
     ) {
         _probes.update { it - old.toUrl() }
         _nodes.value = store.replace(old, new)
+        // Editing a node changes its URL, which is its identity. Without this
+        // the edited node would stop being the chosen one the moment it was
+        // saved, and the next connection would go somewhere automatic.
+        if (_choice.value == NodeChoice.Chosen(old.toUrl())) choose(NodeChoice.Chosen(new.toUrl()))
     }
 
     /**
@@ -273,5 +353,10 @@ class NodeRepository(
 
         _probes.update { it + (key to result) }
         return result
+    }
+
+    companion object {
+        /** How many probes run at once. See [probeAll]. */
+        const val PROBE_PARALLELISM: Int = 4
     }
 }

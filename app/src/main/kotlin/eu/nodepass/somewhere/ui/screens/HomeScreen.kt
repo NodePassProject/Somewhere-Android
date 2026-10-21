@@ -40,8 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
-import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.IconSquare
 import eu.nodepass.somewhere.ui.components.Meter
@@ -74,12 +74,18 @@ fun HomeScreen(
     nodes: NodeRepository,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
-    onToggleTunnel: (NowhereUrl) -> Unit = {},
+    onToggleTunnel: () -> Unit = {},
 ) {
     val stored by nodes.nodes.collectAsState()
-    val first = stored.firstOrNull()
+    // Read so that the target below is recomputed when either changes: an
+    // automatic choice moves when a probe comes back faster, and the screen
+    // has to name the node a tap would actually connect to.
+    val choice by nodes.choice.collectAsState()
+    val probes by nodes.probes.collectAsState()
+    val target = remember(stored, choice, probes) { nodes.target() }
+    val automatic = remember(stored, choice) { nodes.effectiveChoice() == NodeChoice.Automatic }
 
-    if (first == null) {
+    if (target == null) {
         NoNodeYet(onOpenNodes)
         return
     }
@@ -112,7 +118,12 @@ fun HomeScreen(
     val traffic by TunnelController.traffic.collectAsState()
 
     Home(
-        node = NodeEntry(first.url),
+        node = NodeEntry(target.url),
+        automatic = automatic,
+        // While connected, the node the tunnel is actually on. It can differ
+        // from the target: an automatic choice may have failed over, or moved
+        // since the tunnel came up.
+        connectedName = (tunnel as? TunnelState.Connected)?.node,
         session =
             SessionSnapshot.DISCONNECTED.copy(
                 connected = tunnel is TunnelState.Connected,
@@ -128,7 +139,7 @@ fun HomeScreen(
             ),
         onOpenNodes = onOpenNodes,
         onOpenSettings = onOpenSettings,
-        onToggleTunnel = { onToggleTunnel(first.url) },
+        onToggleTunnel = onToggleTunnel,
     )
 }
 
@@ -172,6 +183,8 @@ private fun NoNodeYet(onOpenNodes: () -> Unit) {
 internal fun Home(
     node: NodeEntry,
     session: SessionSnapshot,
+    automatic: Boolean = false,
+    connectedName: String? = null,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleTunnel: () -> Unit = {},
@@ -191,13 +204,18 @@ internal fun Home(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    SectionLabel(
-                        stringResource(
-                            if (session.connected) R.string.home_connected_to else R.string.home_not_connected,
-                        ),
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionLabel(
+                            stringResource(
+                                if (session.connected) R.string.home_connected_to else R.string.home_not_connected,
+                            ),
+                        )
+                        if (automatic) {
+                            SectionLabel(stringResource(R.string.nodes_automatic), color = colors.brand)
+                        }
+                    }
                     Text(
-                        text = node.displayName,
+                        text = connectedName?.takeIf { session.connected } ?: node.displayName,
                         fontFamily = SomewhereType.Display,
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,

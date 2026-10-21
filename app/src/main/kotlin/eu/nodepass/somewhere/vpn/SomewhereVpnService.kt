@@ -21,6 +21,7 @@ import eu.nodepass.somewhere.apps.VpnAppTarget
 import eu.nodepass.somewhere.apps.applyTo
 import eu.nodepass.somewhere.apps.carriesNothing
 import eu.nodepass.somewhere.apps.ruleFor
+import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.nodes.Attempt
@@ -92,17 +93,28 @@ class SomewhereVpnService : VpnService() {
         const val ACTION_STOP = "eu.nodepass.somewhere.STOP"
         const val EXTRA_NODE_URL = "node"
 
+        /**
+         * Whether an unreachable node may be swapped for another.
+         *
+         * True when the user left the choice to the client, false when they
+         * picked this node. Defaults to true for a start that does not say,
+         * which is how every start behaved before there was a choice to make.
+         */
+        const val EXTRA_MAY_FAIL_OVER = "may-fail-over"
+
         // Addresses, routes, resolvers and MTU live in [TunConfiguration],
         // which is a value a test can read. What is left here is applying it.
 
         fun start(
             context: Context,
             node: NowhereUrl,
+            mayFailOver: Boolean = true,
         ) {
             context.startService(
                 Intent(context, SomewhereVpnService::class.java).apply {
                     action = ACTION_START
                     putExtra(EXTRA_NODE_URL, node.toUrl())
+                    putExtra(EXTRA_MAY_FAIL_OVER, mayFailOver)
                 },
             )
         }
@@ -143,6 +155,9 @@ class SomewhereVpnService : VpnService() {
      */
     private var tried: Set<String> = emptySet()
 
+    /** Whether this attempt may move to another node. See [EXTRA_MAY_FAIL_OVER]. */
+    private var mayFailOver: Boolean = true
+
     override fun onStartCommand(
         intent: Intent?,
         flags: Int,
@@ -167,6 +182,7 @@ class SomewhereVpnService : VpnService() {
                     // the set, which is what stops two nodes that each fail
                     // over to the other from spinning.
                     tried = emptySet()
+                    mayFailOver = intent.getBooleanExtra(EXTRA_MAY_FAIL_OVER, true)
                     startTunnel(url)
                 }
             }
@@ -399,10 +415,6 @@ class SomewhereVpnService : VpnService() {
         // that reacts to Connected already sees the health that goes with it.
         val app = applicationContext as SomewhereApplication
         app.nodeHealth.record(url, Attempt.Succeeded)
-        // And remembered, for the quick-settings tile — which runs in a process
-        // that may have been started for the tile alone and cannot ask a
-        // screen what was connected.
-        app.nodes.recordConnected(url)
         TunnelController.report(
             TunnelState.Connected(
                 node = node.displayName ?: "${node.host}:${node.port}",
@@ -450,11 +462,23 @@ class SomewhereVpnService : VpnService() {
         application.nodeHealth.record(url, Attempt.Unreachable)
 
         val attempted = tried + url
+        if (!mayFailOver) {
+            // The user picked this node. Moving their traffic to a different
+            // Portal — a different country, perhaps — without asking is the
+            // automatic override `Failover.preferred` refuses to be.
+            Log.w(TAG, "the chosen node is unreachable; not failing over")
+            TunnelController.report(TunnelState.Failed(reason))
+            stopSelf()
+            return
+        }
+        // Not nodes the subscription has withdrawn: they are expired or out of
+        // quota (NW-D-04), and trying them would only spend the attempt.
         val candidates =
             application.nodes.nodes.value
-                .map { it.line }
+                .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+                .map { it.url.toUrl() }
         val next =
-            Failover.next(candidates, application.nodeHealth, attempted) ?: run {
+            Failover.next(candidates, application.nodeHealth, attempted, application.nodes::latencyOf) ?: run {
                 Log.w(TAG, "no other node to try; ${attempted.size} attempted")
                 TunnelController.report(TunnelState.Failed(reason))
                 stopSelf()
