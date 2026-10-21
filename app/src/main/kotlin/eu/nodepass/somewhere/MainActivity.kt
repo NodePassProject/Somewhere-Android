@@ -6,22 +6,28 @@ package eu.nodepass.somewhere
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.data.ThemeMode
 import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
@@ -139,7 +145,23 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            SomewhereTheme {
+            val appSettings by application.settings.settings.collectAsState()
+            val dark =
+                when (appSettings.theme) {
+                    ThemeMode.System -> isSystemInDarkTheme()
+                    ThemeMode.Light -> false
+                    ThemeMode.Dark -> true
+                }
+            // The bars' icons follow the app's theme, not the system's: a
+            // light app on a dark system would otherwise draw white clock
+            // digits on its own near-white ground.
+            LaunchedEffect(dark) {
+                enableEdgeToEdge(
+                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
+                    navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
+                )
+            }
+            SomewhereTheme(darkTheme = dark) {
                 Box(
                     Modifier
                         .fillMaxSize()

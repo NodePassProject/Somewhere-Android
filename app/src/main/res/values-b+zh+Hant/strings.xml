@@ -237,4 +237,11 @@
     <string name="settings_automation_detail">供 Tasker 等自動化應用程式使用。開啟後，任何已安裝的應用程式都能不經詢問關閉通道。動作：%1$s</string>
     <string name="settings_notifications_off">通知已關閉，通道執行時畫面上不會有任何提示。</string>
     <string name="settings_notifications_allow">允許通知</string>
+    <string name="settings_appearance">外觀</string>
+    <string name="settings_theme">主題</string>
+    <string name="theme_system">跟隨系統</string>
+    <string name="theme_light">淺色</string>
+    <string name="theme_dark">深色</string>
+    <string name="settings_language">語言</string>
+    <string name="language_system">跟隨裝置</string>
 </resources>

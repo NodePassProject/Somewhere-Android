@@ -235,4 +235,11 @@
     <string name="settings_automation_detail">供 Tasker 等自动化应用使用。开启后，任何已安装的应用都能不经询问关闭隧道。动作：%1$s</string>
     <string name="settings_notifications_off">通知已关闭，隧道运行时屏幕上不会有任何提示。</string>
     <string name="settings_notifications_allow">允许通知</string>
+    <string name="settings_appearance">外观</string>
+    <string name="settings_theme">主题</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="settings_language">语言</string>
+    <string name="language_system">跟随设备</string>
 </resources>

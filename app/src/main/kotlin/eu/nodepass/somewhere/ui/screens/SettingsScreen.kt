@@ -13,14 +13,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,11 +43,14 @@ import eu.nodepass.somewhere.BuildConfig
 import eu.nodepass.somewhere.QuickActionActivity
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.AppSettings
+import eu.nodepass.somewhere.data.ThemeMode
+import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.Panel
 import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.PanelRow
 import eu.nodepass.somewhere.ui.components.SectionLabel
+import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
@@ -68,6 +74,7 @@ fun SettingsScreen(
         notificationsOn = context.notificationsEnabled()
         onPauseOrDispose {}
     }
+    var choosingLanguage by remember { mutableStateOf(false) }
 
     // The header stays put and the form scrolls under it. Scrolled with the
     // form, the header slid up beneath the status bar, whose icons then sat
@@ -155,10 +162,10 @@ fun SettingsScreen(
                                 color = colors.muted,
                             )
                         }
-                        Switch(
-                            checked = automaticRefresh,
-                            onCheckedChange = onToggleAutomaticRefresh,
-                        )
+                        // The design system's switch, as every other row here
+                        // uses: two switch styles on one screen read as two
+                        // kinds of setting.
+                        SomewhereSwitch(automaticRefresh, onToggleAutomaticRefresh)
                     }
                     PanelDivider()
                     // "Only over HTTPS" was a switch over an enforcement that
@@ -173,6 +180,58 @@ fun SettingsScreen(
                             color = colors.muted,
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_appearance))
+                Panel {
+                    PanelRow {
+                        Text(
+                            text = stringResource(R.string.settings_theme),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(0.8f),
+                        )
+                        val modes = ThemeMode.entries
+                        Segmented(
+                            options =
+                                modes.map {
+                                    stringResource(
+                                        when (it) {
+                                            ThemeMode.System -> R.string.theme_system
+                                            ThemeMode.Light -> R.string.theme_light
+                                            ThemeMode.Dark -> R.string.theme_dark
+                                        },
+                                    )
+                                },
+                            selectedIndex = modes.indexOf(settings.theme),
+                            onSelect = { index -> onSettingsChange { it.copy(theme = modes[index]) } },
+                            height = 30.dp,
+                            modifier = Modifier.weight(2f),
+                        )
+                    }
+                    if (AppLanguage.supported) {
+                        PanelDivider()
+                        PanelRow(onClick = { choosingLanguage = true }) {
+                            Text(
+                                text = stringResource(R.string.settings_language),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                                modifier = Modifier.weight(1f),
+                            )
+                            val current = AppLanguage.current(context)
+                            Text(
+                                text = if (current.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(current),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 13.sp,
+                                color = colors.muted,
+                            )
+                            Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                        }
                     }
                 }
             }
@@ -279,6 +338,51 @@ fun SettingsScreen(
             }
         }
     }
+
+    if (choosingLanguage) LanguageDialog(onDismiss = { choosingLanguage = false })
+}
+
+/** The four choices, each named in its own language. */
+@Composable
+private fun LanguageDialog(onDismiss: () -> Unit) {
+    val colors = SomewhereTheme.colors
+    val context = LocalContext.current
+    val current = AppLanguage.current(context)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        shape = RoundedCornerShape(14.dp),
+        title = { Text(stringResource(R.string.settings_language), style = SomewhereType.rowHeading, color = colors.ink) },
+        text = {
+            Column {
+                AppLanguage.tags.forEach { tag ->
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    onDismiss()
+                                    AppLanguage.set(context, tag)
+                                }.padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (tag.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(tag),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (tag == current) Icon(SomewhereIcons.Check, null, Modifier.size(16.dp), tint = colors.brand)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel), color = colors.inkMuted) }
+        },
+    )
 }
 
 @Composable

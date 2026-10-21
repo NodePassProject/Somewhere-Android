@@ -272,4 +272,11 @@
     <string name="settings_automation_detail">For automation apps such as Tasker. Any installed app could then turn the tunnel off without asking you. Actions: %1$s</string>
     <string name="settings_notifications_off">Notifications are off, so the tunnel runs with nothing on screen saying so.</string>
     <string name="settings_notifications_allow">Allow notifications</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="theme_system">Automatic</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="language_system">Device language</string>
 </resources>
