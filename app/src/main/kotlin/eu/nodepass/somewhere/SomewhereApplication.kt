@@ -28,6 +28,13 @@ import java.io.File
  * generates itself. If the graph grows past a screenful, revisit.
  */
 class SomewhereApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        // Written by versions before nodes could be chosen and read by nothing
+        // since. It holds a node URL with its shared key, so it does not stay.
+        File(filesDir, "nodes/last-connected.txt").delete()
+    }
+
     val nodes: NodeRepository by lazy {
         NodeRepository(
             store = NodeStore(File(filesDir, "nodes/nodes.txt")),

@@ -82,7 +82,8 @@ fun HomeScreen(
     // has to name the node a tap would actually connect to.
     val choice by nodes.choice.collectAsState()
     val probes by nodes.probes.collectAsState()
-    val target = remember(stored, choice, probes) { nodes.target() }
+    val health by nodes.healthChanges.collectAsState()
+    val target = remember(stored, choice, probes, health) { nodes.target() }
     val automatic = remember(stored, choice) { nodes.effectiveChoice() == NodeChoice.Automatic }
 
     if (target == null) {

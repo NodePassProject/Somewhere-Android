@@ -43,32 +43,31 @@ sealed interface NodeChoice {
         /**
          * The node a choice comes to, or null when there is none to use.
          *
-         * A chosen node that is no longer listed falls back to the automatic
-         * answer rather than to nothing. The likeliest reason it is missing is
-         * that the user deleted it or a subscription refresh replaced it, and a
-         * Connect button that silently did nothing would be the worse outcome —
-         * the screen shows "Automatic" in that case, so the fallback is visible.
+         * A chosen node that can no longer be chosen falls back to the
+         * automatic answer rather than to nothing: deleted, replaced by a
+         * refresh, or withdrawn by its subscription (NW-D-04 — expired or out
+         * of quota, so dialling it only fails). A Connect button that silently
+         * did nothing would be worse, and the list shows "Automatic" selected in
+         * that case, so the fallback is visible. The stored choice is kept, so a
+         * node that comes back is chosen again.
          *
-         * @param listed every node the user has, in their own order.
-         * @param automaticCandidates the nodes automatic selection may use: the
-         *   listed ones minus any the subscription has withdrawn, which would
-         *   only be dialled to fail.
+         * @param selectable the nodes that may be used at all: listed, and not
+         *   withdrawn by their subscription. Automatic picks among these too.
          */
         fun resolve(
             choice: NodeChoice,
-            listed: List<String>,
-            automaticCandidates: List<String>,
+            selectable: List<String>,
             health: NodeHealth,
             latencyMillis: (String) -> Int? = { null },
         ): String? {
-            if (choice is Chosen && choice.node in listed) return choice.node
-            return Failover.preferred(automaticCandidates, health, latencyMillis)
+            if (choice is Chosen && choice.node in selectable) return choice.node
+            return Failover.preferred(selectable, health, latencyMillis)
         }
 
-        /** [choice] as it should be shown: a chosen node that is gone is automatic. */
+        /** [choice] as it should be shown: a chosen node that cannot be used is automatic. */
         fun effective(
             choice: NodeChoice,
-            listed: List<String>,
-        ): NodeChoice = if (choice is Chosen && choice.node !in listed) Automatic else choice
+            selectable: List<String>,
+        ): NodeChoice = if (choice is Chosen && choice.node !in selectable) Automatic else choice
     }
 }

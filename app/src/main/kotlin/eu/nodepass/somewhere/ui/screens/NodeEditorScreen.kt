@@ -37,6 +37,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.url.CertificateVerification
@@ -289,6 +291,9 @@ private fun QrDialog(
         shape = RoundedCornerShape(14.dp),
         title = { Text(title, style = SomewhereType.rowHeading, color = colors.ink) },
         text = { QrImage(link, stringResource(R.string.editor_show_qr), Modifier.fillMaxWidth()) },
+        // The code is the node's key, readable by any camera — and by the
+        // screenshot and recent-apps thumbnail a dialog would otherwise allow.
+        properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close), color = colors.inkMuted) }
         },

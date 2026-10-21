@@ -187,7 +187,12 @@ class MainActivity : ComponentActivity() {
     private fun choose(choice: NodeChoice) {
         repository.choose(choice)
         if (!TunnelController.isEngaged) return
-        resolveStart()?.let(::startTunnel)
+        val next = resolveStart() ?: return
+        // Picking the node the tunnel is already on, or Automatic when it comes
+        // to that same node, changes nothing — and a restart would drop every
+        // open connection to say so.
+        if (next == running) return
+        startTunnel(next)
     }
 
     private fun resolveStart(): Start? {

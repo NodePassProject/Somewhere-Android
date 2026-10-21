@@ -8,6 +8,7 @@ import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -113,5 +114,50 @@ class ProbeAllTest {
             ),
             result,
         )
+    }
+
+    @Test
+    fun `overlapping runs never dial a node twice, and never more than four at once`() {
+        val nodes =
+            List(
+                12,
+            ) { i ->
+                (
+                    NowhereUrl.parse(
+                        "nowhere://0123456789abcdef0123456789abcdef@127.0.0.1:${i + 1}?net=udp#q$i",
+                    ) as DecodeResult.Ok
+                ).value
+            }
+        NodeStore(File(folder.root, "many.txt")).save(nodes)
+        val inFlight =
+            java.util.concurrent.atomic
+                .AtomicInteger()
+        var peak = 0
+        val dialled = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        val repository =
+            NodeRepository(
+                store = NodeStore(File(folder.root, "many.txt")),
+                subscriptions = SubscriptionStore(File(folder.root, "sub.txt")),
+                fetcher = SubscriptionFetcher(clientVersion = "0.1.0"),
+                quicProbe = { node ->
+                    val now = inFlight.incrementAndGet()
+                    synchronized(this) { peak = maxOf(peak, now) }
+                    dialled.merge(node.toUrl(), 1, Int::plus)
+                    Thread.sleep(30)
+                    inFlight.decrementAndGet()
+                    null
+                },
+                io = Dispatchers.IO,
+                scope = CoroutineScope(Dispatchers.Unconfined),
+            )
+        runBlocking {
+            kotlinx.coroutines.coroutineScope {
+                launch { repository.probeAll() }
+                launch { repository.probeAll() }
+                launch { repository.probeAll(onlyUnprobed = true) }
+            }
+        }
+        assertTrue("every node dialled once, got $dialled", dialled.values.all { it == 1 })
+        assertTrue("at most ${NodeRepository.PROBE_PARALLELISM} at once, saw $peak", peak <= NodeRepository.PROBE_PARALLELISM)
     }
 }

@@ -45,6 +45,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import eu.nodepass.somewhere.R
@@ -96,6 +97,9 @@ fun ScanScreen(
     val deliver: (String) -> Unit = { text ->
         if (delivered.compareAndSet(false, true)) onScanned(text)
     }
+    // And never after the screen has gone: a frame that finishes decoding as
+    // the user taps back would otherwise pop the import screen under it too.
+    DisposableEffect(Unit) { onDispose { delivered.set(true) } }
 
     val picker =
         rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -147,7 +151,16 @@ fun ScanScreen(
             if (!cameraAllowed && asked) {
                 SmallButton(
                     label = stringResource(R.string.scan_allow_camera),
-                    onClick = { permission.launch(Manifest.permission.CAMERA) },
+                    // Once the system has stopped showing the dialog — "don't
+                    // ask again", or a second refusal — asking again does
+                    // nothing at all. The app's settings page is where the
+                    // permission can still be given.
+                    onClick = {
+                        val activity = context.findActivity()
+                        val canAsk =
+                            activity != null && ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.CAMERA)
+                        if (canAsk) permission.launch(Manifest.permission.CAMERA) else context.openAppSettings()
+                    },
                     fill = colors.surface,
                     contentColor = colors.ink,
                     height = 40.dp,
@@ -184,7 +197,12 @@ private fun CameraPreview(onDecoded: (String) -> Unit) {
     DisposableEffect(lifecycle) {
         val future = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
+        // The provider can arrive after the screen has gone — on a cold start,
+        // commonly. Binding then would open the camera for a screen nobody is
+        // looking at, with an analyser on an executor already shut down.
+        var disposed = false
         future.addListener({
+            if (disposed) return@addListener
             val cameras = future.get()
             provider = cameras
             val preview = Preview.Builder().build().also { it.surfaceProvider = view.surfaceProvider }
@@ -209,6 +227,7 @@ private fun CameraPreview(onDecoded: (String) -> Unit) {
             }
         }, ContextCompat.getMainExecutor(context))
         onDispose {
+            disposed = true
             provider?.unbindAll()
             analysis.shutdown()
         }
@@ -237,12 +256,31 @@ private fun decodeFrame(frame: ImageProxy): String? {
  * a gigabyte of pixels to find one code in, and a code that fills any useful
  * part of the frame is still legible at a fraction of that.
  */
-private fun decodeImage(
+internal fun decodeImage(
     context: Context,
     uri: Uri,
 ): String? {
+    // A picker URI can be revoked, point at something that is not an image,
+    // or be too large to decode: each is "no code found", never a crash.
+    return try {
+        decodeImageOrThrow(context, uri)
+    } catch (_: Exception) {
+        null
+    } catch (_: OutOfMemoryError) {
+        null
+    }
+}
+
+private fun decodeImageOrThrow(
+    context: Context,
+    uri: Uri,
+): String? {
+    // The bounds pass returns null by design, so its result is not the test:
+    // the dimensions it fills in are. Treating the null as failure made every
+    // picture read as "no QR code found".
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
     var sample = 1
     while (bounds.outWidth / sample > MAX_IMAGE_SIDE || bounds.outHeight / sample > MAX_IMAGE_SIDE) sample *= 2
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
@@ -262,3 +300,21 @@ private fun Context.hasCameraPermission(): Boolean =
 
 /** The longest side a chosen picture is decoded at. */
 private const val MAX_IMAGE_SIDE = 2048
+
+private fun Context.findActivity(): android.app.Activity? {
+    var current: Context? = this
+    while (current is android.content.ContextWrapper) {
+        if (current is android.app.Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+private fun Context.openAppSettings() {
+    val intent =
+        android.content
+            .Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            .setData(Uri.fromParts("package", packageName, null))
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { startActivity(intent) }
+}

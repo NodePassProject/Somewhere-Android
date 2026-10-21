@@ -98,6 +98,7 @@ fun NodesScreen(
     val stored by nodes.nodes.collectAsState()
     val probes by nodes.probes.collectAsState()
     val choice by nodes.choice.collectAsState()
+    val health by nodes.healthChanges.collectAsState()
     val records by nodes.subscriptionList.collectAsState()
     val refreshFailures by nodes.refreshFailures.collectAsState()
     val refreshing by nodes.refreshing.collectAsState()
@@ -122,15 +123,7 @@ fun NodesScreen(
     // indication of which ones work is the state this screen exists to leave.
     // Only nodes never probed in this process are dialled, so returning to the
     // tab does not re-dial the whole list.
-    LaunchedEffect(stored) {
-        stored
-            .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
-            .forEach { entry ->
-                if (probes[entry.url.toUrl()] == null) {
-                    nodes.probeInBackground(entry.url)
-                }
-            }
-    }
+    LaunchedEffect(stored) { nodes.probeUnprobedInBackground() }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -186,7 +179,7 @@ fun NodesScreen(
             onHideUnreachable = { hide -> onSettingsChange { it.copy(hideUnreachable = hide) } },
             choice = effective,
             automaticTarget =
-                remember(stored, probes) {
+                remember(stored, probes, health) {
                     nodes.automaticTarget()?.let { NodeEntry(it.url).displayName }
                 },
             onChoose = onChoose,

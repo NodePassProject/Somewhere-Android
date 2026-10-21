@@ -377,8 +377,16 @@ private fun BatchSummary(batch: ImportBatch) {
                 color = colors.critical,
             )
             batch.rejected.forEach { rejected ->
+                val why =
+                    if (rejected.reason == ImportBatch.PlaintextSubscription) {
+                        stringResource(R.string.import_subscription_plaintext)
+                    } else {
+                        // The parser's own reason, as a single pasted link shows
+                        // it: a URL grammar error has no sentence of its own.
+                        rejected.reason.detail
+                    }
                 Text(
-                    text = stringResource(R.string.import_batch_line, rejected.line, rejected.reason.detail),
+                    text = stringResource(R.string.import_batch_line, rejected.line, why),
                     fontFamily = SomewhereType.Body,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,

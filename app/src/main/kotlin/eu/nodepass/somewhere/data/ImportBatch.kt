@@ -29,7 +29,11 @@ data class ImportBatch(
 
     val isEmpty: Boolean get() = nodes.isEmpty() && subscriptions.isEmpty()
 
-    /** A subscription link that would hand its credential to the network in the clear. */
+    /**
+     * A subscription link that would hand its credential to the network in the
+     * clear. [detail] is for logs; the screen renders its own translated
+     * sentence for this, the one a single plaintext link already gets.
+     */
     data object PlaintextSubscription : DecodeReason {
         override val detail: String = "a subscription link must use https; over http its token is readable on the way"
     }

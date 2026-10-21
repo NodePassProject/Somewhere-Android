@@ -110,10 +110,75 @@ class NodeChoiceRepositoryTest {
         assertEquals(singapore, repository.target()?.url)
         assertEquals(singapore, repository.automaticTarget()?.url)
 
-        // Chosen explicitly, it is the person's call.
+        // Nor one that was chosen before it was withdrawn: the choice reads
+        // as automatic until the node comes back.
         repository.choose(NodeChoice.Chosen(frankfurt.toUrl()))
+        assertEquals(singapore, repository.target()?.url)
+        assertEquals(NodeChoice.Automatic, repository.effectiveChoice())
+    }
+
+    @Test
+    fun `with nothing usable there is still a target, so the tunnel can say why`() {
+        // Every node refused: Automatic has no answer, but Home must not claim
+        // there are no nodes, and Connect must reach the node to report the
+        // refusal rather than "no node was given".
+        val repository = repository()
+        repository.add(frankfurt)
+        health.record(frankfurt.toUrl(), Attempt.Refused)
         assertEquals(frankfurt, repository.target()?.url)
-        assertEquals(singapore, repository.automaticTarget()?.url)
+    }
+
+    @Test
+    fun `every node withdrawn still leaves a target`() {
+        NodeStore(File(folder.root, "nodes/nodes.txt")).saveEntries(
+            listOf(NodeStore.Entry(frankfurt, frankfurt.toUrl(), NodeStore.Origin.RemovedFromFeed)),
+        )
+        assertEquals(frankfurt, repository().target()?.url)
+    }
+
+    @Test
+    fun `health changes are announced`() {
+        val repository = repository()
+        val before = repository.healthChanges.value
+        health.record(frankfurt.toUrl(), Attempt.Unreachable)
+        assertEquals(before + 1, repository.healthChanges.value)
+    }
+
+    @Test
+    fun `feed nodes left by a forgotten subscription become the user's on load`() {
+        // The single-subscription "forget" kept nodes with their feed markers.
+        // With no subscription of that id, nothing would ever refresh, withdraw
+        // or release them.
+        NodeStore(File(folder.root, "nodes/nodes.txt")).saveEntries(
+            listOf(
+                NodeStore.Entry(frankfurt, frankfurt.toUrl(), NodeStore.Origin.Subscription),
+                NodeStore.Entry(singapore, singapore.toUrl(), NodeStore.Origin.RemovedFromFeed),
+            ),
+        )
+        val repository = repository()
+        assertEquals(
+            listOf(NodeStore.Origin.Manual, NodeStore.Origin.RemovedFromFeed),
+            repository.nodes.value.map { it.origin },
+        )
+    }
+
+    @Test
+    fun `a subscription's nodes are not orphans while it exists`() {
+        NodeStore(File(folder.root, "nodes/nodes.txt")).saveEntries(
+            listOf(NodeStore.Entry(frankfurt, frankfurt.toUrl(), NodeStore.Origin.Subscription)),
+        )
+        // A pre-upgrade subscription file: no id, so the empty one.
+        File(folder.root, "sub/sub.txt").apply {
+            parentFile?.mkdirs()
+            writeText("url=https://dash.example/sub?token=x\n")
+        }
+        assertEquals(
+            NodeStore.Origin.Subscription,
+            repository()
+                .nodes.value
+                .single()
+                .origin,
+        )
     }
 
     @Test

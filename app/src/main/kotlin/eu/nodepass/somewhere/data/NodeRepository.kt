@@ -96,7 +96,11 @@ class NodeRepository(
     /** How nodes have behaved, which is what an automatic choice is made from. */
     private val health: NodeHealth = NodeHealth(),
 ) {
-    private val _nodes = MutableStateFlow(store.load())
+    // Feed nodes whose subscription no longer exists are the user's. The
+    // single-subscription "forget" kept its nodes with their feed markers, and
+    // after the upgrade those point at a subscription id nobody has: never
+    // refreshed, never withdrawn, never released. Adopted once, at load.
+    private val _nodes = MutableStateFlow(store.adoptOrphans(subscriptions.loadAll().map { it.id }.toSet()))
     val nodes: StateFlow<List<NodeStore.Entry>> = _nodes.asStateFlow()
 
     private val _choice = MutableStateFlow(readChoice())
@@ -141,8 +145,17 @@ class NodeRepository(
     /** Probe results, keyed by the node's rendered URL. */
     val probes: StateFlow<Map<String, ProbeResult>> = _probes.asStateFlow()
 
-    /** The choice as a screen should show it: a chosen node that is gone reads as automatic. */
-    fun effectiveChoice(): NodeChoice = NodeChoice.effective(_choice.value, _nodes.value.map { it.url.toUrl() })
+    /** The nodes that may be used: listed, and not withdrawn by their subscription. */
+    private fun selectable(): List<String> =
+        _nodes.value
+            .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+            .map { it.url.toUrl() }
+
+    /** The choice as a screen should show it: a chosen node that cannot be used reads as automatic. */
+    fun effectiveChoice(): NodeChoice = NodeChoice.effective(_choice.value, selectable())
+
+    /** Ticks when node health changes; see [NodeHealth.changes]. */
+    val healthChanges: StateFlow<Long> get() = health.changes
 
     /** Records what the user picked. Best effort: losing it costs a tap, not a connection. */
     fun choose(choice: NodeChoice) {
@@ -158,15 +171,22 @@ class NodeRepository(
     }
 
     /**
-     * The node a connection should use now, or null when there is none.
+     * The node a connection should use now, or null only when there are none.
      *
-     * Automatic selection never picks a node the subscription has withdrawn:
-     * NW-D-04 says those are expired or out of quota, and dialling one would
-     * only produce a failure that points at the network. A person who chooses
-     * one explicitly still gets it — it is their call, and the card says what
-     * the subscription said about it.
+     * Never a node the subscription has withdrawn while another exists:
+     * NW-D-04 says those are expired or out of quota, and dialling one only
+     * produces a failure that points at the network.
+     *
+     * When nothing is usable — every node refused or withdrawn — this still
+     * returns one rather than null. Null made Home say "no node yet" to a user
+     * with a full list, and Connect report "no node was given"; connecting to
+     * the first node instead lets the tunnel report what is actually wrong,
+     * which is the refusal or the expiry.
      */
-    fun target(): NodeStore.Entry? = resolve(_choice.value)
+    fun target(): NodeStore.Entry? =
+        resolve(_choice.value)
+            ?: _nodes.value.firstOrNull { it.origin != NodeStore.Origin.RemovedFromFeed }
+            ?: _nodes.value.firstOrNull()
 
     /**
      * What automatic selection would pick now, whatever is chosen.
@@ -177,19 +197,8 @@ class NodeRepository(
     fun automaticTarget(): NodeStore.Entry? = resolve(NodeChoice.Automatic)
 
     private fun resolve(choice: NodeChoice): NodeStore.Entry? {
-        val listed = _nodes.value
-        val line =
-            NodeChoice.resolve(
-                choice = choice,
-                listed = listed.map { it.url.toUrl() },
-                automaticCandidates =
-                    listed
-                        .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
-                        .map { it.url.toUrl() },
-                health = health,
-                latencyMillis = ::latencyOf,
-            ) ?: return null
-        return listed.firstOrNull { it.url.toUrl() == line }
+        val line = NodeChoice.resolve(choice, selectable(), health, ::latencyOf) ?: return null
+        return _nodes.value.firstOrNull { it.url.toUrl() == line }
     }
 
     /** The last probe's handshake time for [node], if it answered. */
@@ -234,6 +243,21 @@ class NodeRepository(
         scope.launch { probeAll() }
     }
 
+    /** Probes the nodes nothing has measured yet, through the same throttle. */
+    fun probeUnprobedInBackground() {
+        scope.launch { probeAll(onlyUnprobed = true) }
+    }
+
+    /**
+     * One throttle for every probe this repository starts.
+     *
+     * Shared rather than per call: a second "Test all" tapped while the first
+     * is running, or the list's first-open probe overlapping either, would
+     * otherwise each bring their own four, and the measurement would be of the
+     * queue again.
+     */
+    private val probePermits = Semaphore(PROBE_PARALLELISM)
+
     /**
      * Probes every node the subscription has not withdrawn, a few at a time.
      *
@@ -243,19 +267,35 @@ class NodeRepository(
      * who started first. [PROBE_PARALLELISM] keeps the measurement about the
      * Portals.
      */
-    suspend fun probeAll() {
+    suspend fun probeAll(onlyUnprobed: Boolean = false) {
         val targets =
-            _nodes.value
-                .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
-                .map { it.url }
+            synchronized(probeClaims) {
+                _nodes.value
+                    .filter { it.origin != NodeStore.Origin.RemovedFromFeed }
+                    .map { it.url }
+                    .filter { !onlyUnprobed || _probes.value[it.toUrl()] == null }
+                    // A node already queued or being dialled is not dialled
+                    // twice; the run that claimed it will report it.
+                    .filter { probeClaims.add(it.toUrl()) }
+            }
         // Every one is marked first, so the whole list shows that a re-test is
         // under way rather than only the nodes whose turn has come.
         _probes.update { current -> current + targets.associate { it.toUrl() to ProbeResult.Probing } }
-        val permits = Semaphore(PROBE_PARALLELISM)
         coroutineScope {
-            targets.forEach { node -> launch { permits.withPermit { probe(node) } } }
+            targets.forEach { node ->
+                launch {
+                    try {
+                        probePermits.withPermit { probe(node) }
+                    } finally {
+                        synchronized(probeClaims) { probeClaims.remove(node.toUrl()) }
+                    }
+                }
+            }
         }
     }
+
+    /** Nodes some [probeAll] has queued and not yet finished. */
+    private val probeClaims = HashSet<String>()
 
     /**
      * Adds a subscription and fetches it once.
@@ -298,14 +338,14 @@ class NodeRepository(
                 is DecodeResult.Ok -> {
                     val subscription = result.value
                     synchronized(storeLock) {
-                        _nodes.value = store.reconcileWithFeed(subscription.nodes, id)
-                        // Re-read rather than saving the copy taken before the
+                        // Re-read rather than using the copy taken before the
                         // fetch: the subscription may have been removed while
-                        // it was in flight, and saving would bring it back.
+                        // it was in flight. Then the feed is dropped unread —
+                        // reconciling it first would add nodes the user never
+                        // saw, which removing the subscription then made theirs.
                         val current = subscriptions.loadAll().firstOrNull { it.id == id }
-                        if (current == null) {
-                            _nodes.value = store.releaseSource(id)
-                        } else {
+                        if (current != null) {
+                            _nodes.value = store.reconcileWithFeed(subscription.nodes, id)
                             subscriptions.save(
                                 current.copy(
                                     title = subscription.title ?: current.title,
@@ -325,7 +365,11 @@ class NodeRepository(
                     // still reconciled against it and every one of them is
                     // marked as removed, which is what actually happened.
                     if (result.reason == SubscriptionReason.NoNodes) {
-                        synchronized(storeLock) { _nodes.value = store.reconcileWithFeed(emptyList(), id) }
+                        synchronized(storeLock) {
+                            if (subscriptions.loadAll().any { it.id == id }) {
+                                _nodes.value = store.reconcileWithFeed(emptyList(), id)
+                            }
+                        }
                     }
                     if (_subscriptionList.value.any { it.id == id }) _refreshFailures.update { it + (id to result.reason) }
                 }
@@ -355,9 +399,9 @@ class NodeRepository(
         synchronized(storeLock) { _nodes.value = store.add(node) }
     }
 
-    /** Adds every node in [nodes] that is not already stored. */
+    /** Adds every node in [nodes] that is not already stored, in one write. */
     fun addAll(nodes: List<NowhereUrl>) {
-        synchronized(storeLock) { nodes.forEach { _nodes.value = store.add(it) } }
+        synchronized(storeLock) { _nodes.value = store.addAll(nodes) }
     }
 
     fun remove(node: NowhereUrl) {

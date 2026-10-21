@@ -299,5 +299,33 @@ class SubscriptionRefreshTest {
             assertTrue(result is DecodeResult.Invalid)
         }
 
+    @Test
+    fun aSubscriptionRemovedWhileItsFetchIsInFlightAddsNothing() =
+        runTest {
+            // The fetch returns after the user removed the subscription. Its
+            // nodes must not be reconciled in and then handed over as the
+            // user's own.
+            body = "$frankfurt\n$singapore"
+            val url = serve()
+            var repository: NodeRepository? = null
+            server!!.removeContext("/sub")
+            server!!.createContext("/sub") { exchange ->
+                repository!!.removeSubscription(
+                    repository!!
+                        .subscriptionList.value
+                        .single()
+                        .id,
+                )
+                val bytes = body.toByteArray()
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            repository = repository()
+            repository.addSubscription(url)
+
+            assertTrue(repository.subscriptionList.value.isEmpty())
+            assertTrue("nothing from the abandoned feed", repository.nodes.value.isEmpty())
+        }
+
     private fun NodeRepository.only(): SubscriptionStore.Record = subscriptionList.value.single()
 }

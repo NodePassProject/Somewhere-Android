@@ -96,6 +96,18 @@ class NodeHealth(
     private val records = HashMap<String, Record>()
     private val lock = Any()
 
+    private val mutableChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /**
+     * Ticks whenever an outcome is recorded or the memory is cleared.
+     *
+     * Automatic selection ranks by health, so a screen that names the node it
+     * would pick has to be told when health moves; without this it kept naming
+     * a node that had just failed while a tap connected somewhere else. Decay
+     * is not announced — it changes nothing until the next decision anyway.
+     */
+    val changes: kotlinx.coroutines.flow.StateFlow<Long> = mutableChanges
+
     fun record(
         node: String,
         attempt: Attempt,
@@ -121,6 +133,7 @@ class NodeHealth(
                 Attempt.Refused -> record.refused = true
             }
         }
+        mutableChanges.value++
     }
 
     fun health(node: String): Health =
@@ -138,7 +151,10 @@ class NodeHealth(
         }
 
     /** Forgets everything. For a user who has changed their list, or a test. */
-    fun clear() = synchronized(lock) { records.clear() }
+    fun clear() {
+        synchronized(lock) { records.clear() }
+        mutableChanges.value++
+    }
 
     /**
      * The order to try nodes in, best first.

@@ -200,6 +200,39 @@ class NodeStore(
         return load()
     }
 
+    /**
+     * Makes feed nodes whose subscription is gone the user's own.
+     *
+     * A listed one becomes manual. A withdrawn one is left as it is: it was
+     * shown withdrawn before and still is, and it is the user's to delete.
+     *
+     * @return the list afterwards, written only if something changed.
+     */
+    fun adoptOrphans(knownSources: Set<String>): List<Entry> {
+        val existing = load()
+        val adopted =
+            existing.map { entry ->
+                if (entry.origin == Origin.Subscription && entry.source !in knownSources) {
+                    entry.copy(origin = Origin.Manual, source = "")
+                } else {
+                    entry
+                }
+            }
+        if (adopted == existing) return existing
+        saveEntries(adopted)
+        return load()
+    }
+
+    /** [add] for several nodes, with one write. */
+    fun addAll(nodes: List<NowhereUrl>): List<Entry> {
+        val existing = load()
+        val known = existing.map { it.url.toUrl() }.toMutableSet()
+        val added = nodes.filter { known.add(it.toUrl()) }.map { Entry(it, it.toUrl(), Origin.Manual) }
+        if (added.isEmpty()) return existing
+        saveEntries(existing + added)
+        return load()
+    }
+
     fun remove(node: NowhereUrl): List<Entry> {
         val rendered = node.toUrl()
         saveEntries(load().filter { it.url.toUrl() != rendered })

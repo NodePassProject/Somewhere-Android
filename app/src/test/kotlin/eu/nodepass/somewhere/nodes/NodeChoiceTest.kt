@@ -20,8 +20,7 @@ class NodeChoiceTest {
         val picked =
             NodeChoice.resolve(
                 NodeChoice.Chosen("b"),
-                listed = listOf("a", "b"),
-                automaticCandidates = listOf("a", "b"),
+                selectable = listOf("a", "b"),
                 health = health,
                 latencyMillis = { if (it == "a") 10 else 900 },
             )
@@ -29,17 +28,18 @@ class NodeChoiceTest {
     }
 
     @Test
-    fun `a chosen node may be one automatic selection would never use`() {
-        // A node the subscription withdrew is not an automatic candidate, but a
-        // person who picks it anyway gets it.
+    fun `a chosen node the subscription withdrew falls back to automatic`() {
+        // NW-D-04: withdrawn means expired or out of quota. Dialling it only
+        // fails, and the list cannot show it selected, so the choice reads as
+        // automatic until the node comes back.
         val picked =
             NodeChoice.resolve(
                 NodeChoice.Chosen("withdrawn"),
-                listed = listOf("a", "withdrawn"),
-                automaticCandidates = listOf("a"),
+                selectable = listOf("a"),
                 health = health,
             )
-        assertEquals("withdrawn", picked)
+        assertEquals("a", picked)
+        assertEquals(NodeChoice.Automatic, NodeChoice.effective(NodeChoice.Chosen("withdrawn"), listOf("a")))
     }
 
     @Test
@@ -48,8 +48,7 @@ class NodeChoiceTest {
         val picked =
             NodeChoice.resolve(
                 NodeChoice.Automatic,
-                listed = listOf("a", "b", "c"),
-                automaticCandidates = listOf("a", "b", "c"),
+                selectable = listOf("a", "b", "c"),
                 health = health,
                 latencyMillis = { if (it == "c") 40 else 300 },
             )
@@ -63,8 +62,7 @@ class NodeChoiceTest {
         val picked =
             NodeChoice.resolve(
                 NodeChoice.Chosen("gone"),
-                listed = listOf("a"),
-                automaticCandidates = listOf("a"),
+                selectable = listOf("a"),
                 health = health,
             )
         assertEquals("a", picked)
@@ -78,12 +76,11 @@ class NodeChoiceTest {
         assertNull(
             NodeChoice.resolve(
                 NodeChoice.Automatic,
-                listed = listOf("a"),
-                automaticCandidates = listOf("a"),
+                selectable = listOf("a"),
                 health = health,
             ),
         )
-        assertNull(NodeChoice.resolve(NodeChoice.Automatic, emptyList(), emptyList(), health))
+        assertNull(NodeChoice.resolve(NodeChoice.Automatic, emptyList(), health))
     }
 
     @Test

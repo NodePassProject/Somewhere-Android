@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -184,6 +185,10 @@ fun SomewhereApp(
                     )
                 }
                 composable(Routes.IMPORT) {
+                    // Gone with the screen, however it closes. Cleared only on
+                    // Add, a system back left the scan behind, and the next
+                    // import opened pre-filled with it — a node key included.
+                    DisposableEffect(Unit) { onDispose { scanned = null } }
                     ImportScreen(
                         nodes = nodes,
                         link = scanned ?: pendingLink,
