@@ -66,6 +66,10 @@ fun SettingsScreen(
     settings: AppSettings = AppSettings(),
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
     onOpenNetwork: () -> Unit = {},
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {},
+    /** What the last backup action said, already a resource id; null for nothing. */
+    backupMessage: Int? = null,
 ) {
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
@@ -77,6 +81,7 @@ fun SettingsScreen(
         onPauseOrDispose {}
     }
     var choosingLanguage by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf<Int?>(null) }
 
     // The header stays put and the form scrolls under it. Scrolled with the
     // form, the header slid up beneath the status bar, whose icons then sat
@@ -305,6 +310,41 @@ fun SettingsScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_backup))
+                Panel {
+                    PanelRow(onClick = { confirming = R.string.backup_export_warning }) {
+                        Text(
+                            stringResource(R.string.backup_export),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = { confirming = R.string.backup_import_warning }) {
+                        Text(
+                            stringResource(R.string.backup_import),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                }
+                backupMessage?.let {
+                    Text(
+                        stringResource(it),
+                        style = SomewhereType.bodySmall,
+                        color = colors.muted,
+                        modifier = Modifier.padding(horizontal = 2.dp),
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionLabel(stringResource(R.string.settings_about))
                 Panel {
                     PanelRow {
@@ -355,6 +395,39 @@ fun SettingsScreen(
     }
 
     if (choosingLanguage) LanguageDialog(onDismiss = { choosingLanguage = false })
+
+    // Said before the file picker opens: an export is every key in plaintext,
+    // and an import replaces everything. Neither is a tap to make by accident.
+    confirming?.let { warning ->
+        val exporting = warning == R.string.backup_export_warning
+        AlertDialog(
+            onDismissRequest = { confirming = null },
+            containerColor = colors.surface,
+            shape = RoundedCornerShape(14.dp),
+            title = {
+                Text(
+                    stringResource(if (exporting) R.string.backup_export else R.string.backup_import),
+                    style = SomewhereType.rowHeading,
+                    color = colors.ink,
+                )
+            },
+            text = { Text(stringResource(warning), style = SomewhereType.bodySmall, color = colors.muted) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = null
+                    if (exporting) onExportBackup() else onImportBackup()
+                }) {
+                    Text(
+                        stringResource(if (exporting) R.string.backup_export else R.string.backup_import),
+                        color = if (exporting) colors.brand else colors.critical,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = null }) { Text(stringResource(R.string.action_cancel), color = colors.inkMuted) }
+            },
+        )
+    }
 }
 
 /** The four choices, each named in its own language. */

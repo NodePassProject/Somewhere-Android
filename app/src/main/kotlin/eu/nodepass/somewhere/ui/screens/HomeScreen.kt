@@ -90,7 +90,7 @@ fun HomeScreen(
     val automatic = remember(stored, choice) { nodes.effectiveChoice() == NodeChoice.Automatic }
 
     if (target == null) {
-        NoNodeYet(onOpenNodes)
+        NoNodeYet(onOpenNodes, onOpenSettings)
         return
     }
 
@@ -156,7 +156,31 @@ fun HomeScreen(
 
 /** No node to connect to. The one thing to do from here is add one. */
 @Composable
-private fun NoNodeYet(onOpenNodes: () -> Unit) {
+private fun NoNodeYet(
+    onOpenNodes: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    // Settings stays reachable with no node: it is where a backup is restored
+    // from, which is the first thing a new device with an old setup needs.
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 52.dp, end = 20.dp),
+        ) {
+            IconSquare(
+                icon = SomewhereIcons.MoreVertical,
+                contentDescription = stringResource(R.string.settings_title),
+                onClick = onOpenSettings,
+            )
+        }
+        NoNodeYetBody(onOpenNodes)
+    }
+}
+
+@Composable
+private fun NoNodeYetBody(onOpenNodes: () -> Unit) {
     val colors = SomewhereTheme.colors
     Column(
         modifier =

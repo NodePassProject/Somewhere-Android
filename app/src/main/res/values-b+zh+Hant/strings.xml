@@ -132,7 +132,7 @@
     <string name="settings_version">版本</string>
     <string name="settings_protocol">協定</string>
     <string name="settings_source_code">原始碼</string>
-    <string name="settings_privacy_note">Somewhere 不蒐集統計資料，不記錄你造訪的網站，也沒有帳號。你的節點清單只留在這台裝置上。</string>
+    <string name="settings_privacy_note">Somewhere 沒有統計、沒有帳號。你的節點和它顯示的活動記錄只留在這台裝置上，除非你主動匯出。</string>
 
     <string name="nodes_empty_title">尚無節點</string>
     <string name="nodes_empty_detail">從你的服務商後台新增一個，或貼上一條連結。</string>
@@ -269,4 +269,16 @@
     <string name="network_invalid_mtu">不在 1280 到 1500 之間。</string>
     <string name="network_invalid_dns">不是 IP 位址：這裡不能填網域。</string>
     <string name="network_applies_next">下次連線通道時生效。</string>
+    <string name="settings_backup">備份</string>
+    <string name="backup_export">匯出到檔案</string>
+    <string name="backup_export_warning">此檔案未加密，包含所有節點的金鑰和訂閱連結，取得它的人都能使用。請妥善保管。</string>
+    <string name="backup_import">從檔案還原</string>
+    <string name="backup_import_warning">這裡的所有內容都會被檔案中的內容取代：節點、訂閱、規則和設定。</string>
+    <string name="backup_exported">備份已寫入。</string>
+    <string name="backup_restored">已還原。重新連線後使用還原的節點。</string>
+    <string name="backup_failed">無法讀取或寫入該檔案。</string>
+    <string name="backup_not_backup">這不是 Somewhere 的備份檔案。</string>
+    <string name="backup_newer">此備份來自較新版本的 Somewhere。</string>
+    <string name="backup_empty">此備份裡沒有可還原的內容。</string>
+    <string name="backup_too_large">檔案太大，不是備份檔案。</string>
 </resources>

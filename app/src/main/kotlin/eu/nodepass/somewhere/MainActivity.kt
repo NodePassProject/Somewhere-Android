@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.data.Backup
 import eu.nodepass.somewhere.data.ThemeMode
 import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
@@ -51,6 +52,9 @@ import kotlinx.coroutines.withContext
  */
 class MainActivity : ComponentActivity() {
     private var pendingLink by mutableStateOf<String?>(null)
+
+    /** What the last backup action came to, for Settings to say. */
+    private var backupMessage by mutableStateOf<Int?>(null)
 
     /**
      * The node waiting for the system's consent dialog to come back.
@@ -185,6 +189,9 @@ class MainActivity : ComponentActivity() {
                         onRefreshScheduleChanged = { SubscriptionRefreshJob.apply(this@MainActivity) },
                         settings = application.settings,
                         network = application.network,
+                        onExportBackup = { exportBackup.launch(backupFileName()) },
+                        onImportBackup = { importBackup.launch(arrayOf("application/json", "application/octet-stream", "text/*")) },
+                        backupMessage = backupMessage,
                     )
                 }
             }
@@ -345,6 +352,89 @@ class MainActivity : ComponentActivity() {
                         }.getOrNull()
                     }
                 routing?.import(text ?: "")
+            }
+        }
+
+    /**
+     * Up to [limit] bytes. `InputStream.readNBytes` arrived on Android in API
+     * 33, and a backup larger than the limit is refused by size anyway.
+     */
+    private fun readAtMost(
+        input: java.io.InputStream,
+        limit: Int,
+    ): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (out.size() < limit) {
+            val read = input.read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (read < 0) break
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
+    }
+
+    /** A dated name, so two exports do not overwrite each other in Downloads. */
+    private fun backupFileName(): String = "somewhere-backup-${java.time.LocalDate.now()}.json"
+
+    /**
+     * Writes a backup where the user chose, through the system's own picker.
+     *
+     * The picker rather than a fixed path: the file holds every key, and where
+     * it goes is the user's decision — a folder, a USB drive, a cloud they
+     * trust — not one this app should make by writing to shared storage.
+     */
+    private val exportBackup =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+            val target = uri ?: return@registerForActivityResult
+            lifecycleScope.launch {
+                val written =
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val text = Backup.export(filesDir, BuildConfig.VERSION_NAME)
+                            contentResolver.openOutputStream(target, "wt")?.use { it.write(text.toByteArray()) } != null
+                        }.getOrDefault(false)
+                    }
+                backupMessage = if (written) R.string.backup_exported else R.string.backup_failed
+            }
+        }
+
+    /**
+     * Restores a backup the user chose, after the confirmation Settings showed.
+     *
+     * Read and checked in full before anything is written, so a wrong file
+     * changes nothing. Then everything held in memory is re-read, and the
+     * subscription schedule is put where the restored preference says.
+     */
+    private val importBackup =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val source = uri ?: return@registerForActivityResult
+            lifecycleScope.launch {
+                val application = application as SomewhereApplication
+                val outcome =
+                    withContext(Dispatchers.IO) {
+                        val bytes =
+                            runCatching {
+                                contentResolver.openInputStream(source)?.use { readAtMost(it, Backup.MAX_BYTES + 1) }
+                            }.getOrNull() ?: return@withContext R.string.backup_failed
+                        when (val read = Backup.read(bytes)) {
+                            is Backup.Read.Refused ->
+                                when (read.why) {
+                                    Backup.Refusal.TooLarge -> R.string.backup_too_large
+                                    Backup.Refusal.NotABackup -> R.string.backup_not_backup
+                                    Backup.Refusal.FromNewerVersion -> R.string.backup_newer
+                                    Backup.Refusal.Empty -> R.string.backup_empty
+                                }
+                            is Backup.Read.Ok ->
+                                if (Backup.restore(filesDir, read.files)) R.string.backup_restored else R.string.backup_failed
+                        }
+                    }
+                if (outcome == R.string.backup_restored) {
+                    application.nodes.reload()
+                    application.settings.reload()
+                    application.nodeHealth.clear()
+                    SubscriptionRefreshJob.apply(this@MainActivity)
+                }
+                backupMessage = outcome
             }
         }
 

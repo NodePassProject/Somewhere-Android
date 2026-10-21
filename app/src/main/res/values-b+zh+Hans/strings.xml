@@ -130,7 +130,7 @@
     <string name="settings_version">版本</string>
     <string name="settings_protocol">协议</string>
     <string name="settings_source_code">源代码</string>
-    <string name="settings_privacy_note">Somewhere 不收集统计数据，不记录你访问的站点，也没有账号。你的节点列表只留在这台设备上。</string>
+    <string name="settings_privacy_note">Somewhere 没有统计、没有账号。你的节点和它显示的活动记录只留在这台设备上，除非你主动导出。</string>
 
     <string name="nodes_empty_title">还没有节点</string>
     <string name="nodes_empty_detail">从你的服务商面板添加一个，或粘贴一条链接。</string>
@@ -267,4 +267,16 @@
     <string name="network_invalid_mtu">不在 1280 到 1500 之间。</string>
     <string name="network_invalid_dns">不是 IP 地址：这里不能填域名。</string>
     <string name="network_applies_next">下次连接隧道时生效。</string>
+    <string name="settings_backup">备份</string>
+    <string name="backup_export">导出到文件</string>
+    <string name="backup_export_warning">该文件未加密，包含所有节点的密钥和订阅链接，拿到它的人都能使用。请妥善保管。</string>
+    <string name="backup_import">从文件恢复</string>
+    <string name="backup_import_warning">这里的所有内容都会被文件中的内容替换：节点、订阅、规则和设置。</string>
+    <string name="backup_exported">备份已写入。</string>
+    <string name="backup_restored">已恢复。重新连接后使用恢复的节点。</string>
+    <string name="backup_failed">无法读取或写入该文件。</string>
+    <string name="backup_not_backup">这不是 Somewhere 的备份文件。</string>
+    <string name="backup_newer">这个备份来自更新版本的 Somewhere。</string>
+    <string name="backup_empty">这个备份里没有可恢复的内容。</string>
+    <string name="backup_too_large">文件太大，不是备份文件。</string>
 </resources>

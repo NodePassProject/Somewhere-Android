@@ -1,7 +1,7 @@
 # Privacy
 
 > Applies to Somewhere for Android, package `eu.nodepass.somewhere`.
-> Last reviewed 2026-08-29, against the source at that date.
+> Last reviewed 2026-10-21, against the source at that date.
 
 ## The short version
 
@@ -23,10 +23,13 @@ it removed when the app is uninstalled.
 | What | Why | Where |
 |---|---|---|
 | Nodes, including their shared keys | A node is unusable without its key | `NodeStore` |
-| A subscription URL and its title | To refresh the node list | `SubscriptionStore` |
+| Which node you chose, or that you left it automatic | So Home, the tile and shortcuts connect to it | `NodeRepository` |
+| Your subscription URLs and their titles | To refresh the node list | `SubscriptionStore` |
 | Routing rules you imported | To decide what goes through the tunnel | `RuleStore` |
 | Which applications the tunnel carries | Applied when the tunnel is built | `AppSelectionStore` |
-| Settings | Preferences | `RoutingPreferences` |
+| How the tunnel is built: excluded ranges, MTU, DNS servers you named | Applied when the tunnel is built | `NetworkSettingsStore` |
+| Settings | Preferences | `RoutingPreferences`, `AppSettingsStore` |
+| A count of automatic connects that did not survive | So a crash on connect cannot lock you out | `LaunchGuard` |
 
 **A shared key and a subscription URL are credentials.** They are stored in
 plain text in private storage, which is the same protection the platform gives
@@ -54,11 +57,23 @@ No identifier of you, your device or your installation is sent. There is none
 to send: this app generates no installation id.
 
 **To the addresses you connect to**, for traffic your routing rules send
-*direct* rather than through the tunnel. That traffic does not reach the Portal
-at all, which is the point of a direct rule, and it is not otherwise treated
-differently.
+*direct* rather than through the tunnel, and for ranges you keep out of the
+tunnel in Network settings. That traffic does not reach the Portal at all,
+which is the point, and it is not otherwise treated differently.
 
-**Nowhere else.** No third party receives anything.
+**To a DNS server you named**, if you named one in Network settings, for the
+queries the tunnel does not answer itself (PTR, SRV, TXT and the like). They
+travel through the Portal to it. Without one, they go to the resolver your
+network gave the device, as before.
+
+**To a file you choose**, if you export a backup. The app writes it only
+through the system's file picker, to the place you pick. The file is not
+encrypted and holds every node's key and every subscription URL; the app says so
+before it writes one.
+
+**Nowhere else.** No third party receives anything. The app does not look up
+your outbound IP address or test which services are reachable, which some
+clients do through third-party services.
 
 ## What is not collected
 
@@ -68,26 +83,48 @@ worth reading:
 - no advertising identifier, and no advertising
 - no installation id, device id, IMEI, MAC address or serial number
 - no location, coarse or fine
-- no contacts, calendar, photos, files or clipboard
+- no contacts, calendar or files
+- the camera is used only while the QR scanner is open, and frames are read on
+  the device and discarded; a picture you choose to scan is read the same way
+- the clipboard is read only when you tap something that pastes (a link, an
+  app list), and written only when you tap something that copies (a node link,
+  an app list); a copied node link is marked sensitive so the system's
+  clipboard preview does not show it
 - no list of installed applications **leaves the device** — the per-app screen
   reads one to draw itself and it is never transmitted
-- no browsing history: the app does not keep one, and the connection log is
-  in-memory, capped at 200 entries, and gone when the process ends
+- no browsing history on disk. The Activity screen shows what the tunnel is
+  doing — see below — from memory only, and nothing of it is written to storage
+  or sent anywhere unless you export it
 - no crash reports, no usage statistics, no "improve the product" data
 
-## The connection log
+## The Activity screen
 
-The Diagnostics screen shows what the Portal answered for recent flows: the
-result, the time, a destination as host and port, a flow id, and which carrier
-carried it. It exists in memory only, holds the most recent 200 entries, and is
-lost when the app's process ends.
+The Logs tab shows three things, all held in memory and never written to
+storage:
 
-It is **built so that a credential cannot appear in it**. An entry has five
-fields and none of them can hold a shared key, a subscription URL or a token —
-there is no room for one — and a test asserts that field list so a future entry
-that grew one fails rather than shipping. A destination is reduced to a host and
-a port before it is stored. This matters because people paste logs into public
-issue trackers, and helpfulness is how credentials get published.
+- **Connections**: what the tunnel is carrying now — destination as host and
+  port, the app that opened it (asked of Android, which answers only the active
+  VPN app), whether it went through the Portal or direct, and its byte counts.
+  Each disappears when its connection closes, and all of them when the tunnel
+  stops.
+- **DNS**: the names the device looked up while the tunnel was up, with the
+  record type and what became of the query. At most 300, and cleared when a new
+  session starts.
+- **Portal answers**: what the Portal answered for recent flows — the result,
+  the time, a destination as host and port, a flow id, the carrier, and how long
+  the answer took. At most 200, gone when the app's process ends.
+
+Together these are a record of where the device went while you watched. That is
+what makes them useful for diagnosis, and it is why they stay in memory and why
+**Export**, which turns them into text you can share, says what it contains
+before it runs.
+
+They are **built so that a credential cannot appear in them**. No field can hold
+a shared key, a subscription URL or a token — there is no room for one — and a
+test asserts the Portal log's field list so an entry that grew one fails rather
+than shipping. Destinations and names are reduced to the characters a host name
+can have before they are stored. This matters because people paste logs into
+public issue trackers, and helpfulness is how credentials get published.
 
 ## Permissions, and what each is for
 
@@ -97,7 +134,14 @@ issue trackers, and helpfulness is how credentials get published.
 | `ACCESS_NETWORK_STATE` | To notice when the network changes under a live tunnel |
 | `BIND_VPN_SERVICE` | To establish the tunnel. Android shows its own consent dialog and the tunnel cannot start without it |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | A tunnel must survive the app being backgrounded, which is the normal case: nobody watches a VPN |
-| `POST_NOTIFICATIONS` | To show the ongoing notification that says a tunnel is running. Without it the tunnel runs with nothing on screen saying so |
+| `POST_NOTIFICATIONS` | To show the ongoing notification that says a tunnel is running, with its rates and a Disconnect button. Without it the tunnel runs with nothing on screen saying so; it is asked for once a tunnel is up |
+| `CAMERA` | To scan a node's QR code. Asked for when the scanner opens, not at install; refusing it leaves scanning a picture |
+| `RECEIVE_BOOT_COMPLETED` | So a scheduled subscription refresh survives a reboot. Nothing starts at boot; Android's always-on VPN does that |
+
+Other apps can start or stop the tunnel only if you turn on **Allow other apps
+to connect and disconnect** in Settings. It is off by default: when on, any
+installed app can turn the tunnel off without asking you, and the switch says
+so.
 
 The app declares a `<queries>` entry for applications with a launcher icon so
 the per-app screen can list them. It does **not** request

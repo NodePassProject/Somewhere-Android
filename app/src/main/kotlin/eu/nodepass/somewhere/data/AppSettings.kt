@@ -125,6 +125,11 @@ class AppSettingsStore(
     private val mutable = MutableStateFlow(load())
     val settings: StateFlow<AppSettings> = mutable.asStateFlow()
 
+    /** Re-reads the file, after a restore replaced it. */
+    fun reload() {
+        mutable.value = load()
+    }
+
     /** Applies [change] and writes the result. Returns whether it reached the disk. */
     fun update(change: (AppSettings) -> AppSettings): Boolean {
         mutable.update(change)

@@ -114,6 +114,9 @@ fun SomewhereApp(
     settings: AppSettingsStore = AppSettingsStore(null),
     /** How the TUN is built. A store with no file serves previews and tests. */
     network: NetworkSettingsStore = NetworkSettingsStore(java.io.File("/dev/null/none")),
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {},
+    backupMessage: Int? = null,
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -284,6 +287,9 @@ fun SomewhereApp(
                     val current by settings.settings.collectAsState()
                     SettingsScreen(
                         onOpenNetwork = { navController.navigate(Routes.NETWORK) },
+                        onExportBackup = onExportBackup,
+                        onImportBackup = onImportBackup,
+                        backupMessage = backupMessage,
                         settings = current,
                         onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },

@@ -218,6 +218,17 @@ class NodeRepository(
         _subscriptionList.value = subscriptions.loadAll()
     }
 
+    /** Everything re-read from disk, after a restore replaced it underneath. */
+    fun reload() {
+        synchronized(storeLock) {
+            _nodes.value = store.load()
+            _subscriptionList.value = subscriptions.loadAll()
+            _choice.value = readChoice()
+        }
+        _probes.value = emptyMap()
+        _refreshFailures.value = emptyMap()
+    }
+
     /** Fire-and-forget [addSubscription], for a caller that is about to go away. */
     fun subscribe(url: String) {
         scope.launch { addSubscription(url) }
