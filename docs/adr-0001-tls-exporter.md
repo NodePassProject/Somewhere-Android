@@ -1,7 +1,11 @@
 # ADR-0001 · How the TLS exporter is obtained
 
 **Status:** accepted and **verified against a live Portal**, 2026-08-24 ·
-**Decides:** D-03 (`minSdk`)
+**Decides:** D-03 (`minSdk`) · **Amended** 2026-10-21 for Nowhere v3 — see the
+end: the platform branch is retired and Conscrypt is the exporter on every level
+
+The body below is the decision as taken against v1.8. Its formulas and labels
+are v1's; v3's are in `docs/protocol.md` and in `Authentication.kt`.
 
 ## Context
 
@@ -123,3 +127,36 @@ QUIC crypto callbacks at the C level, which neither the platform API nor
 Conscrypt's Java surface provides. That backend is a separate, still-unexplored
 decision; the fact that Conscrypt is BoringSSL underneath is a coincidence, not
 a plan.
+
+## Amendment, 2026-10-21: one source, for every API level
+
+**Nowhere v3 put Morph under TLS**, and Morph decides where the TLS bytes go.
+The TLS socket is now layered over a `MorphSocket` that masks every byte with a
+ChaCha20 keystream, and that only works if TLS reads and writes *through* the
+wrapper's streams. Conscrypt has two layered implementations; the default one,
+handed a socket with a file descriptor, takes the descriptor and does its own
+I/O on it, bypassing the wrapper entirely — the handshake would leave unmasked
+and a v3 Portal would read it as noise. The engine-based one goes through the
+streams, and `Conscrypt.setUseEngineSocket` selects it. The platform provider's
+factory has no such switch.
+
+So the TLS carrier is **Conscrypt in engine-socket mode on every API level**,
+and `ConscryptExporter` is the only exporter. `PlatformExporter` and the
+`Exporters` selector were removed with it. Nothing about `minSdk` changes: 26
+stands for the same reason it did, and the cost recorded above — Conscrypt's
+native library — was already being paid on every device, since the dependency
+was never conditional.
+
+What it costs that is new: on API 31+, the platform's TLS stack, kept current by
+Mainline updates, is no longer the one in use; Conscrypt's version is the one
+this app ships with. That is the same trade every app bundling Conscrypt makes,
+and the same one the QUIC carrier already made with aws-lc.
+
+Verified the same way the original was: `ExporterAgainstPortalTest` against a
+v3.0.1 Portal, with Morph under the socket, now sending a 16-byte AuthFrame and
+a one-byte FlowStart; and on an API 35 emulator, where
+`QuicPayloadTest.theSameBlobOverTlsAndOverQuicProducesTheSameDigest` carries a
+transfer through `NowhereDialer` and gets the oracle's digest.
+
+The QUIC paragraph above is out of date too: D-15 settled on ngtcp2 over aws-lc,
+whose exporter is reached through the bridge.

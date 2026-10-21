@@ -8,17 +8,17 @@ engine is hand-written in Kotlin rather than wrapping an existing core.
 
 ## Status
 
-Pre-release, and **not published anywhere**. The protocol is complete: L1, L2 and
-L3 all work against a live upstream Portal, and a node URL with no parameters —
-which is a QUIC node, because the specification's default for both directions is
-`udp` — connects and carries traffic.
+Pre-release, and **not published anywhere**. The client speaks **Nowhere v3**
+(`nw3`) and nothing older: a share link `nowhere://key@host:port` — TLS, Morph
+on, the v3 defaults — or the same with `?net=udp` for QUIC, connects and carries
+traffic.
 
 | | |
 |---|---|
-| Protocol, L1 | Authentication, flow setup, the dedicated TLS lane, the seven setup outcomes |
-| Protocol, L2 | TLS Mux. Sixteen concurrent flows measured over four connections, at upstream's stated shard density |
-| Protocol, L3 | QUIC: authentication, TCP flows over reliable streams, UDP over DATAGRAM with fragmentation, split flows across two carriers |
-| Carriers | All four combinations — `tcp/tcp`, `udp/udp`, `udp/tcp`, `tcp/udp` — compared case by case against the reference implementation, which agrees on every one |
+| Protocol | v3 authentication with role keys, the one-byte FlowStart, the five setup outcomes, UDP over a stream, stream-derived QUIC flow ids, UDP over DATAGRAM with fragmentation |
+| Morph | The v3 wire mask, on by default: ChaCha20 under TLS with the `fade` prelude, and per datagram under QUIC |
+| Carriers | TLS (one connection per flow) and QUIC (one connection for all of them), each with Morph on and off, compared case by case against the reference implementation, which agrees on every one |
+| Certificates | Verified on both carriers, always: a pin, or this device's trust store and the hostname. v3 has no unverified mode |
 | Tunnel | `VpnService` + lwIP, **both address families**, TCP with back-pressure, UDP, DNS interception with fake-IP over IPv4 and IPv6, live throughput |
 | Routing | A rule matcher, an import path, a bundled network-structural rule set for both families, a direct path, a reject path |
 | Per-app | A real installed list, a persisted selection, and this client structurally outside its own tunnel |
@@ -36,9 +36,13 @@ which is a QUIC node, because the specification's default for both directions is
   tunnel before applications run and can block traffic while it is down; an
   in-app boot receiver would be a worse version of it. Settings links to the
   system switch instead.
-- **The QUIC carrier does not verify a certificate chain.** `pin` works on both
-  carriers; a node carrying `sni` is refused rather than carried without it. See
-  [ADR-0002](docs/adr-0002-quic-certificate-verification.md).
+- **Verification by name has only been seen to refuse on a device.** Accepting a
+  chain this device trusts has been exercised on a JVM and against a live Portal
+  with a test anchor, not on Android, because that needs a CA whose key a test
+  can sign with. See [ADR-0002](docs/adr-0002-quic-certificate-verification.md).
+- **The dashboard does not emit v3 links yet.** NowhereDash targets Nowhere
+  2.1.1; its `up`/`down` links are read as `net` where the two agree, and its
+  carrier-path form is refused with a reason.
 - **No release has been published**, and no signing key exists.
 
 ## Roadmap
@@ -50,44 +54,42 @@ There is no big-bang release.
 | Stage | What it delivers | State |
 |---|---|---|
 | **M0** · foundations | Public repository, CI, the quality gates, and the conformance suite the later layers are judged by | **Done**, 2026-08-24 |
-| **L1** · TLS over TCP | Authentication, FlowHeader, Target, the seven setup outcomes, the dedicated lane, UDP over a stream — and, pulled forward because a client nobody can feed nodes to cannot be tested, the TUN, DNS with fake-IP, node storage and subscription import | **Done**, 2026-08-27 |
-| **L2** · TLS Mux | The Mux carrier at upstream's own shard density, and concurrency measured over it | **Done**, 2026-08-27 |
-| **L3** · QUIC | ngtcp2 over aws-lc, authentication, TCP over reliable streams, UDP over DATAGRAM, split flows across two carriers, keep-alive, and every carrier combination compared against the reference implementation | **Done**, 2026-08-29 |
+| **L1** · TLS over TCP | Authentication, flow setup, Target, the setup outcomes, the dedicated lane, UDP over a stream — and, pulled forward because a client nobody can feed nodes to cannot be tested, the TUN, DNS with fake-IP, node storage and subscription import | **Done**, 2026-08-27, against v1.8 |
+| **L2** · TLS Mux | The Mux carrier at upstream's own shard density | **Done**, 2026-08-27 — and **removed** with v3, which deleted Mux |
+| **L3** · QUIC | ngtcp2 over aws-lc, authentication, TCP over reliable streams, UDP over DATAGRAM, keep-alive, every carrier compared against the reference implementation | **Done**, 2026-08-29, against v1.8 |
 | **Release tail** | A bundled rule set, a connection log that shows what the Portal actually said, a launcher icon, a release build that has been run rather than only produced, and the documents a VPN-class listing requires | **Done**, 2026-08-29 |
 | **L4** · product surface | IPv6 end to end, `pin` on the QUIC carrier, node health and failover, a scheduled subscription refresh and a quick-settings tile | **Done**, 2026-08-29 |
+| **v3** · following upstream | Nowhere v3.0.1: the new authentication, FlowStart and setup outcomes; Mux and split carriers removed; stream-derived QUIC flow ids; Morph on both carriers; chain verification by name on QUIC; every conformance claim re-established against the v3 oracle and on an emulator | **Done**, 2026-10-21 |
 | **Device pass** | The first run on physical hardware: Private DNS, a real per-app list, a Wi-Fi to cellular change, Doze, a path MTU below 1500 | **Not started.** No physical device has ever been attached to this project |
-| **L5** · what the device pass asks for | Chain verification against `sni` on QUIC ([ADR-0002](docs/adr-0002-quic-certificate-verification.md)), and whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
+| **L5** · what the device pass asks for | Whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
 | **Publication** | A signing key, a distribution channel, a first release | **Waiting on decisions rather than on code** |
 
 ### How much of it is done
 
-[`conformance/cases/l1-coverage.md`](conformance/cases/l1-coverage.md) is the
+[`conformance/cases/coverage.md`](conformance/cases/coverage.md) is the
 measure. It carries one row per specification obligation, and every row either
-names the test that covers it or says what it is waiting for — so these counts
-can be re-derived by reading it rather than taken on trust. They were wrong once,
+names the test that covers it or says why it has none — so these counts can be
+re-derived by reading it rather than taken on trust. They were wrong once,
 carried forward through two runs by hand, and that is why they are now counted
 from the table.
 
-| Layer | Rows | Covered by a test | Partly, with the gap named | Blocked |
+| Rows | Covered by a test | Manual, with the reason | Partly, with the gap named | Blocked |
 |---|---|---|---|---|
-| L1 | 63 | 62 | 1 | 0 |
-| L2 | 23 | 22 | 1 | 0 |
-| L3 | 27 | 25 | 2 | 0 |
-| **Total** | **113** | **109** | **4** | **0** |
+| 89 | 88 | 1 | 2 | 0 |
 
-The four partial rows are each half of a pair: this client's half is tested, and
-the other half needs something no repository can contain — a running dashboard, a
-Portal that refuses stream credit, a phone.
+The two partial rows are each half of a pair: this client's half is tested, and
+the other half needs something no repository should contain — a dashboard that
+emits v3 links, and a CA key a test could sign with.
 
 **The protocol is finished and the product is not.** Between this repository and
-a release stand a physical device, a decision about certificate verification on
-the QUIC carrier, and a signing key that will never live here.
+a release stand a physical device and a signing key that will never live here.
 
 ## Protocol baseline
 
 Pinned in [`conformance/PROTOCOL_BASELINE`](conformance/PROTOCOL_BASELINE):
-Nowhere **v1.8.2**. Every protocol implementation detail is traceable to a
-specific section of the upstream `docs/protocol.md`.
+Nowhere **v3.0.1** (`00000e0`). Every protocol implementation detail is
+traceable to a specific section of the upstream `docs/protocol.md`. v3 is not
+wire-compatible with v1: a v3 client cannot reach a v1 Portal, or the reverse.
 
 ## Conformance suite
 
@@ -97,17 +99,17 @@ deliberately: third-party implementations need it to align, dashboard and Portal
 interop checks need it, and community bug reports need it to be meaningful.
 
 ```sh
-python3 conformance/scripts/verify-vectors.py      # 45 known-answer checks
+python3 conformance/scripts/verify-vectors.py      # 86 known-answer checks
 NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
 conformance/scripts/oracle-diff.sh                 # this client against upstream's own
 ```
 
 `oracle-diff.sh` is the one worth running. It puts the same case list through
-this implementation and the reference client, over every carrier combination
-both support, and diffs the outcomes. Its only finding to date was a protocol
-fact that had grown a second shape the moment a second carrier landed — invisible
-to every test that asserted on one carrier's own types, and about to degrade
-seven distinct rejection messages to a generic failure on a user's screen.
+this implementation and the reference client, over both carriers with Morph on
+and off, and diffs the outcomes. Against v1 it found a rejection that one
+carrier reported in a form a caller could not read; on its first v3 run it found
+a refused AuthFrame over QUIC reported as a transport failure, where the oracle
+and the TLS carrier both read it as no answer.
 
 The suite makes no assumption about where an upstream clone lives; point
 `NOWHERE_CLONE` at one.
@@ -115,10 +117,11 @@ The suite makes no assumption about where an upstream clone lives; point
 ### Tests that need a live Portal
 
 Many tests dial a real Portal rather than a fake, because the failures that
-matter most are the ones no fixture predicts — a rejected authentication frame
-is met with **silence** rather than a close, which a fake returning EOF will
-never teach you. They skip cleanly when no Portal is running, so an environment
-that cannot run them reports honestly instead of passing vacuously.
+matter most are the ones no fixture predicts. The first run against v3 found the
+clearest example: a Portal ends a flow whose first payload arrives before
+READY, which no vector and no fake would have shown. They skip cleanly when no
+Portal is running, so an environment that cannot run them reports honestly
+instead of passing vacuously.
 
 ```sh
 eval "$(conformance/scripts/portal-for-tests.sh)"
@@ -133,8 +136,9 @@ conformance/scripts/portal-for-tests.sh --stop
 | [`docs/design-system.md`](docs/design-system.md) | Colour tokens for both themes with measured contrast, the type scale, and the four rules the UI has to keep |
 | [`docs/brand.md`](docs/brand.md) | The brand hue, which carries no protocol meaning and is derived rather than picked |
 | [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, and the rule that machine identifiers stay English while sentences translate |
-| [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Why the TLS exporter has two sources, and why `minSdk` is 26 |
-| [`docs/adr-0002-quic-certificate-verification.md`](docs/adr-0002-quic-certificate-verification.md) | How `pin` is verified on the QUIC carrier, and what `sni` would cost — with the estimate that made it look expensive named as the wrong option |
+| [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Where the TLS exporter comes from, and why `minSdk` is 26 |
+| [`docs/adr-0002-quic-certificate-verification.md`](docs/adr-0002-quic-certificate-verification.md) | How certificates are verified on the QUIC carrier: `pin` in the handshake, a name against the platform's trust store after it |
+| [`docs/adr-0003-morph.md`](docs/adr-0003-morph.md) | How Morph is applied under each carrier, and why TLS is now Conscrypt in engine mode everywhere |
 | [`docs/privacy.md`](docs/privacy.md) | What is stored, what leaves the device, and the longer list of what is not collected |
 | [`docs/store-policy.md`](docs/store-policy.md) | What a VPN-class listing requires, what is already satisfied, and what is still someone's decision |
 
@@ -202,11 +206,12 @@ for the private reporting channel and what is in scope.
 
 Two properties worth stating plainly:
 
-- **A node with neither `sni` nor `pin` gets no certificate verification**, which
-  is what upstream does and what every URL current dashboards emit produces. The
-  client states this persistently rather than hiding or refusing it.
-- **Nowhere is not an anti-censorship protocol and does not claim to be.** This
-  client must not imply otherwise.
+- **Every node's certificate is verified**, by a pin or by this device's trust
+  store and the hostname. v3 removed the mode that skipped it; a Portal on its
+  generated certificate needs a pin.
+- **Morph masks the wire; it does not protect anything.** Upstream says so —
+  "wire masking, not authentication or integrity" — and makes no claim that
+  Nowhere resists censorship. This client must not imply otherwise.
 
 ## Licence
 

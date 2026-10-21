@@ -22,13 +22,15 @@ scripts/device-connect.sh     best-effort discovery of one usable Android device
 scripts/emulator-setup.sh     one-time AVD preparation (only if you want an AVD)
 scripts/e2e-android.sh        host-side Portal + on-device connectedAndroidTest
 scripts/e2e-fakeip.sh         remote resolution on a device: a name only the Portal knows
-scripts/oracle-diff.sh        the same cases through both implementations and both carriers
+scripts/oracle-diff.sh        the same cases through both implementations, both carriers, Morph on and off
 scripts/oracle-cases.py       the oracle's half of that comparison, over raw SOCKS5
 scripts/portal-lifecycle.sh   the two cases that need the Portal to stop being there
-scripts/quic-probe.sh         D-15: does a QUIC stack give us the exporter NW-P-01 needs
+scripts/portal-for-tests.sh   a Portal for the JVM live tests; prints key, address and pin
+scripts/e2e-tunnel-fetch.sh   a fetch from inside the tunnel, proved by the Portal's own counters
+scripts/quic-probe.sh         D-15: does a QUIC stack give us the exporter authentication needs
 quic-probe/probe.c            the spike that answers it, derived from ngtcp2's simpleclient (MIT)
 cases/conformance-matrix.md   test matrix derived from the spec, mapped to PRD IDs
-cases/l1-coverage.md          every L1 row and the test that covers it, or why it has none
+cases/coverage.md             every row and the test that covers it, or why it has none
 ```
 
 ## What you can run right now
@@ -50,48 +52,39 @@ scripts/oracle-diff.sh
 scripts/e2e-fakeip.sh
 ```
 
-**Verified on 2026-08-26, at the baseline this file pins:**
+**Verified on 2026-10-21, at the baseline this file pins (v3.0.1), on Linux
+x86_64 and an API 35 x86_64 emulator:**
 
-- `verify-vectors.py` — 45 checks pass, baseline v1.8.2 @ 8807960c.
-- `smoke-local.sh` — passes. Traffic really traverses
-  SOCKS5 → Vector → Nowhere (tcp/tcp) → Portal → target.
-- `drift-check.sh` — passes. It has caught two real upstream events so far: the
-  disappearance of the `feat/mux` branch on the day v1.8.0 was released, and the
-  normative change that moved this pin to v1.8.2.
-- `cargo build --release --locked` succeeds on macOS/aarch64, which confirms the
-  plan of building the Rust implementation only as a host-side oracle.
-- `oracle-diff.sh` — passes. Thirteen cases, both implementations, identical
-  outcomes. Five of them — payload by address, payload by name, `DIAL_FAILED`, a
-  wrong key, a UDP-over-stream round trip — run **twice**, once over dedicated
-  lanes and once over a Mux carrier, because Mux is supposed to change how the
-  frames travel and nothing else. The remaining three are the arithmetic: with
-  sixteen flows opened at once and held open together, the Portal accepted
-  sixteen connections from each implementation at `mux=0` and four from each at
-  `mux=1`, which is upstream's stated density of four active flows per shard.
-  Verified to fail twice: encoding a domain target with the IPv4 ATYP diverges
-  on one case, and a client that stops multiplexing is caught by the count
-  rather than passing on the outcomes. It has found one real defect — a Portal
-  rejection that only one of the two carriers reported in a form a caller could
-  read. See `cases/l1-coverage.md`.
-- `e2e-fakeip.sh` — passes on a local emulator (API 32, arm64-v8a). Verified to
-  fail: bypassing the DNS interceptor turns it red with an unknown host.
-- `e2e-fakeip.sh` also runs the device set under **both** `mux=0` and `mux=1`
-  on every invocation, and asserts the arithmetic L2 exists for. Measured on a
-  local emulator: sixteen concurrent flows over **sixteen** TLS connections at
-  `mux=0` and over **four** at `mux=1`, counted from the source ports in the
-  Portal's own exchange lines. Verified to fail: the version of the client that
-  raced its placements used fifteen, and the assertion catches it.
-- `quic-probe.sh` — passes. Ngtcp2 v1.17.0 with the stock BoringSSL crypto
-  backend, over aws-lc v1.68.0, builds for `arm64-v8a` and `x86_64`, exports 32
-  bytes under `EXPORTER-Nowhere-Auth`, and a real Portal answers **READY** to
-  the AuthFrame built from them. Verified to fail: a wrong shared key completes
-  the same handshake and receives no setup byte at all, and the script fails if
-  one ever does. This is the measurement D-15 was waiting on; see
-  `cases/l1-coverage.md`.
-- `portal-lifecycle.sh` — passes. The Portal reclaimed a connection that
-  authenticated and then said nothing after **40004 ms**, which is NW-P-11's
-  forty seconds observed rather than transcribed; and a session kept working
-  across a Portal kill and restart with nothing asked of the user.
+- `verify-vectors.py` — 86 checks pass. It carries its own ChaCha20, checked
+  against RFC 8439 before it judges the Morph vectors.
+- `smoke-local.sh` — passes over TLS and QUIC, Morph on: SOCKS5 → the oracle's
+  Vector → Portal → target.
+- `drift-check.sh` — passes. Upstream is ahead at `eee7965c` and no normative
+  file differs from the pin. It caught the v3 change that this baseline is the
+  answer to.
+- `oracle-diff.sh` — passes. Five cases — payload by address, payload by name,
+  `DIAL_FAILED`, a wrong key, a UDP round trip — over four combinations (TLS
+  and QUIC, Morph on and off), plus a burst of sixteen held flows per carrier:
+  sixteen TCP connections over TLS and none over QUIC, from each
+  implementation, counted by `ss` at the instant the origin releases them.
+  Found two client defects on its first runs; see `cases/coverage.md`.
+- `portal-lifecycle.sh` — passes. A connection that authenticates and sends no
+  flow is answered `INVALID_REQUEST` after **5002 ms**, the handshake deadline;
+  and a session keeps working across a Portal kill and restart. Both on a
+  supplied certificate, verified by name.
+- `quic-probe.sh` — passes. ngtcp2 v1.17.0 over aws-lc v1.68.0 builds for both
+  ABIs, exports 32 bytes under `EXPORTER-Nowhere-nw3-Auth`, and a v3 Portal
+  answers READY; a wrong key gets no answer.
+- `e2e-tunnel-fetch.sh` — passes over TLS and QUIC: a fetch from the shell user,
+  who is inside the tunnel, arrives intact and the Portal's `nowhere status`
+  totals move by exactly its size.
+- `e2e-fakeip.sh` — passes over TLS and QUIC: 20 MiB by a name only the
+  Portal's network can resolve, over IPv4 and a synthetic IPv6 address, and the
+  origin hears only from the Portal.
+- The instrumentation suite — 57 tests, none failing, seven skipped by design
+  (three `@Ignore`d in favour of the shell-driven scripts, three per-app cases
+  that need an origin the device cannot reach directly, one holder that runs
+  only when asked).
 
 ## Device side
 
@@ -115,7 +108,7 @@ roughly 1–2 GB of system image. Skip it if you already have a working device.
 
 | Item | Requirement | Why |
 |---|---|---|
-| API level | **≥ 31** to exercise the platform exporter path | `android.net.ssl.SSLSockets.exportKeyingMaterial()` is public API only from API 31 |
+| API level | ≥ 26 | `minSdk`. The TLS exporter is Conscrypt's on every level since v3 (ADR-0003) |
 | ABI | must match the client's `abiFilters` | local devices are commonly arm64-v8a; x86 CI runners need x86_64 — keep both, for different reasons |
 | `/dev/tun` | must exist | prerequisite for `VpnService`; present on most images, missing on some minimal ones |
 | VPN consent | must be pre-granted | `adb shell appops set <pkg> ACTIVATE_VPN allow`, otherwise instrumentation hangs on the consent dialog |
@@ -128,9 +121,25 @@ emulator using bridged networking, use the host's LAN address instead — the
 scripts accept an override through the environment.
 
 `e2e-fakeip.sh` has been run end to end and passes; it installs the app, brings
-up a real TUN and moves 20 MB through it. `e2e-android.sh` predates the client
-project and has still not been run whole — the two now overlap, and the
-device-side path that is actually exercised is `e2e-fakeip.sh`.
+up a real TUN and moves 20 MB through it over each carrier. `e2e-android.sh`
+runs the instrumentation suite against a host Portal.
+
+### Instrumentation arguments
+
+A Portal on a generated certificate needs its pin, and v3 needs both ends to
+agree on Morph:
+
+```bash
+./gradlew connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.nowhereE2ePortal=10.0.2.2:22095 \
+  -Pandroid.testInstrumentationRunnerArguments.nowhereE2eKey=<32 hex> \
+  -Pandroid.testInstrumentationRunnerArguments.nowhereE2ePin=<the Portal's fingerprint> \
+  -Pandroid.testInstrumentationRunnerArguments.nowhereE2eMorph=1
+```
+
+The Portal logs its fingerprint on its first line. The QUIC cases expect an
+HTTP origin at `127.0.0.1:28091` and a UDP echo at `127.0.0.1:28092` *as the
+Portal sees them*.
 
 ### Why `e2e-fakeip.sh` uses Docker
 
@@ -149,10 +158,10 @@ values transcribed into the JSON. So it checks three things at once: whether the
 spec says what we think it says, whether we understood it, and whether the
 transcription has a typo.
 
-This matters most for authentication: the `authKey` derivation is a three-step
-HMAC chain, the document describes it in HKDF terms while the implementation is
-plain HMAC, and it is easy to get subtly wrong. All three currently agree
-byte for byte.
+This matters most for the derivations. Authentication is a three-step HMAC
+chain with a hashed salt, and Morph is a two-step chain whose root label is the
+HMAC key itself, unhashed — described side by side, and easy to transcribe one
+from the other. All three sources currently agree byte for byte.
 
 ## Mapping to the PRD
 
@@ -167,17 +176,15 @@ byte for byte.
 
 ## Notes
 
-- Values such as `sharedKeyUtf8: "secret"` come from upstream tests. They are
-  public test data, not credentials. **No real key, token, or node address may
-  ever enter this directory.**
+- Values such as `sharedKeyUtf8: "0123456789abcdef0123456789abcdef"` come from
+  upstream tests. They are public test data, not credentials. **No real key,
+  token, or node address may ever enter this directory.**
 - `oracle-diff.sh` compares a SOCKS5 reply code, because that is the only view
   the oracle has of a rejection: its front end maps the Portal's `SetupResult`
   onto one. This implementation is put through the same mapping so that both
   speak one alphabet, and each side's untranslated reason is printed beside the
   verdict — which is where a difference the alphabet cannot express shows up.
-  Both reach reply 1 for a wrong key, one by observing silence and one by timing
-  out after five seconds, and only those two lines say so.
-- `smoke-local.sh` deliberately omits `sni` and `pin`. That is exactly the shape
-  NowhereDash currently generates, i.e. the configuration for which upstream skips
-  certificate verification entirely. The omission is an intentional reference
-  case, not an oversight — see decision D-11.
+- Every node in this suite is pinned to the fingerprint its Portal logged. v3
+  has no unverified mode, so a test Portal on a generated certificate is
+  reachable no other way — and a pin neither side produced is the strongest
+  verification a test can ask for.
