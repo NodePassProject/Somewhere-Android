@@ -241,4 +241,10 @@
     <string name="import_batch_rejected">Not understood</string>
     <string name="import_batch_line">Line %1$d: %2$s</string>
     <string name="import_add_all">Add all</string>
+    <string name="editor_share">Share</string>
+    <string name="editor_copy_link">Copy link</string>
+    <string name="editor_share_link">Share link…</string>
+    <string name="editor_show_qr">Show QR code</string>
+    <string name="editor_share_warning">The link carries this node\'s key. Anyone who has it can use the node.</string>
+    <string name="editor_link_copied">Link copied</string>
 </resources>

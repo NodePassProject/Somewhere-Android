@@ -206,4 +206,10 @@
     <string name="import_batch_rejected">無法辨識</string>
     <string name="import_batch_line">第 %1$d 行：%2$s</string>
     <string name="import_add_all">全部新增</string>
+    <string name="editor_share">分享</string>
+    <string name="editor_copy_link">複製連結</string>
+    <string name="editor_share_link">分享連結…</string>
+    <string name="editor_show_qr">顯示 QR 碼</string>
+    <string name="editor_share_warning">連結中包含這個節點的金鑰，取得連結的人都能使用這個節點。</string>
+    <string name="editor_link_copied">連結已複製</string>
 </resources>

@@ -13,11 +13,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,9 +45,16 @@ import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.FieldBox
 import eu.nodepass.somewhere.ui.components.MonoText
+import eu.nodepass.somewhere.ui.components.Panel
+import eu.nodepass.somewhere.ui.components.PanelDivider
+import eu.nodepass.somewhere.ui.components.PanelRow
+import eu.nodepass.somewhere.ui.components.QrImage
 import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
+import eu.nodepass.somewhere.ui.copyNodeLink
+import eu.nodepass.somewhere.ui.icons.SomewhereIcons
+import eu.nodepass.somewhere.ui.shareNodeLink
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 
@@ -91,14 +103,18 @@ internal fun NodeEditor(
     onRemove: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
+    val context = LocalContext.current
     var net by remember { mutableStateOf(node.net) }
     var morph by remember { mutableStateOf(node.morph) }
+    var showingQr by remember { mutableStateOf(false) }
+    // The node as it is stored, not as edited: what is shared is a node that
+    // exists, and an unsaved change is not one yet.
+    val link = node.toUrl()
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
+    // The header stays put and the form scrolls under it. Scrolled with the
+    // form, the header slid up beneath the status bar, whose icons then sat
+    // on top of the title.
+    Column(Modifier.fillMaxSize()) {
         ScreenHeader(
             title = stringResource(R.string.editor_title),
             onBack = onBack,
@@ -122,7 +138,11 @@ internal fun NodeEditor(
         )
 
         Column(
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             Labelled(stringResource(R.string.field_name)) {
@@ -188,6 +208,28 @@ internal fun NodeEditor(
                 CertificatePanel(node.certificateVerification)
             }
 
+            Labelled(stringResource(R.string.editor_share)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Said before the buttons rather than after a tap: the link
+                    // is a credential, and the moment to know that is before
+                    // it leaves the device.
+                    Text(
+                        text = stringResource(R.string.editor_share_warning),
+                        fontFamily = SomewhereType.Body,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
+                        color = colors.warn,
+                    )
+                    Panel {
+                        ShareRow(stringResource(R.string.editor_copy_link)) { context.copyNodeLink(link) }
+                        PanelDivider()
+                        ShareRow(stringResource(R.string.editor_share_link)) { context.shareNodeLink(link) }
+                        PanelDivider()
+                        ShareRow(stringResource(R.string.editor_show_qr)) { showingQr = true }
+                    }
+                }
+            }
+
             // Not in the design canvas, which draws every screen populated and
             // never drawn being undone. An app that can add a node and cannot
             // remove one is not finished, so this is added in the system's own
@@ -209,6 +251,48 @@ internal fun NodeEditor(
             )
         }
     }
+
+    if (showingQr) {
+        QrDialog(title = node.displayName ?: "${node.host}:${node.port}", link = link, onDismiss = { showingQr = false })
+    }
+}
+
+@Composable
+private fun ShareRow(
+    label: String,
+    onClick: () -> Unit,
+) {
+    PanelRow(onClick = onClick) {
+        Text(
+            text = label,
+            fontFamily = SomewhereType.Body,
+            fontWeight = FontWeight.Medium,
+            fontSize = 13.5.sp,
+            color = SomewhereTheme.colors.ink,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = SomewhereTheme.colors.faint)
+    }
+}
+
+/** The node's link as a QR code, for another device's camera. */
+@Composable
+private fun QrDialog(
+    title: String,
+    link: String,
+    onDismiss: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        shape = RoundedCornerShape(14.dp),
+        title = { Text(title, style = SomewhereType.rowHeading, color = colors.ink) },
+        text = { QrImage(link, stringResource(R.string.editor_show_qr), Modifier.fillMaxWidth()) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close), color = colors.inkMuted) }
+        },
+    )
 }
 
 @Composable

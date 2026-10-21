@@ -204,4 +204,10 @@
     <string name="import_batch_rejected">无法识别</string>
     <string name="import_batch_line">第 %1$d 行：%2$s</string>
     <string name="import_add_all">全部添加</string>
+    <string name="editor_share">分享</string>
+    <string name="editor_copy_link">复制链接</string>
+    <string name="editor_share_link">分享链接…</string>
+    <string name="editor_show_qr">显示二维码</string>
+    <string name="editor_share_warning">链接中包含这个节点的密钥，拿到链接的人都能使用这个节点。</string>
+    <string name="editor_link_copied">链接已复制</string>
 </resources>
