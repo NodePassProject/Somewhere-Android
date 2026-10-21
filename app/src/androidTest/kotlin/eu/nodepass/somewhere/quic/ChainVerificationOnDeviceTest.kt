@@ -31,6 +31,8 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class ChainVerificationOnDeviceTest {
+    // Built outside any runCatching: with no Portal, node() skips the test by
+    // throwing an assumption failure, which runCatching would otherwise swallow.
     private fun byName(net: String) =
         E2eEnvironment.node(net = net).let { it.copy(certificateVerification = CertificateVerification.Sni(it.host)) }
 
@@ -43,8 +45,8 @@ class ChainVerificationOnDeviceTest {
 
     @Test
     fun aGeneratedCertificateIsRefusedOverQuic() {
-        val failure =
-            runCatching { E2eEnvironment.openQuic(byName("udp")).use { it.completeHandshake() } }.exceptionOrNull()
+        val node = byName("udp")
+        val failure = runCatching { E2eEnvironment.openQuic(node).use { it.completeHandshake() } }.exceptionOrNull()
         assertTrue("expected a QUIC failure, got $failure", failure is QuicException)
         val reason = (failure as QuicException).failure
         assertTrue("expected a trust refusal, got ${reason.detail}", reason is QuicFailure.Untrusted)
@@ -52,8 +54,9 @@ class ChainVerificationOnDeviceTest {
 
     @Test
     fun aRefusedConnectionIsNotLeftOpen() {
+        val node = byName("udp")
         val before = QuicConnection.liveConnections()
-        runCatching { E2eEnvironment.openQuic(byName("udp")).use { it.completeHandshake() } }
+        runCatching { E2eEnvironment.openQuic(node).use { it.completeHandshake() } }
         assertEquals(before, QuicConnection.liveConnections())
     }
 }
