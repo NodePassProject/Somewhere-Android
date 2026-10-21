@@ -35,6 +35,36 @@ DEPS="${QUIC_DEPS_DIR:-$REPO/.quic-deps}"
 SRC="$DEPS/src"
 KEY="${NGTCP2_COMMIT:0:12}-${AWSLC_COMMIT:0:12}"
 
+# --- one at a time -----------------------------------------------------------
+#
+# Gradle configures every ABI in parallel, and each configure runs this script
+# against the same source tree. Unserialised, one run saw the other's clone
+# half-written, removed it and fetched over it, and both failed; on CI that was
+# a build which failed in seconds, intermittently. A directory is the lock
+# because mkdir is atomic everywhere and flock is not on macOS. A lock whose
+# holder has exited is stale and is taken over.
+
+LOCK="$DEPS/.lock"
+
+lock() {
+    mkdir -p "$DEPS"
+    local waited=0
+    until mkdir "$LOCK" 2>/dev/null; do
+        local holder; holder=$(cat "$LOCK/pid" 2>/dev/null)
+        if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+            note "taking over a lock left by exited process $holder"
+            rm -rf "$LOCK"
+            continue
+        fi
+        [ "$waited" -eq 0 ] && note "waiting for another build-deps run${holder:+ (process $holder)}"
+        waited=$((waited + 1))
+        [ "$waited" -le 3600 ] || fail "gave up after an hour waiting for $LOCK"
+        sleep 1
+    done
+    echo $$ > "$LOCK/pid"
+    trap 'rm -rf "$LOCK"' EXIT
+}
+
 # --- fetching, and the check that makes a tag mean something ---------------
 
 fetch() {
@@ -178,10 +208,10 @@ build_abi() {
 }
 
 case "${1:-}" in
-    --bundle-source) bundle_source "${2:-}" ;;
+    --bundle-source) lock; bundle_source "${2:-}" ;;
     --prefix-only)
         [ -n "${2:-}" ] || fail "--prefix-only needs an ABI"
         echo "PREFIX=$DEPS/out/$2" ;;
-    arm64-v8a|x86_64|host) build_abi "$1" ;;
+    arm64-v8a|x86_64|host) lock; build_abi "$1" ;;
     *) fail "usage: build-deps.sh <arm64-v8a|x86_64|host> | --prefix-only <abi> | --bundle-source <out.tar.gz>" ;;
 esac
