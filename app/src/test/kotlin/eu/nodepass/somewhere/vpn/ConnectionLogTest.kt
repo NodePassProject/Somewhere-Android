@@ -92,7 +92,8 @@ class ConnectionLogTest {
                 .toSet()
         assertEquals(
             "the log entry grew a field; check it cannot carry a credential",
-            setOf("result", "timestamp", "target", "flowId", "carrier"),
+            // setupMillis is a measured duration: a number cannot carry one.
+            setOf("result", "timestamp", "target", "flowId", "carrier", "setupMillis"),
             fields,
         )
     }

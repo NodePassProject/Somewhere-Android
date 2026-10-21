@@ -396,9 +396,21 @@ class SomewhereVpnService : VpnService() {
         val routingSettings = application.routing.load()
         val router = Router({ ruleSets }, { routingSettings.mode }, routingSettings.fallback)
         val direct = DirectDialer(protect = { socket -> protect(socket) })
+        val owners = ConnectionOwners(applicationContext)
 
         val flows =
-            NowhereFlowHandler(nowhere, fakeIp, resolvers, router, direct, { pump }, TunnelController.connectionLog)
+            NowhereFlowHandler(
+                nowhere,
+                fakeIp,
+                resolvers,
+                router,
+                direct,
+                { pump },
+                TunnelController.connectionLog,
+                TunnelController.tracker,
+                TunnelController.dnsLog,
+                owners::ownerOf,
+            )
         val running = TunPump(descriptor, flows)
 
         session = nowhere
@@ -419,6 +431,7 @@ class SomewhereVpnService : VpnService() {
             TunnelState.Connected(
                 node = node.displayName ?: "${node.host}:${node.port}",
                 sinceElapsedRealtime = android.os.SystemClock.elapsedRealtime(),
+                nodeUrl = url,
             ),
         )
         Log.i(TAG, "tunnel up via ${node.host}:${node.port} over ${node.net.token}${if (node.morph) " with morph" else ""}")

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.data.ProbeResult
 import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.ui.components.Card
@@ -48,6 +49,7 @@ import eu.nodepass.somewhere.ui.components.Meter
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.SmallButton
+import eu.nodepass.somewhere.ui.components.Sparkline
 import eu.nodepass.somewhere.ui.components.StatusDot
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
@@ -56,6 +58,7 @@ import eu.nodepass.somewhere.ui.state.SessionSnapshot
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import eu.nodepass.somewhere.ui.theme.direction
+import eu.nodepass.somewhere.vpn.TrafficHistory
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
 import kotlinx.coroutines.delay
@@ -117,6 +120,7 @@ fun HomeScreen(
     // all — until then every figure renders as an em dash rather than as zero,
     // which would claim a measurement that was never taken.
     val traffic by TunnelController.traffic.collectAsState()
+    val history by TunnelController.trafficHistory.collectAsState()
 
     Home(
         node = NodeEntry(target.url),
@@ -137,10 +141,16 @@ fun HomeScreen(
                 activeFlows = traffic.activeFlows,
                 sessionBytes = traffic.totalBytes,
                 connectedSeconds = elapsedSeconds,
+                handshakeMillis =
+                    (tunnel as? TunnelState.Connected)
+                        ?.nodeUrl
+                        ?.let { (probes[it] as? ProbeResult.Reachable)?.handshakeMillis },
             ),
         onOpenNodes = onOpenNodes,
         onOpenSettings = onOpenSettings,
         onToggleTunnel = onToggleTunnel,
+        upstreamHistory = history.upstream,
+        downstreamHistory = history.downstream,
     )
 }
 
@@ -189,6 +199,9 @@ internal fun Home(
     onToggleTunnel: () -> Unit = {},
     automatic: Boolean = false,
     connectedName: String? = null,
+    /** The last minute of rates, per direction. Empty draws the meter instead. */
+    upstreamHistory: List<Long> = emptyList(),
+    downstreamHistory: List<Long> = emptyList(),
 ) {
     val colors = SomewhereTheme.colors
     Column(Modifier.fillMaxSize()) {
@@ -247,6 +260,7 @@ internal fun Home(
                 carrier = carrierLabel(node.url.net),
                 bytesPerSecond = session.upstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.upstreamOfPeak else 0f,
+                history = upstreamHistory.takeIf { session.measured }.orEmpty(),
             )
             DirectionCard(
                 label = stringResource(R.string.direction_downstream),
@@ -256,6 +270,7 @@ internal fun Home(
                 carrier = carrierLabel(node.url.net),
                 bytesPerSecond = session.downstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.downstreamOfPeak else 0f,
+                history = downstreamHistory.takeIf { session.measured }.orEmpty(),
             )
         }
 
@@ -309,6 +324,7 @@ private fun DirectionCard(
     /** Null when nothing has measured this direction yet — not the same as zero. */
     bytesPerSecond: Long?,
     ofPeak: Float,
+    history: List<Long> = emptyList(),
 ) {
     val colors = SomewhereTheme.colors
     val reading = bytesPerSecond?.let(Format::throughput)
@@ -348,7 +364,14 @@ private fun DirectionCard(
                 modifier = Modifier.padding(bottom = 3.dp),
             )
         }
-        Meter(fraction = ofPeak, color = color, track = tint)
+        // The last minute once there is one; until then the meter, which
+        // reads zero honestly rather than drawing a flat line that looks like
+        // a measured idle link.
+        if (history.size >= 2) {
+            Sparkline(history, color = color, track = tint, capacity = TrafficHistory.CAPACITY)
+        } else {
+            Meter(fraction = ofPeak, color = color, track = tint)
+        }
     }
 }
 
@@ -389,8 +412,8 @@ private fun SessionFacts(
         )
         Fact(
             Modifier.weight(1f),
-            if (session.measured) session.handshakeMillis.toString() else unmeasured,
-            "ms".takeIf { session.measured },
+            session.handshakeMillis?.takeIf { session.connected }?.toString() ?: unmeasured,
+            "ms".takeIf { session.connected && session.handshakeMillis != null },
             stringResource(R.string.home_stat_handshake),
         )
     }

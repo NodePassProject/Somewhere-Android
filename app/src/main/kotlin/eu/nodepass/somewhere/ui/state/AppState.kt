@@ -112,7 +112,12 @@ data class SessionSnapshot(
     val downstreamOfPeak: Float,
     val activeFlows: Int,
     val sessionBytes: Long,
-    val handshakeMillis: Int,
+    /**
+     * The connected node's last measured handshake, or null when nothing has
+     * measured it. It read 0 for every session until this was nullable: a
+     * figure nobody had taken, shown as a measurement.
+     */
+    val handshakeMillis: Int?,
     val connectedSeconds: Long,
 ) {
     companion object {
@@ -127,7 +132,7 @@ data class SessionSnapshot(
                 downstreamOfPeak = 0f,
                 activeFlows = 0,
                 sessionBytes = 0,
-                handshakeMillis = 0,
+                handshakeMillis = null,
                 connectedSeconds = 0,
             )
     }
@@ -147,6 +152,14 @@ data class ConnectionLogEntry(
     val target: String? = null,
     val flowId: Int? = null,
     val carrier: String? = null,
+    /**
+     * How long the Portal took to answer READY, measured from the dial.
+     *
+     * Null when nobody measured it. The screen once printed "38 ms" for every
+     * READY — a figure no code had taken, which is design rule 4 broken in the
+     * one place a user reads for timing.
+     */
+    val setupMillis: Long? = null,
 )
 
 @Immutable

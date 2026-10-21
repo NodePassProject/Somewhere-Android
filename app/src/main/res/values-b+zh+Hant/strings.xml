@@ -212,4 +212,16 @@
     <string name="editor_show_qr">顯示 QR 碼</string>
     <string name="editor_share_warning">連結中包含這個節點的金鑰，取得連結的人都能使用這個節點。</string>
     <string name="editor_link_copied">連結已複製</string>
+    <string name="log_ready_unmeasured">就緒 · %1$s</string>
+    <string name="diagnostics_dns">DNS</string>
+    <string name="diagnostics_portal">Portal 應答</string>
+    <string name="live_empty_title">目前沒有連線</string>
+    <string name="live_empty_detail">通道連線期間，經過它的連線會顯示在這裡。</string>
+    <string name="live_close_all">全部關閉</string>
+    <string name="live_close">關閉</string>
+    <string name="live_unknown_app">未知應用</string>
+    <string name="dns_empty_title">還沒有查詢</string>
+    <string name="dns_empty_detail">通道連線期間，裝置查詢的網域會顯示在這裡。</string>
+    <string name="diagnostics_export">匯出</string>
+    <string name="diagnostics_export_note">匯出內容包含這些記錄裡的網站和應用程式，不含節點金鑰或訂閱連結。</string>
 </resources>

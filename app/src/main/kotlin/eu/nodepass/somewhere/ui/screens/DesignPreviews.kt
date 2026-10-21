@@ -62,5 +62,5 @@ private fun NodeEditorPreview() {
 @Preview(name = "Diagnostics · light", widthDp = 390, heightDp = 844, uiMode = 0x11)
 @Composable
 private fun DiagnosticsPreview() {
-    Framed { DiagnosticsScreen(entries = SampleState.connectionLog) }
+    Framed { DiagnosticsScreen(entries = SampleState.connectionLog, initial = ActivitySurface.Portal) }
 }

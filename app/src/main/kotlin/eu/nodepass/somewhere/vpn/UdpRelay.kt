@@ -61,6 +61,10 @@ class UdpRelay(
     private val meter: TrafficMeter,
     private val pump: () -> TunPump?,
     private val scope: CoroutineScope,
+    /** Where live relays are listed for the screen. */
+    private val tracker: ConnectionTracker? = null,
+    /** Who opened a relay, by app label; see [NowhereFlowHandler]. */
+    private val ownerOf: (OwnerQuery) -> String? = { null },
 ) {
     private companion object {
         const val TAG = "UdpRelay"
@@ -110,6 +114,17 @@ class UdpRelay(
 
         @Volatile var lastUsed = 0L
         var job: Job? = null
+
+        /** Its entry in the live list, once it has one. */
+        @Volatile var tracked: ConnectionTracker.Handle? = null
+
+        fun up(bytes: Int) {
+            tracked?.upstream(bytes)
+        }
+
+        fun down(bytes: Int) {
+            tracked?.downstream(bytes)
+        }
     }
 
     private val relays = ConcurrentHashMap<Key, Relay>()
@@ -174,6 +189,11 @@ class UdpRelay(
             relays[key]?.outbound?.trySend(data)
             return
         }
+        relay.tracked =
+            tracker?.open(ConnectionProtocol.Udp, TargetText.describe(target), ConnectionRoute.Portal) {
+                close(relay)
+                relay.job?.cancel()
+            }
         relay.job = scope.launch { serve(relay, target) }
     }
 
@@ -182,6 +202,17 @@ class UdpRelay(
         target: Target,
     ) {
         val first = relay.outbound.tryReceive().getOrNull() ?: ByteArray(0)
+        relay.tracked?.owner(
+            ownerOf(
+                OwnerQuery(
+                    ConnectionProtocol.Udp,
+                    relay.key.source.toByteArray(),
+                    relay.key.sourcePort,
+                    relay.key.destination.toByteArray(),
+                    relay.key.destinationPort,
+                ),
+            ),
+        )
 
         // Over QUIC the first packet is not framed: it goes as a DATAGRAM once
         // the Portal has answered. The session knows which carrier it is on, so
@@ -223,6 +254,7 @@ class UdpRelay(
         relay.flow = flow
         // The dial carried this one; the pump never sees it.
         meter.recordUpstream(framed.size)
+        relay.up(first.size)
         val up = scope.launch { pumpUp(relay, flow) }
         val down = scope.launch { pumpDown(relay, flow) }
         val reaper = scope.launch { reap(relay) }
@@ -245,6 +277,7 @@ class UdpRelay(
                 if (flow is PacketFlow) {
                     withContext(Dispatchers.IO) { flow.sendPacket(payload) }
                     meter.recordUpstream(payload.size)
+                    relay.up(payload.size)
                     relay.lastUsed = now()
                     continue
                 }
@@ -263,6 +296,7 @@ class UdpRelay(
                     flow.flush()
                 }
                 meter.recordUpstream(framed.size)
+                relay.up(payload.size)
                 relay.lastUsed = now()
             }
         } catch (error: Exception) {
@@ -297,6 +331,7 @@ class UdpRelay(
                 if (length > 0 && !readFully(flow, payload, length)) break
 
                 meter.recordDownstream(prefix.size + payload.size)
+                relay.down(payload.size)
                 relay.lastUsed = now()
                 // Back to the device from the address it wrote to.
                 pump()?.writeToDevice {
@@ -326,6 +361,7 @@ class UdpRelay(
                 val payload =
                     withContext(Dispatchers.IO) { flow.receivePacket(PACKET_WAIT_MILLIS) } ?: break
                 meter.recordDownstream(payload.size)
+                relay.down(payload.size)
                 relay.lastUsed = now()
                 pump()?.writeToDevice {
                     NativeBridge.nativeUdpSendto(
@@ -378,6 +414,7 @@ class UdpRelay(
     }
 
     private fun close(relay: Relay) {
+        relay.tracked?.let { tracker?.finished(it) }
         relays.remove(relay.key, relay)
         relay.outbound.close()
         releaseFakeIp(relay)
@@ -392,6 +429,7 @@ class UdpRelay(
 
     fun shutdown() {
         relays.values.forEach { relay ->
+            relay.tracked?.let { tracker?.finished(it) }
             relay.outbound.close()
             releaseFakeIp(relay)
             runCatching { relay.flow?.close() }

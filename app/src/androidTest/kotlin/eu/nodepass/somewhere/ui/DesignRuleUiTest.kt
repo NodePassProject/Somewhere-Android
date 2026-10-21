@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.ui.screens.ActivitySurface
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
 import eu.nodepass.somewhere.ui.screens.Home
 import eu.nodepass.somewhere.ui.screens.NodeEditor
@@ -109,7 +110,7 @@ class DesignRuleUiTest {
                     flowId = 8400 + index,
                 )
             }
-        compose.setContent { SomewhereTheme { DiagnosticsScreen(entries = entries) } }
+        compose.setContent { SomewhereTheme { DiagnosticsScreen(entries = entries, initial = ActivitySurface.Portal) } }
 
         // Scrolled to, not merely looked for. The screen is a lazy list, so an
         // identifier below the fold is not composed at all — and whether it is

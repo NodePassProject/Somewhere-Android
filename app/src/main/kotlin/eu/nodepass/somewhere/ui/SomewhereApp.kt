@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,6 +41,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import eu.nodepass.somewhere.BuildConfig
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.data.AppSettingsStore
@@ -60,6 +62,7 @@ import eu.nodepass.somewhere.ui.screens.ScanScreen
 import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.vpn.ActivityExport
 import eu.nodepass.somewhere.vpn.TunnelController
 
 /** The four destinations that carry a tab. Everything else is pushed over them. */
@@ -172,7 +175,39 @@ fun SomewhereApp(
                 }
                 composable(Tab.Logs.route) {
                     val entries by TunnelController.connectionLog.recent.collectAsState()
-                    DiagnosticsScreen(entries = entries)
+                    val live by TunnelController.connections.collectAsState()
+                    val dns by TunnelController.dnsLog.recent.collectAsState()
+                    // Ages tick with the traffic reading, which republishes the
+                    // list once a second; reading the clock on each of those
+                    // keeps the two in step.
+                    val now = remember(live) { android.os.SystemClock.elapsedRealtime() }
+                    val context = LocalContext.current
+                    val baseline = stringResource(R.string.protocol_baseline)
+                    DiagnosticsScreen(
+                        entries = entries,
+                        connections = live,
+                        dns = dns,
+                        nowElapsedMillis = now,
+                        onClose = TunnelController::closeConnection,
+                        onCloseAll = TunnelController::closeAllConnections,
+                        onExport = {
+                            context.shareText(
+                                ActivityExport.render(
+                                    appVersion = BuildConfig.VERSION_NAME,
+                                    protocolBaseline = baseline,
+                                    exportedAt =
+                                        java.time.OffsetDateTime
+                                            .now()
+                                            .withNano(0)
+                                            .toString(),
+                                    portalAnswers = entries,
+                                    dns = dns,
+                                    live = live,
+                                    nowElapsedMillis = android.os.SystemClock.elapsedRealtime(),
+                                ),
+                            )
+                        },
+                    )
                 }
                 composable(Routes.EDITOR) {
                     NodeEditorScreen(

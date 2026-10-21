@@ -38,11 +38,14 @@ fun Context.copyNodeLink(link: String) {
 }
 
 /** Offers [link] to whatever the user picks, through the system's own chooser. */
-fun Context.shareNodeLink(link: String) {
+fun Context.shareNodeLink(link: String) = shareText(link)
+
+/** Offers plain [text] to whatever the user picks. */
+fun Context.shareText(text: String) {
     val send =
         Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, link)
+            putExtra(Intent.EXTRA_TEXT, text)
         }
     startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }

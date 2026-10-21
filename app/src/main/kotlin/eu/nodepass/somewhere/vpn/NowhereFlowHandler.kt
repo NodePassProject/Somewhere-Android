@@ -6,6 +6,7 @@ package eu.nodepass.somewhere.vpn
 import android.util.Log
 import eu.nodepass.somewhere.dns.DnsInterceptor
 import eu.nodepass.somewhere.dns.DnsMessage
+import eu.nodepass.somewhere.dns.DnsOverTcp
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.dns.FakeIpResolver
 import eu.nodepass.somewhere.dns.UpstreamResolvers
@@ -104,6 +105,15 @@ class NowhereFlowHandler(
      * Portal's answer would be inventing one.
      */
     private val log: ConnectionLog = ConnectionLog(),
+    /** Where live connections are listed, for the screen that can close them. */
+    private val tracker: ConnectionTracker = ConnectionTracker { 0L },
+    /** The names the device asked for, and what became of each. */
+    private val dnsLog: DnsLog = DnsLog(),
+    /**
+     * Which app opened a connection. Asked off the lwIP thread, once per
+     * connection; null when the platform will not say.
+     */
+    private val ownerOf: (OwnerQuery) -> String? = { null },
 ) : TunPump.FlowHandler {
     /** What the log's carrier column says for a Portal-bound flow. */
     private fun carrierName(): String = if (session.carriesPackets) QUIC else TLS
@@ -169,6 +179,14 @@ class NowhereFlowHandler(
 
         @Volatile var flow: Flow? = null
 
+        /** The device side of the connection, and the address it dialled. */
+        var source: ByteArray = ByteArray(0)
+        var sourcePort: Int = 0
+        var destination: ByteArray = ByteArray(0)
+
+        /** Its entry in the live list, once it has one. Rejected flows never get one. */
+        @Volatile var tracked: ConnectionTracker.Handle? = null
+
         /**
          * Whether this flow left the device without touching the Portal.
          *
@@ -218,7 +236,7 @@ class NowhereFlowHandler(
     private val dns = DnsInterceptor(fakeIp, synthesiseIpv6 = TunConfiguration.carriesIpv6)
 
     /** Datagrams, carried as UDP over stream. Everything DNS cannot answer lands here. */
-    private val udp = UdpRelay(session, fakeIp, meter, pump, scope)
+    private val udp = UdpRelay(session, fakeIp, meter, pump, scope, tracker, ownerOf)
     private val nextId = AtomicLong(1)
     private val connections = ConcurrentHashMap<Long, Connection>()
 
@@ -227,6 +245,8 @@ class NowhereFlowHandler(
         port: Int,
         isIpv6: Boolean,
         pcb: Long,
+        source: ByteArray,
+        sourcePort: Int,
     ): Long {
         val resolved = FakeIpResolver.resolve(fakeIp, destination, port)
         val target =
@@ -248,7 +268,11 @@ class NowhereFlowHandler(
                 pcb = pcb,
                 target = target,
                 heldAddress = if (resolved.retained) destination.copyOf() else null,
-            )
+            ).also {
+                it.source = source.copyOf()
+                it.sourcePort = sourcePort
+                it.destination = destination.copyOf()
+            }
         connections[connection.id] = connection
         connection.job = scope.launch { serve(connection) }
         return connection.id
@@ -282,6 +306,7 @@ class NowhereFlowHandler(
         val connection = connections.remove(id) ?: return
         // The pcb is already freed. Nothing below may touch it.
         connection.gone = true
+        connection.tracked?.let(tracker::finished)
         releaseFakeIp(connection)
         connection.outbound.close()
         connection.job?.cancel()
@@ -300,6 +325,7 @@ class NowhereFlowHandler(
             when (val outcome = dns.handle(data)) {
                 is DnsInterceptor.Outcome.Answer -> {
                     if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "answered ${outcome.name} locally")
+                    dnsLog.record(outcome.name, outcome.type, if (outcome.noData) DnsOutcome.NoData else DnsOutcome.FakeIp)
                     // Back to the device from the resolver it asked, so the
                     // answer matches the socket the query left on.
                     answerLocally(source, sourcePort, destination, destinationPort, isIpv6, outcome.message)
@@ -308,7 +334,8 @@ class NowhereFlowHandler(
 
                 is DnsInterceptor.Outcome.Relay -> {
                     if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "relaying a query: ${outcome.why}")
-                    relayQuery(source, sourcePort, destination, destinationPort, isIpv6, data)
+                    val relayed = relayQuery(source, sourcePort, destination, destinationPort, isIpv6, data)
+                    dnsLog.record(outcome.name, outcome.type, if (relayed) DnsOutcome.Relayed else DnsOutcome.Failed)
                     return
                 }
             }
@@ -332,14 +359,15 @@ class NowhereFlowHandler(
         destinationPort: Int,
         isIpv6: Boolean,
         data: ByteArray,
-    ) {
+    ): Boolean {
         // Family is a preference rather than a requirement; see [UpstreamResolvers].
         val resolver = UpstreamResolvers.choose(upstreamResolvers, destination.size)
         if (resolver == null) {
             answerLocally(source, sourcePort, destination, destinationPort, isIpv6, serverFailure(data))
-            return
+            return false
         }
         udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data, dialAddress = resolver)
+        return true
     }
 
     /** SERVFAIL for a query that can be neither answered nor forwarded. */
@@ -398,6 +426,10 @@ class NowhereFlowHandler(
         upstream: Int = 0,
         downstream: Int = 0,
     ) {
+        connection.tracked?.let {
+            if (upstream > 0) it.upstream(upstream)
+            if (downstream > 0) it.downstream(downstream)
+        }
         if (connection.direct) {
             meter.recordDirect(upstream + downstream)
             return
@@ -413,6 +445,21 @@ class NowhereFlowHandler(
         // even started.
         val first = connection.outbound.tryReceive().getOrNull() ?: ByteArray(0)
 
+        // The resolver this tunnel announced exists only inside the TUN, so a
+        // TCP connection to it is answered here or refused here. Sent to the
+        // Portal it could only fail — and did, as DIAL_FAILED entries for
+        // port 853 every time Android's Private DNS probed for DoT.
+        if (TunConfiguration.resolverBytes().any { it.contentEquals(connection.destination) }) {
+            if (connection.target.port == DNS_PORT) {
+                serveDnsOverTcp(connection, first)
+            } else {
+                // 853 above all: refusing it at once is what sends Private DNS
+                // in its automatic mode back to plain DNS, which is answered.
+                abort(connection)
+            }
+            return
+        }
+
         val action = router.decide(connection.target)
         if (action == RouteAction.Reject) {
             // A decision, not a failure. The device sees a reset, which is what
@@ -424,7 +471,27 @@ class NowhereFlowHandler(
             return
         }
         connection.direct = action == RouteAction.Direct
+        connection.tracked =
+            tracker.open(
+                ConnectionProtocol.Tcp,
+                TargetText.describe(connection.target),
+                if (connection.direct) ConnectionRoute.Direct else ConnectionRoute.Portal,
+            ) { close(connection) }
+        // Before the dial, so the list can name the app while a slow Portal
+        // is still answering. Already off the lwIP thread: serve runs on IO.
+        connection.tracked?.owner(
+            ownerOf(
+                OwnerQuery(
+                    ConnectionProtocol.Tcp,
+                    connection.source,
+                    connection.sourcePort,
+                    connection.destination,
+                    connection.target.port,
+                ),
+            ),
+        )
 
+        val dialStarted = android.os.SystemClock.elapsedRealtime()
         val opened =
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -467,7 +534,8 @@ class NowhereFlowHandler(
             }
 
         if (!connection.direct) {
-            flow.setupResult?.let { log.record(it, connection.target, flow.id, carrierName()) }
+            val setupMillis = android.os.SystemClock.elapsedRealtime() - dialStarted
+            flow.setupResult?.let { log.record(it, connection.target, flow.id, carrierName(), setupMillis) }
         }
 
         connection.flow = flow
@@ -490,6 +558,46 @@ class NowhereFlowHandler(
         val downstream = scope.launch { pumpDownstream(connection, flow) }
         upstream.join()
         downstream.join()
+        finish(connection)
+    }
+
+    /**
+     * DNS over TCP to the tunnel's own resolver, answered by the interceptor.
+     *
+     * What the interceptor would relay over UDP is answered SERVFAIL here:
+     * relaying over TCP would need a TCP path to the device's resolver, and a
+     * definite failure sends the device to its next resolver at once.
+     */
+    private suspend fun serveDnsOverTcp(
+        connection: Connection,
+        first: ByteArray,
+    ) {
+        val framer = DnsOverTcp()
+
+        suspend fun answer(chunk: ByteArray) {
+            for (query in framer.feed(chunk)) {
+                val reply =
+                    when (val outcome = dns.handle(query)) {
+                        is DnsInterceptor.Outcome.Answer -> {
+                            dnsLog.record(outcome.name, outcome.type, if (outcome.noData) DnsOutcome.NoData else DnsOutcome.FakeIp)
+                            outcome.message
+                        }
+                        is DnsInterceptor.Outcome.Relay -> {
+                            dnsLog.record(outcome.name, outcome.type, DnsOutcome.Failed)
+                            serverFailure(query)
+                        }
+                    } ?: continue
+                val framed = DnsOverTcp.frame(reply)
+                if (!deliver(connection, framed, framed.size)) return
+            }
+            credit(connection, chunk.size)
+        }
+        try {
+            if (first.isNotEmpty()) answer(first)
+            for (chunk in connection.outbound) answer(chunk)
+        } catch (error: Exception) {
+            Log.w(TAG, "a DNS-over-TCP connection ended: ${error.message}")
+        }
         finish(connection)
     }
 
@@ -603,8 +711,23 @@ class NowhereFlowHandler(
         }
     }
 
+    /**
+     * Ends a connection the user asked to close.
+     *
+     * A reset rather than a close: the app on the device should see its
+     * connection end now, not wait out a FIN exchange through a Portal that
+     * may be the reason it was closed. The serving coroutine is cancelled, so
+     * nothing writes to the pcb after the abort.
+     */
+    private fun close(connection: Connection) {
+        connection.job?.cancel()
+        runCatching { connection.flow?.close() }
+        abort(connection)
+    }
+
     /** The connection was accepted and then could not be served. */
     private fun abort(connection: Connection) {
+        connection.tracked?.let(tracker::finished)
         connections.remove(connection.id)
         releaseFakeIp(connection)
         pump()?.writeToDevice {
@@ -614,6 +737,7 @@ class NowhereFlowHandler(
 
     /** Both directions finished. */
     private fun finish(connection: Connection) {
+        connection.tracked?.let(tracker::finished)
         connections.remove(connection.id)
         releaseFakeIp(connection)
         runCatching { connection.flow?.close() }
@@ -626,6 +750,7 @@ class NowhereFlowHandler(
         sampler.cancel()
         udp.shutdown()
         connections.values.forEach {
+            it.tracked?.let(tracker::finished)
             releaseFakeIp(it)
             runCatching { it.flow?.close() }
         }

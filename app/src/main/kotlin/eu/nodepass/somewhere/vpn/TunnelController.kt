@@ -35,6 +35,12 @@ sealed interface TunnelState {
          * longer or to have started in the future.
          */
         val sinceElapsedRealtime: Long,
+        /**
+         * The node's URL, which is its identity elsewhere — for looking up what
+         * is known about it. Held in memory only, like the node list it came
+         * from.
+         */
+        val nodeUrl: String = "",
     ) : TunnelState
 
     /**
@@ -68,6 +74,31 @@ object TunnelController {
      */
     val connectionLog: ConnectionLog = ConnectionLog()
 
+    /** The names the device asked for. On the controller for the reason the connection log is. */
+    val dnsLog: DnsLog = DnsLog()
+
+    /**
+     * The connections the tunnel is carrying.
+     *
+     * Process-wide like the tunnel: the flow handler registers and finishes
+     * connections in it, and the screen asks it to close one. A tunnel that
+     * goes away clears it.
+     */
+    val tracker: ConnectionTracker = ConnectionTracker { android.os.SystemClock.elapsedRealtime() }
+
+    private val mutableConnections = MutableStateFlow<List<LiveConnection>>(emptyList())
+
+    /** [tracker]'s contents, republished once a second with the traffic reading. */
+    val connections: StateFlow<List<LiveConnection>> = mutableConnections.asStateFlow()
+
+    private val mutableHistory = MutableStateFlow(TrafficHistory.EMPTY)
+
+    /**
+     * The last minute of rates, a reading a second, each direction its own
+     * series. What the home screen draws its two curves from.
+     */
+    val trafficHistory: StateFlow<TrafficHistory> = mutableHistory.asStateFlow()
+
     private val mutable = MutableStateFlow<TunnelState>(TunnelState.Disconnected)
     private val mutableTraffic = MutableStateFlow(TrafficSample.NONE)
 
@@ -95,10 +126,21 @@ object TunnelController {
         // from the previous attempt would be attributed to this one.
         if (next !is TunnelState.Connected) {
             mutableTraffic.value = TrafficSample.NONE
+            mutableHistory.value = TrafficHistory.EMPTY
+            tracker.clear()
+            mutableConnections.value = emptyList()
         }
     }
 
     internal fun reportTraffic(sample: TrafficSample) {
         mutableTraffic.value = sample
+        if (sample.measured) mutableHistory.value = mutableHistory.value.plus(sample)
+        mutableConnections.value = tracker.snapshot()
     }
+
+    /** Ends one connection the tunnel is carrying. The app on the device sees a reset. */
+    fun closeConnection(id: Long) = tracker.close(id)
+
+    /** Ends every connection the tunnel is carrying, and leaves the tunnel up. */
+    fun closeAllConnections() = tracker.closeAll()
 }

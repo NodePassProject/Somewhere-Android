@@ -210,4 +210,16 @@
     <string name="editor_show_qr">显示二维码</string>
     <string name="editor_share_warning">链接中包含这个节点的密钥，拿到链接的人都能使用这个节点。</string>
     <string name="editor_link_copied">链接已复制</string>
+    <string name="log_ready_unmeasured">就绪 · %1$s</string>
+    <string name="diagnostics_dns">DNS</string>
+    <string name="diagnostics_portal">Portal 应答</string>
+    <string name="live_empty_title">当前没有连接</string>
+    <string name="live_empty_detail">隧道连接期间，经过它的连接会显示在这里。</string>
+    <string name="live_close_all">全部关闭</string>
+    <string name="live_close">关闭</string>
+    <string name="live_unknown_app">未知应用</string>
+    <string name="dns_empty_title">还没有查询</string>
+    <string name="dns_empty_detail">隧道连接期间，设备查询的域名会显示在这里。</string>
+    <string name="diagnostics_export">导出</string>
+    <string name="diagnostics_export_note">导出内容包含这些日志里的网站和应用，不含节点密钥或订阅链接。</string>
 </resources>

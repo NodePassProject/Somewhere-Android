@@ -247,4 +247,16 @@
     <string name="editor_show_qr">Show QR code</string>
     <string name="editor_share_warning">The link carries this node\'s key. Anyone who has it can use the node.</string>
     <string name="editor_link_copied">Link copied</string>
+    <string name="log_ready_unmeasured">Ready · %1$s</string>
+    <string name="diagnostics_dns">DNS</string>
+    <string name="diagnostics_portal">Portal answers</string>
+    <string name="live_empty_title">No connections right now</string>
+    <string name="live_empty_detail">Connections the tunnel carries appear here while it is up.</string>
+    <string name="live_close_all">Close all</string>
+    <string name="live_close">Close</string>
+    <string name="live_unknown_app">Unknown app</string>
+    <string name="dns_empty_title">No queries yet</string>
+    <string name="dns_empty_detail">Names the device looks up appear here while the tunnel is up.</string>
+    <string name="diagnostics_export">Export</string>
+    <string name="diagnostics_export_note">The export lists the sites and apps in these logs. It holds no node keys or subscription links.</string>
 </resources>

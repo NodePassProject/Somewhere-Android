@@ -62,6 +62,9 @@ class TunPump(
             port: Int,
             isIpv6: Boolean,
             pcb: Long,
+            /** The device side of the connection, which is what names its owner. */
+            source: ByteArray = ByteArray(0),
+            sourcePort: Int = 0,
         ): Long
 
         /** Payload from the device. A null [data] is the device's half-close. */
@@ -279,7 +282,7 @@ class TunPump(
                 dstPort: Int,
                 isIpv6: Boolean,
                 pcb: Long,
-            ): Long = handler.onTcpOpen(dstIp, dstPort, isIpv6, pcb)
+            ): Long = handler.onTcpOpen(dstIp, dstPort, isIpv6, pcb, srcIp, srcPort)
 
             override fun onTcpRecv(
                 connId: Long,
