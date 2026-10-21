@@ -145,9 +145,12 @@ object Backup {
                 }
                 target.parentFile?.mkdirs()
                 val temporary = File(target.parentFile, "${target.name}.restore")
-                temporary.writeText(text)
-                if (!temporary.renameTo(target)) {
-                    target.writeText(text)
+                try {
+                    temporary.writeText(text)
+                    if (!temporary.renameTo(target)) target.writeText(text)
+                } finally {
+                    // Never left behind: a half-written one holds keys, and is
+                    // in no list anything else would clean up.
                     temporary.delete()
                 }
             } catch (_: IOException) {

@@ -24,11 +24,11 @@ it removed when the app is uninstalled.
 |---|---|---|
 | Nodes, including their shared keys | A node is unusable without its key | `NodeStore` |
 | Which node you chose, or that you left it automatic | So Home, the tile and shortcuts connect to it | `NodeRepository` |
-| Your subscription URLs and their titles | To refresh the node list | `SubscriptionStore` |
+| Your subscription URLs, their titles, and the quota, expiry and fetch time each last reported | To refresh the node list and show what the dashboard said | `SubscriptionStore` |
 | Routing rules you imported | To decide what goes through the tunnel | `RuleStore` |
 | Which applications the tunnel carries | Applied when the tunnel is built | `AppSelectionStore` |
 | How the tunnel is built: excluded ranges, MTU, DNS servers you named | Applied when the tunnel is built | `NetworkSettingsStore` |
-| Settings | Preferences | `RoutingPreferences`, `AppSettingsStore` |
+| Settings | Preferences | `RoutingPreferences`, `AppSettingsStore`, `RefreshPreferences` |
 | A count of automatic connects that did not survive | So a crash on connect cannot lock you out | `LaunchGuard` |
 
 **A shared key and a subscription URL are credentials.** They are stored in
@@ -68,8 +68,10 @@ network gave the device, as before.
 
 **To a file you choose**, if you export a backup. The app writes it only
 through the system's file picker, to the place you pick. The file is not
-encrypted and holds every node's key and every subscription URL; the app says so
-before it writes one.
+encrypted and holds everything in the table above except the crash count: every
+node's key, every subscription URL, your rules, settings and per-app list. The
+app says so before it writes one. On Android 9 and older, shared folders such as
+Downloads can be read by other apps.
 
 **Nowhere else.** No third party receives anything. The app does not look up
 your outbound IP address or test which services are reachable, which some
@@ -91,7 +93,8 @@ worth reading:
   an app list); a copied node link is marked sensitive so the system's
   clipboard preview does not show it
 - no list of installed applications **leaves the device** — the per-app screen
-  reads one to draw itself and it is never transmitted
+  reads one to draw itself and it is never transmitted. The packages you chose
+  leave only if you copy them or export a backup
 - no browsing history on disk. The Activity screen shows what the tunnel is
   doing — see below — from memory only, and nothing of it is written to storage
   or sent anywhere unless you export it

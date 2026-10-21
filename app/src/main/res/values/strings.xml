@@ -306,11 +306,11 @@
     <string name="network_applies_next">Applies the next time the tunnel connects.</string>
     <string name="settings_backup">Backup</string>
     <string name="backup_export">Export to a file</string>
-    <string name="backup_export_warning">The file is not encrypted. It holds every node\'s key and every subscription link: anyone who has it can use them. Keep it somewhere private.</string>
+    <string name="backup_export_warning">The file is not encrypted. It holds every node\'s key and every subscription link, and also your rules, settings and per-app list: anyone who has it can use the nodes. Keep it somewhere private; on Android 9 and older, Downloads can be read by other apps.</string>
     <string name="backup_import">Restore from a file</string>
-    <string name="backup_import_warning">Everything here is replaced by what the file holds: nodes, subscriptions, rules and settings.</string>
+    <string name="backup_import_warning">Everything here is replaced by what the file holds: nodes, subscriptions, rules and settings. A tunnel that is up is disconnected first.</string>
     <string name="backup_exported">Backup written.</string>
-    <string name="backup_restored">Restored. Reconnect to use the restored nodes.</string>
+    <string name="backup_restored">Restored. Connect to use the restored setup.</string>
     <string name="backup_failed">The file could not be read or written.</string>
     <string name="backup_not_backup">That file is not a Somewhere backup.</string>
     <string name="backup_newer">That backup is from a newer version of Somewhere.</string>

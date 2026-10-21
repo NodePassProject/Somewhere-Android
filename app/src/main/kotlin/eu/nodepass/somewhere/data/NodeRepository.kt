@@ -218,6 +218,9 @@ class NodeRepository(
         _subscriptionList.value = subscriptions.loadAll()
     }
 
+    /** Runs [block] holding the lock every write to the node files takes. */
+    fun <T> exclusive(block: () -> T): T = synchronized(storeLock) { block() }
+
     /** Everything re-read from disk, after a restore replaced it underneath. */
     fun reload() {
         synchronized(storeLock) {

@@ -39,6 +39,7 @@ import eu.nodepass.somewhere.vpn.SomewhereVpnService
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -134,6 +135,7 @@ class MainActivity : ComponentActivity() {
         // Only on a fresh start: a recreation re-delivers the same intent, and
         // the link it carried has already been handled.
         if (savedInstanceState == null) pendingLink = linkFrom(intent)
+        backupMessage = savedInstanceState?.getInt(BACKUP_MESSAGE)?.takeIf { it != 0 }
 
         val application = application as SomewhereApplication
         repository = application.nodes
@@ -280,6 +282,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        backupMessage?.let { outState.putInt(BACKUP_MESSAGE, it) }
+    }
+
     override fun onResume() {
         super.onResume()
         if (TunnelController.isEngaged) askForNotificationsIfUnanswered()
@@ -411,11 +418,23 @@ class MainActivity : ComponentActivity() {
             val target = uri ?: return@registerForActivityResult
             lifecycleScope.launch {
                 val written =
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            val text = Backup.export(filesDir, BuildConfig.VERSION_NAME)
-                            contentResolver.openOutputStream(target, "wt")?.use { it.write(text.toByteArray()) } != null
-                        }.getOrDefault(false)
+                    withContext(Dispatchers.IO + NonCancellable) {
+                        val text = Backup.export(filesDir, BuildConfig.VERSION_NAME)
+                        // "w" rather than "wt": some document providers refuse
+                        // truncate, and the picker made this file just now.
+                        val ok =
+                            runCatching {
+                                contentResolver
+                                    .openOutputStream(
+                                        target,
+                                        "w",
+                                    )?.use { it.write(text.toByteArray()) } != null
+                            }.getOrDefault(false)
+                        // A file the picker created and the write did not fill
+                        // is deleted rather than left half-written: half of a
+                        // backup is still some of the keys.
+                        if (!ok) runCatching { android.provider.DocumentsContract.deleteDocument(contentResolver, target) }
+                        ok
                     }
                 backupMessage = if (written) R.string.backup_exported else R.string.backup_failed
             }
@@ -433,8 +452,12 @@ class MainActivity : ComponentActivity() {
             val source = uri ?: return@registerForActivityResult
             lifecycleScope.launch {
                 val application = application as SomewhereApplication
+                // Not cancellable: a rotation during the restore would
+                // otherwise replace the files and skip the reload below, and
+                // the stores' stale memory would later be written back over
+                // what was restored.
                 val outcome =
-                    withContext(Dispatchers.IO) {
+                    withContext(Dispatchers.IO + NonCancellable) {
                         val bytes =
                             runCatching {
                                 contentResolver.openInputStream(source)?.use { readAtMost(it, Backup.MAX_BYTES + 1) }
@@ -447,17 +470,30 @@ class MainActivity : ComponentActivity() {
                                     Backup.Refusal.FromNewerVersion -> R.string.backup_newer
                                     Backup.Refusal.Empty -> R.string.backup_empty
                                 }
-                            is Backup.Read.Ok ->
-                                if (Backup.restore(filesDir, read.files)) R.string.backup_restored else R.string.backup_failed
+                            is Backup.Read.Ok -> {
+                                // A tunnel built from the old setup is stopped
+                                // first: one carrying a node the backup replaced
+                                // would go on doing so until someone noticed.
+                                if (TunnelController.isEngaged) SomewhereVpnService.stop(this@MainActivity)
+                                // Under the node store's lock, so a refresh
+                                // already in flight cannot write its old list
+                                // and old subscription back over the restore.
+                                val restored = application.nodes.exclusive { Backup.restore(filesDir, read.files) }
+                                // Re-read whether or not every file made it: a
+                                // failure part-way leaves a mixed disk, and
+                                // memory must at least agree with it.
+                                application.nodes.reload()
+                                application.settings.reload()
+                                application.nodeHealth.clear()
+                                SubscriptionRefreshJob.apply(this@MainActivity)
+                                if (restored) R.string.backup_restored else R.string.backup_failed
+                            }
                         }
                     }
-                if (outcome == R.string.backup_restored) {
-                    application.nodes.reload()
-                    application.settings.reload()
-                    application.nodeHealth.clear()
-                    SubscriptionRefreshJob.apply(this@MainActivity)
-                }
                 backupMessage = outcome
+                // Every screen's own copy — the refresh switch, the per-app and
+                // routing controllers — is rebuilt from the restored files.
+                if (outcome == R.string.backup_restored || outcome == R.string.backup_failed) recreate()
             }
         }
 
@@ -489,5 +525,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val ANSWERED_NOTIFICATIONS = "answered-notifications"
+        const val BACKUP_MESSAGE = "backup-message"
     }
 }

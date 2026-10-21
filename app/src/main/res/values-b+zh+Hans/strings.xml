@@ -269,11 +269,11 @@
     <string name="network_applies_next">下次连接隧道时生效。</string>
     <string name="settings_backup">备份</string>
     <string name="backup_export">导出到文件</string>
-    <string name="backup_export_warning">该文件未加密，包含所有节点的密钥和订阅链接，拿到它的人都能使用。请妥善保管。</string>
+    <string name="backup_export_warning">该文件未加密，包含所有节点的密钥和订阅链接，以及你的规则、设置和分应用列表，拿到它的人都能使用这些节点。请妥善保管；在 Android 9 及更早版本上，“下载”目录可被其他应用读取。</string>
     <string name="backup_import">从文件恢复</string>
-    <string name="backup_import_warning">这里的所有内容都会被文件中的内容替换：节点、订阅、规则和设置。</string>
+    <string name="backup_import_warning">这里的所有内容都会被文件中的内容替换：节点、订阅、规则和设置。正在运行的隧道会先断开。</string>
     <string name="backup_exported">备份已写入。</string>
-    <string name="backup_restored">已恢复。重新连接后使用恢复的节点。</string>
+    <string name="backup_restored">已恢复。连接后即使用恢复的配置。</string>
     <string name="backup_failed">无法读取或写入该文件。</string>
     <string name="backup_not_backup">这不是 Somewhere 的备份文件。</string>
     <string name="backup_newer">这个备份来自更新版本的 Somewhere。</string>

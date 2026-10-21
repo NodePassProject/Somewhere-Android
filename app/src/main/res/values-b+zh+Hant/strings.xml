@@ -271,11 +271,11 @@
     <string name="network_applies_next">下次連線通道時生效。</string>
     <string name="settings_backup">備份</string>
     <string name="backup_export">匯出到檔案</string>
-    <string name="backup_export_warning">此檔案未加密，包含所有節點的金鑰和訂閱連結，取得它的人都能使用。請妥善保管。</string>
+    <string name="backup_export_warning">此檔案未加密，包含所有節點的金鑰和訂閱連結，以及你的規則、設定和分應用程式清單，取得它的人都能使用這些節點。請妥善保管；在 Android 9 及更早版本上，「下載」資料夾可被其他應用程式讀取。</string>
     <string name="backup_import">從檔案還原</string>
-    <string name="backup_import_warning">這裡的所有內容都會被檔案中的內容取代：節點、訂閱、規則和設定。</string>
+    <string name="backup_import_warning">這裡的所有內容都會被檔案中的內容取代：節點、訂閱、規則和設定。正在執行的通道會先中斷。</string>
     <string name="backup_exported">備份已寫入。</string>
-    <string name="backup_restored">已還原。重新連線後使用還原的節點。</string>
+    <string name="backup_restored">已還原。連線後即使用還原的設定。</string>
     <string name="backup_failed">無法讀取或寫入該檔案。</string>
     <string name="backup_not_backup">這不是 Somewhere 的備份檔案。</string>
     <string name="backup_newer">此備份來自較新版本的 Somewhere。</string>
