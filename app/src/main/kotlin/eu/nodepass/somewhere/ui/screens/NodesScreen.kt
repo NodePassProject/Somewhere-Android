@@ -19,13 +19,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -94,9 +98,10 @@ fun NodesScreen(
     val stored by nodes.nodes.collectAsState()
     val probes by nodes.probes.collectAsState()
     val choice by nodes.choice.collectAsState()
-    val record by nodes.subscription.collectAsState()
-    val refreshFailure by nodes.lastRefreshFailure.collectAsState()
+    val records by nodes.subscriptionList.collectAsState()
+    val refreshFailures by nodes.refreshFailures.collectAsState()
     val refreshing by nodes.refreshing.collectAsState()
+    var removing by remember { mutableStateOf<String?>(null) }
 
     val entries =
         stored.map { entry ->
@@ -156,7 +161,10 @@ fun NodesScreen(
             )
         }
 
-        if (entries.isEmpty()) {
+        // Empty only when there is nothing at all. A subscription whose first
+        // fetch failed has no nodes yet, and hiding it behind "no nodes" would
+        // hide the one card that says why.
+        if (entries.isEmpty() && records.isEmpty()) {
             EmptyNodeList(onAdd)
             return@Column
         }
@@ -182,20 +190,62 @@ fun NodesScreen(
                     nodes.automaticTarget()?.let { NodeEntry(it.url).displayName }
                 },
             onChoose = onChoose,
-            subscription = record?.asState(clock = System::currentTimeMillis),
-            // A refresh that failed has to say so here. It was previously kept
-            // in the repository and shown nowhere, which meant a subscription
-            // that could not be reached looked exactly like one that had
-            // nothing to say.
-            refreshFailure = refreshFailure?.asMessage(),
-            refreshing = refreshing,
-            // The header already says how old the figures are. Making that the
-            // control means the affordance sits on the thing it acts on, and
-            // costs no new furniture on a screen the design drew without any.
+            // A refresh that failed has to say so, on the card of the
+            // subscription that failed. It was once kept in the repository and
+            // shown nowhere, which meant a subscription that could not be
+            // reached looked exactly like one that had nothing to say.
+            subscriptions =
+                records.map { record ->
+                    record.asState(clock = System::currentTimeMillis).copy(
+                        refreshing = record.id in refreshing,
+                        failure = refreshFailures[record.id],
+                    )
+                },
             onRefresh = nodes::refreshInBackground,
+            onRemove = { removing = it },
             onEdit = onEdit,
         )
     }
+
+    removing?.let { id ->
+        RemoveSubscriptionDialog(
+            onConfirm = {
+                nodes.removeSubscription(id)
+                removing = null
+            },
+            onDismiss = { removing = null },
+        )
+    }
+}
+
+/**
+ * Removing a subscription takes its nodes with it, so it asks first.
+ *
+ * The one destructive action on this screen that cannot be undone by
+ * importing the same thing again: the subscription URL is a credential, and
+ * once forgotten the user has to go back to the dashboard for it.
+ */
+@Composable
+private fun RemoveSubscriptionDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        // The design system's radius for a surface that sits over the
+        // screen, not Material's 28: nothing here is fully rounded.
+        shape = RoundedCornerShape(14.dp),
+        title = { Text(stringResource(R.string.subscription_remove_title), style = SomewhereType.rowHeading, color = colors.ink) },
+        text = { Text(stringResource(R.string.subscription_remove_detail), style = SomewhereType.bodySmall, color = colors.muted) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(R.string.subscription_remove), color = colors.critical) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel), color = colors.inkMuted) }
+        },
+    )
 }
 
 /**
@@ -216,10 +266,9 @@ internal fun NodeList(
     /** The display name automatic selection would use now, or null if none. */
     automaticTarget: String? = null,
     onChoose: (NodeChoice) -> Unit = {},
-    subscription: SubscriptionState? = null,
-    refreshFailure: String? = null,
-    refreshing: Boolean = false,
-    onRefresh: () -> Unit = {},
+    subscriptions: List<SubscriptionState> = emptyList(),
+    onRefresh: (String) -> Unit = {},
+    onRemove: (String) -> Unit = {},
     onEdit: (NodeEntry) -> Unit = {},
 ) {
     LazyColumn(
@@ -227,12 +276,15 @@ internal fun NodeList(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (subscription != null) {
-            item { SubscriptionHeader(subscription, refreshing, onRefresh) }
-            item { SubscriptionCard(subscription) }
-        }
-        if (refreshFailure != null) {
-            item { RefreshFailure(refreshFailure) }
+        if (subscriptions.isNotEmpty()) {
+            item(key = "subscriptions") { SectionLabel(stringResource(R.string.nodes_subscription)) }
+            items(subscriptions, key = { "subscription:${it.id}" }) { subscription ->
+                SubscriptionCard(
+                    subscription = subscription,
+                    onRefresh = { onRefresh(subscription.id) },
+                    onRemove = { onRemove(subscription.id) },
+                )
+            }
         }
         item(key = "controls") {
             ListControls(
@@ -242,7 +294,7 @@ internal fun NodeList(
                 hideUnreachable = hideUnreachable,
                 onSort = onSort,
                 onHideUnreachable = onHideUnreachable,
-                modifier = Modifier.padding(top = if (subscription != null) 8.dp else 0.dp),
+                modifier = Modifier.padding(top = if (subscriptions.isNotEmpty()) 8.dp else 0.dp),
             )
         }
         item(key = "automatic") {
@@ -309,15 +361,19 @@ private fun EmptyNodeList(onAdd: () -> Unit) {
  * is a measurement; the same quota presented as current is a claim — and this
  * screen may well be showing numbers fetched before the device went offline.
  */
-private fun SubscriptionStore.Record.asState(clock: () -> Long): SubscriptionState? {
-    val usage = usage ?: return null
-    val minutes = fetchedAtEpochMillis?.let { ((clock() - it) / 60_000L).coerceAtLeast(0).toInt() } ?: 0
+private fun SubscriptionStore.Record.asState(clock: () -> Long): SubscriptionState {
+    val minutes = fetchedAtEpochMillis?.let { ((clock() - it) / 60_000L).coerceAtLeast(0).toInt() }
     return SubscriptionState(
-        title = title ?: "",
+        // The dashboard's title, or its host. Never the URL: the URL is the
+        // credential, and the host is all a person needs to tell two apart.
+        title = title ?: hostOf(url),
         usage = usage,
         refreshedMinutesAgo = minutes,
+        id = id,
     )
 }
+
+private fun hostOf(url: String): String = runCatching { java.net.URI(url).host }.getOrNull().orEmpty()
 
 /** A probe result as the list's own vocabulary. Never probed is not a failure. */
 private fun ProbeResult?.toStatus(): NodeStatus =
@@ -360,62 +416,34 @@ private fun RefreshFailure(message: String) {
     }
 }
 
+/**
+ * One subscription: its name, how old its figures are, and its quota.
+ *
+ * Quota is worded the only way it can honestly be worded. NW-D-05: metering is
+ * per Portal, not per user, so two subscriptions sharing a Portal are each
+ * charged the full amount. The word is **counted**, never "used", and the note
+ * underneath says why rather than presenting a figure as an exact bill.
+ * NW-D-02: there is no upload row, because upstream does not meter upload — a
+ * permanent zero rendered as a measurement is a lie about what the app knows.
+ *
+ * The age of the figures is the refresh control. It already says how old they
+ * are, so the affordance sits on the thing it acts on.
+ */
 @Composable
-private fun SubscriptionHeader(
+private fun SubscriptionCard(
     subscription: SubscriptionState,
-    refreshing: Boolean,
     onRefresh: () -> Unit,
+    onRemove: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
+    val usage = subscription.usage
     // The label a screen reader announces, which is the action rather than the
     // age — "refreshed 4 min ago" describes what it says, not what it does.
     val refreshLabel = stringResource(R.string.nodes_refresh_now)
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        SectionLabel(stringResource(R.string.nodes_subscription), Modifier.weight(1f))
-        MonoText(
-            text =
-                if (refreshing) {
-                    stringResource(R.string.nodes_refreshing)
-                } else {
-                    pluralStringResource(
-                        R.plurals.nodes_refreshed_minutes,
-                        subscription.refreshedMinutesAgo,
-                        subscription.refreshedMinutesAgo,
-                    )
-                },
-            color = if (refreshing) colors.brand else colors.faint,
-            fontSize = 10.5.sp,
-            modifier =
-                Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = !refreshing, onClick = onRefresh)
-                    .semantics { contentDescription = refreshLabel }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-        )
-    }
-}
-
-/**
- * Quota, worded the only way it can honestly be worded.
- *
- * NW-D-05: metering is per Portal, not per user, so two subscriptions sharing a
- * Portal are each charged the full amount. The word is **counted**, never
- * "used", and the note underneath says why rather than presenting a figure as
- * an exact bill. NW-D-02: there is no upload row, because upstream does not
- * meter upload — a permanent zero rendered as a measurement is a lie about what
- * the app knows.
- */
-@Composable
-private fun SubscriptionCard(subscription: SubscriptionState) {
-    val colors = SomewhereTheme.colors
-    val usage = subscription.usage
     Card(padding = PaddingValues(horizontal = 16.dp, vertical = 15.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Bottom,
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
@@ -426,33 +454,72 @@ private fun SubscriptionCard(subscription: SubscriptionState) {
                 color = colors.ink,
                 modifier = Modifier.weight(1f),
             )
-            usage.expiresAtEpochSeconds?.let { epoch ->
+            MonoText(
+                text =
+                    when {
+                        subscription.refreshing -> stringResource(R.string.nodes_refreshing)
+                        subscription.refreshedMinutesAgo == null -> stringResource(R.string.subscription_never_fetched)
+                        else ->
+                            pluralStringResource(
+                                R.plurals.nodes_refreshed_minutes,
+                                subscription.refreshedMinutesAgo,
+                                subscription.refreshedMinutesAgo,
+                            )
+                    },
+                color = if (subscription.refreshing) colors.brand else colors.faint,
+                fontSize = 10.5.sp,
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = !subscription.refreshing, onClick = onRefresh)
+                        .semantics { contentDescription = refreshLabel }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        if (usage != null) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Meter(
+                    fraction = usage.fractionCounted?.toFloat() ?: 0f,
+                    color = colors.brand,
+                    track = colors.surfaceAlt,
+                    height = 5.dp,
+                )
+                Text(
+                    text = quotaText(usage),
+                    fontFamily = SomewhereType.Mono,
+                    fontSize = 12.sp,
+                    color = colors.faint,
+                )
+                Text(
+                    text = stringResource(R.string.quota_per_portal_note),
+                    fontFamily = SomewhereType.Body,
+                    fontSize = 11.sp,
+                    lineHeight = 15.4.sp,
+                    color = colors.faint,
+                )
+            }
+        }
+        subscription.failure?.let { RefreshFailure(it.asMessage()) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            usage?.expiresAtEpochSeconds?.let { epoch ->
                 MonoText(
                     text = stringResource(R.string.nodes_expires, epoch.asIsoDate()),
                     color = colors.muted,
                     fontSize = 11.sp,
                 )
             }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Meter(
-                fraction = usage.fractionCounted?.toFloat() ?: 0f,
-                color = colors.brand,
-                track = colors.surfaceAlt,
-                height = 5.dp,
-            )
+            Spacer(Modifier.weight(1f))
             Text(
-                text = quotaText(usage),
-                fontFamily = SomewhereType.Mono,
-                fontSize = 12.sp,
-                color = colors.faint,
-            )
-            Text(
-                text = stringResource(R.string.quota_per_portal_note),
+                text = stringResource(R.string.subscription_remove),
                 fontFamily = SomewhereType.Body,
-                fontSize = 11.sp,
-                lineHeight = 15.4.sp,
-                color = colors.faint,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                color = colors.critical,
+                modifier =
+                    Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onRemove)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
     }

@@ -111,16 +111,30 @@ class NodeRepository(
      */
     val choice: StateFlow<NodeChoice> = _choice.asStateFlow()
 
-    private val _subscription = MutableStateFlow(subscriptions.load())
-    val subscription: StateFlow<SubscriptionStore.Record?> = _subscription.asStateFlow()
+    private val _subscriptionList = MutableStateFlow(subscriptions.loadAll())
 
-    private val _refreshing = MutableStateFlow(false)
-    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+    /** Every subscription, in the order they were added. */
+    val subscriptionList: StateFlow<List<SubscriptionStore.Record>> = _subscriptionList.asStateFlow()
 
-    private val _lastRefreshFailure = MutableStateFlow<DecodeReason?>(null)
+    private val _refreshing = MutableStateFlow<Set<String>>(emptySet())
 
-    /** The last refresh's reason for failing, or null if the last one worked. */
-    val lastRefreshFailure: StateFlow<DecodeReason?> = _lastRefreshFailure.asStateFlow()
+    /** The ids of the subscriptions being fetched right now. */
+    val refreshing: StateFlow<Set<String>> = _refreshing.asStateFlow()
+
+    private val _refreshFailures = MutableStateFlow<Map<String, DecodeReason>>(emptyMap())
+
+    /** Each subscription's last reason for failing, absent if its last fetch worked. */
+    val refreshFailures: StateFlow<Map<String, DecodeReason>> = _refreshFailures.asStateFlow()
+
+    /**
+     * Serialises every change to the node file.
+     *
+     * Two subscriptions refreshing at once each read the list, reconcile their
+     * own feed into it, and write it back; without this, the second write
+     * would drop whatever the first had added. Held only around the file work,
+     * never across a fetch.
+     */
+    private val storeLock = Any()
 
     private val _probes = MutableStateFlow<Map<String, ProbeResult>>(emptyMap())
 
@@ -192,17 +206,22 @@ class NodeRepository(
 
     fun refresh() {
         _nodes.value = store.load()
-        _subscription.value = subscriptions.load()
+        _subscriptionList.value = subscriptions.loadAll()
     }
 
-    /** Fire-and-forget [setSubscription], for a caller that is about to go away. */
+    /** Fire-and-forget [addSubscription], for a caller that is about to go away. */
     fun subscribe(url: String) {
-        scope.launch { setSubscription(url) }
+        scope.launch { addSubscription(url) }
     }
 
-    /** Fire-and-forget [refreshSubscription]. */
+    /** Fire-and-forget [refreshAll]. */
     fun refreshInBackground() {
-        scope.launch { refreshSubscription() }
+        scope.launch { refreshAll() }
+    }
+
+    /** Fire-and-forget [refreshSubscription] for one subscription. */
+    fun refreshInBackground(id: String) {
+        scope.launch { refreshSubscription(id) }
     }
 
     /** Fire-and-forget [probe], for the same reason. */
@@ -239,47 +258,65 @@ class NodeRepository(
     }
 
     /**
-     * Points the app at a subscription and fetches it once.
+     * Adds a subscription and fetches it once.
      *
      * The URL is written before the fetch is attempted, so a subscription that
-     * is correct but temporarily unreachable is still the subscription when the
-     * network comes back. A failed first fetch leaves the URL in place and the
-     * reason in [lastRefreshFailure] rather than discarding what the user typed.
+     * is correct but temporarily unreachable is still there when the network
+     * comes back. A failed first fetch leaves the URL in place and the reason
+     * in [refreshFailures] rather than discarding what the user typed. A URL
+     * that is already a subscription is refreshed, not added twice.
      */
-    suspend fun setSubscription(url: String): DecodeResult<Subscription> {
-        subscriptions.save(SubscriptionStore.Record(url, title = null, usage = null, fetchedAtEpochMillis = null))
-        _subscription.value = subscriptions.load()
-        return refreshSubscription()
+    suspend fun addSubscription(url: String): DecodeResult<Subscription> {
+        val record =
+            synchronized(storeLock) {
+                subscriptions.add(url).also { _subscriptionList.value = subscriptions.loadAll() }
+            }
+        return refreshSubscription(record.id)
+    }
+
+    /** Refreshes every subscription, one after another. */
+    suspend fun refreshAll() {
+        _subscriptionList.value.map { it.id }.forEach { refreshSubscription(it) }
     }
 
     /**
-     * Re-fetches the feed and reconciles it against what is stored.
+     * Re-fetches one feed and reconciles it against what is stored.
      *
      * The reconciliation, not the fetch, is where NW-D-04 lives: nodes the feed
-     * has stopped listing are kept and marked rather than deleted, and manual
-     * nodes are never touched by it.
+     * has stopped listing are kept and marked rather than deleted, manual nodes
+     * are never touched by it, and neither are another subscription's.
      */
-    suspend fun refreshSubscription(): DecodeResult<Subscription> {
+    suspend fun refreshSubscription(id: String): DecodeResult<Subscription> {
         val record =
-            _subscription.value
+            _subscriptionList.value.firstOrNull { it.id == id }
                 ?: return DecodeResult.Invalid(SubscriptionReason.Transport("no subscription is configured"))
 
-        _refreshing.value = true
+        _refreshing.update { it + id }
         try {
             val result = withContext(io) { fetcher.fetch(record.url) }
             when (result) {
                 is DecodeResult.Ok -> {
                     val subscription = result.value
-                    _nodes.value = store.reconcileWithFeed(subscription.nodes)
-                    subscriptions.save(
-                        record.copy(
-                            title = subscription.title ?: record.title,
-                            usage = subscription.usage ?: record.usage,
-                            fetchedAtEpochMillis = clock(),
-                        ),
-                    )
-                    _subscription.value = subscriptions.load()
-                    _lastRefreshFailure.value = null
+                    synchronized(storeLock) {
+                        _nodes.value = store.reconcileWithFeed(subscription.nodes, id)
+                        // Re-read rather than saving the copy taken before the
+                        // fetch: the subscription may have been removed while
+                        // it was in flight, and saving would bring it back.
+                        val current = subscriptions.loadAll().firstOrNull { it.id == id }
+                        if (current == null) {
+                            _nodes.value = store.releaseSource(id)
+                        } else {
+                            subscriptions.save(
+                                current.copy(
+                                    title = subscription.title ?: current.title,
+                                    usage = subscription.usage ?: current.usage,
+                                    fetchedAtEpochMillis = clock(),
+                                ),
+                            )
+                        }
+                        _subscriptionList.value = subscriptions.loadAll()
+                    }
+                    _refreshFailures.update { it - id }
                 }
 
                 is DecodeResult.Invalid -> {
@@ -288,31 +325,39 @@ class NodeRepository(
                     // still reconciled against it and every one of them is
                     // marked as removed, which is what actually happened.
                     if (result.reason == SubscriptionReason.NoNodes) {
-                        _nodes.value = store.reconcileWithFeed(emptyList())
+                        synchronized(storeLock) { _nodes.value = store.reconcileWithFeed(emptyList(), id) }
                     }
-                    _lastRefreshFailure.value = result.reason
+                    if (_subscriptionList.value.any { it.id == id }) _refreshFailures.update { it + (id to result.reason) }
                 }
             }
             return result
         } finally {
-            _refreshing.value = false
+            _refreshing.update { it - id }
         }
     }
 
-    /** Forgets the subscription and the credential in it. Nodes are left alone. */
-    fun forgetSubscription() {
-        subscriptions.clear()
-        _subscription.value = null
-        _lastRefreshFailure.value = null
+    /**
+     * Forgets a subscription and the credential in it.
+     *
+     * The nodes it listed stay, as the user's own; the ones it had already
+     * withdrawn go. See [NodeStore.releaseSource].
+     */
+    fun removeSubscription(id: String) {
+        synchronized(storeLock) {
+            subscriptions.remove(id)
+            _subscriptionList.value = subscriptions.loadAll()
+            _nodes.value = store.releaseSource(id)
+        }
+        _refreshFailures.update { it - id }
     }
 
     fun add(node: NowhereUrl) {
-        _nodes.value = store.add(node)
+        synchronized(storeLock) { _nodes.value = store.add(node) }
     }
 
     fun remove(node: NowhereUrl) {
         _probes.update { it - node.toUrl() }
-        _nodes.value = store.remove(node)
+        synchronized(storeLock) { _nodes.value = store.remove(node) }
         // A deliberate deletion, unlike a refresh that dropped the node: the
         // choice goes with it, so it cannot come back with a later import.
         if (_choice.value == NodeChoice.Chosen(node.toUrl())) choose(NodeChoice.Automatic)
@@ -323,7 +368,7 @@ class NodeRepository(
         new: NowhereUrl,
     ) {
         _probes.update { it - old.toUrl() }
-        _nodes.value = store.replace(old, new)
+        synchronized(storeLock) { _nodes.value = store.replace(old, new) }
         // Editing a node changes its URL, which is its identity. Without this
         // the edited node would stop being the chosen one the moment it was
         // saved, and the next connection would go somewhere automatic.

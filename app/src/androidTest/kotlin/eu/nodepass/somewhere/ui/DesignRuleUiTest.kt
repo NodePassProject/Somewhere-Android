@@ -145,7 +145,7 @@ class DesignRuleUiTest {
         // support. The word must not appear at all.
         compose.setContent {
             SomewhereTheme {
-                NodeList(entries = SampleState.nodes, subscription = SampleState.subscription)
+                NodeList(entries = SampleState.nodes, subscriptions = listOf(SampleState.subscription))
             }
         }
         assertEquals(
@@ -162,7 +162,7 @@ class DesignRuleUiTest {
         // stand behind.
         compose.setContent {
             SomewhereTheme {
-                NodeList(entries = SampleState.nodes, subscription = SampleState.subscription)
+                NodeList(entries = SampleState.nodes, subscriptions = listOf(SampleState.subscription))
             }
         }
         compose.onNodeWithText(string(R.string.quota_per_portal_note), substring = true).assertIsDisplayed()

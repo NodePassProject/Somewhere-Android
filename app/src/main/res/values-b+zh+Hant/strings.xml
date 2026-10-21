@@ -197,4 +197,9 @@
     <string name="scan_no_camera">未取得相機權限。也可以選擇一張含有 QR 碼的圖片。</string>
     <string name="scan_allow_camera">允許使用相機</string>
     <string name="scan_not_found">這張圖片中沒有找到 QR 碼。</string>
+    <string name="action_cancel">取消</string>
+    <string name="subscription_remove">移除</string>
+    <string name="subscription_remove_title">要移除這個訂閱嗎？</string>
+    <string name="subscription_remove_detail">它帶來的節點會保留，改為由你手動管理；已被訂閱撤下的節點會刪除。訂閱連結會被忘掉。</string>
+    <string name="subscription_never_fetched">尚未取得</string>
 </resources>

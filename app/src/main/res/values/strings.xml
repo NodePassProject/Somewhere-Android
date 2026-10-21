@@ -232,4 +232,9 @@
     <string name="scan_no_camera">Camera access was not granted. An image that contains a QR code works too.</string>
     <string name="scan_allow_camera">Allow camera</string>
     <string name="scan_not_found">No QR code was found in that image.</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="subscription_remove">Remove</string>
+    <string name="subscription_remove_title">Remove this subscription?</string>
+    <string name="subscription_remove_detail">Its nodes stay, as nodes you manage yourself; the ones it had already withdrawn go. The subscription link is forgotten.</string>
+    <string name="subscription_never_fetched">Not fetched yet</string>
 </resources>

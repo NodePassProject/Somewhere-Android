@@ -152,6 +152,13 @@ data class ConnectionLogEntry(
 @Immutable
 data class SubscriptionState(
     val title: String,
-    val usage: SubscriptionUsage,
-    val refreshedMinutesAgo: Int,
+    /** Null until a dashboard has said anything about quota — not zero. */
+    val usage: SubscriptionUsage?,
+    /** Null when it has never been fetched, which is not "0 minutes ago". */
+    val refreshedMinutesAgo: Int?,
+    /** The store's id, which the screen hands back to refresh or remove it. */
+    val id: String = "",
+    val refreshing: Boolean = false,
+    /** Why the last fetch failed, rendered by the screen in its own language. */
+    val failure: DecodeReason? = null,
 )

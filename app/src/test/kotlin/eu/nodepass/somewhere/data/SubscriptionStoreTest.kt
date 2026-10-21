@@ -5,6 +5,7 @@ package eu.nodepass.somewhere.data
 
 import eu.nodepass.somewhere.subscription.SubscriptionUsage
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -136,5 +137,71 @@ class SubscriptionStoreTest {
         file.parentFile.mkdirs()
         file.writeText("title=Aurora\ndownload=1024\n")
         assertNull(SubscriptionStore(file).load())
+    }
+
+    @Test
+    fun severalSubscriptionsSurviveTheRoundTripInOrder() {
+        var next = 0
+        val store = SubscriptionStore(File(folder.root, "subs.txt")) { "%08x".format(++next) }
+        val first = store.add("https://a.example/sub?token=one")
+        val second = store.add("https://b.example/sub?token=two")
+        store.save(second.copy(title = "Second", fetchedAtEpochMillis = 7))
+
+        val loaded = SubscriptionStore(File(folder.root, "subs.txt")).loadAll()
+        assertEquals(listOf(first.id, second.id), loaded.map { it.id })
+        assertEquals("Second", loaded[1].title)
+        assertEquals("https://a.example/sub?token=one", loaded[0].url)
+    }
+
+    @Test
+    fun aFileFromBeforeThereCouldBeSeveralIsOneSubscriptionWithTheEmptyId() {
+        // The nodes it fetched were stored under the empty id too, so they
+        // still belong to it without anything having to migrate.
+        val file = File(folder.root, "legacy.txt")
+        file.writeText("url=https://a.example/sub?token=one\ntitle=Old\ndownload=5\n")
+        val loaded = SubscriptionStore(file).loadAll().single()
+        assertEquals("", loaded.id)
+        assertEquals("Old", loaded.title)
+    }
+
+    @Test
+    fun aTitleCannotInjectASecondRecord() {
+        // The separator is a line on its own, and a title cannot produce one.
+        val store = SubscriptionStore(File(folder.root, "subs.txt")) { "0000000a" }
+        val record = store.add("https://a.example/sub?token=one")
+        store.save(record.copy(title = "x\n---\nurl=https://evil.example/steal"))
+        val loaded = store.loadAll()
+        assertEquals(1, loaded.size)
+        assertEquals("https://a.example/sub?token=one", loaded.single().url)
+    }
+
+    @Test
+    fun addingAUrlThatIsAlreadyThereReturnsTheSameSubscription() {
+        val store = SubscriptionStore(File(folder.root, "subs.txt"))
+        val first = store.add("https://a.example/sub?token=one")
+        val again = store.add("https://a.example/sub?token=one")
+        assertEquals(first.id, again.id)
+        assertEquals(1, store.loadAll().size)
+    }
+
+    @Test
+    fun removingOneLeavesTheOthers() {
+        var next = 0
+        val store = SubscriptionStore(File(folder.root, "subs.txt")) { "%08x".format(++next) }
+        val first = store.add("https://a.example/sub?token=one")
+        val second = store.add("https://b.example/sub?token=two")
+        store.remove(first.id)
+        assertEquals(listOf(second.id), store.loadAll().map { it.id })
+        store.remove(second.id)
+        assertTrue(store.loadAll().isEmpty())
+        assertFalse("the last credential leaves the disk with it", File(folder.root, "subs.txt").exists())
+    }
+
+    @Test
+    fun aGeneratedIdThatIsAlreadyTakenIsNotReused() {
+        val ids = ArrayDeque(listOf("0000000a", "0000000a", "0000000b"))
+        val store = SubscriptionStore(File(folder.root, "subs.txt")) { ids.removeFirst() }
+        store.add("https://a.example/one")
+        assertEquals("0000000b", store.add("https://b.example/two").id)
     }
 }
