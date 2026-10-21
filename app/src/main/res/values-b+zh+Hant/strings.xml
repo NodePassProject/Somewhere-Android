@@ -245,4 +245,14 @@
     <string name="settings_language">語言</string>
     <string name="language_system">跟隨裝置</string>
     <string name="shortcut_toggle_short">切換</string>
+    <string name="apps_show_system">系統應用程式</string>
+    <string name="apps_sort_name">名稱</string>
+    <string name="apps_sort_installed">最新安裝</string>
+    <string name="apps_select_all">全選</string>
+    <string name="apps_select_none">全不選</string>
+    <string name="apps_copy">複製清單</string>
+    <string name="apps_paste">貼上清單</string>
+    <string name="apps_pasted">已從剪貼簿選取 %1$d 個應用程式</string>
+    <string name="apps_paste_nothing">剪貼簿中沒有套件名稱。</string>
+    <string name="apps_none_shown">沒有符合的應用程式：系統應用程式已隱藏，或搜尋條件過窄。</string>
 </resources>

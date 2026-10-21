@@ -280,4 +280,14 @@
     <string name="settings_language">Language</string>
     <string name="language_system">Device language</string>
     <string name="shortcut_toggle_short">Toggle</string>
+    <string name="apps_show_system">System apps</string>
+    <string name="apps_sort_name">Name</string>
+    <string name="apps_sort_installed">Newest</string>
+    <string name="apps_select_all">Select all</string>
+    <string name="apps_select_none">Select none</string>
+    <string name="apps_copy">Copy list</string>
+    <string name="apps_paste">Paste list</string>
+    <string name="apps_pasted">%1$d apps selected from the clipboard</string>
+    <string name="apps_paste_nothing">The clipboard holds no package names.</string>
+    <string name="apps_none_shown">No app matches. System apps are hidden or the search is narrow.</string>
 </resources>

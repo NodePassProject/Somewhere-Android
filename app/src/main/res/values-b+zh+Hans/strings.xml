@@ -243,4 +243,14 @@
     <string name="settings_language">语言</string>
     <string name="language_system">跟随设备</string>
     <string name="shortcut_toggle_short">切换</string>
+    <string name="apps_show_system">系统应用</string>
+    <string name="apps_sort_name">名称</string>
+    <string name="apps_sort_installed">最新安装</string>
+    <string name="apps_select_all">全选</string>
+    <string name="apps_select_none">全不选</string>
+    <string name="apps_copy">复制列表</string>
+    <string name="apps_paste">粘贴列表</string>
+    <string name="apps_pasted">已从剪贴板选中 %1$d 个应用</string>
+    <string name="apps_paste_nothing">剪贴板中没有包名。</string>
+    <string name="apps_none_shown">没有匹配的应用：系统应用已隐藏，或搜索条件过窄。</string>
 </resources>

@@ -253,7 +253,10 @@ fun SomewhereApp(
                     )
                 }
                 composable(Routes.APPS) {
+                    val current by settings.settings.collectAsState()
                     AppsScreen(
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
                         controller = apps,
                         onReconnect = onReconnect,

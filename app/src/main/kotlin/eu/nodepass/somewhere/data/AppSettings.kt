@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.data
 
+import eu.nodepass.somewhere.apps.AppSort
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +63,9 @@ data class AppSettings(
      * an automation app they trust.
      */
     val automation: Boolean = false,
+    /** Whether the per-app list shows apps that came with the device. */
+    val appsShowSystem: Boolean = true,
+    val appsSort: AppSort = AppSort.Name,
 ) {
     internal fun render(): String =
         buildString {
@@ -71,6 +75,8 @@ data class AppSettings(
             append("connectOnLaunch=").append(connectOnLaunch).append('\n')
             append("hideFromRecents=").append(hideFromRecents).append('\n')
             append("automation=").append(automation).append('\n')
+            append("appsShowSystem=").append(appsShowSystem).append('\n')
+            append("appsSort=").append(appsSort.name).append('\n')
         }
 
     companion object {
@@ -92,6 +98,8 @@ data class AppSettings(
                 connectOnLaunch = fields["connectOnLaunch"].asBoolean(defaults.connectOnLaunch),
                 hideFromRecents = fields["hideFromRecents"].asBoolean(defaults.hideFromRecents),
                 automation = fields["automation"].asBoolean(defaults.automation),
+                appsShowSystem = fields["appsShowSystem"].asBoolean(defaults.appsShowSystem),
+                appsSort = AppSort.entries.firstOrNull { it.name == fields["appsSort"] } ?: defaults.appsSort,
             )
         }
 

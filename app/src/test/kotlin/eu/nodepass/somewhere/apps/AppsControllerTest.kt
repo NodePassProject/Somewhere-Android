@@ -162,4 +162,37 @@ class AppsControllerTest {
             advanceUntilIdle()
             assertEquals(7, controller.unroutableCount.value)
         }
+
+    @Test
+    fun bulkActionsAndAPastedListAreSavedLikeAToggle() =
+        runTest {
+            val store = AppSelectionStore(File(folder.root, "selection.txt"))
+            val one = InstalledApp("com.example.one", "One")
+            val two = InstalledApp("com.example.two", "Two")
+            val controller = controller(this, store = store, apps = FakeApps(listOf(one, two)))
+            controller.refresh()
+            advanceUntilIdle()
+
+            controller.selectAll(listOf(one, two))
+            advanceUntilIdle()
+            assertEquals(setOf("com.example.one", "com.example.two"), store.load().packages)
+
+            controller.selectNone(listOf(two))
+            advanceUntilIdle()
+            assertEquals(setOf("com.example.one"), store.load().packages)
+
+            controller.replacePackages(setOf("org.example.pasted"))
+            advanceUntilIdle()
+            assertEquals(setOf("org.example.pasted"), store.load().packages)
+        }
+
+    @Test
+    fun aBulkChangeWhileConnectedAsksForARebuild() =
+        runTest {
+            val controller = controller(this, engaged = true)
+            controller.refresh()
+            advanceUntilIdle()
+            controller.selectAll(controller.installed.value)
+            assertTrue(controller.restartNeeded.value)
+        }
 }

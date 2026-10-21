@@ -4,6 +4,7 @@
 package eu.nodepass.somewhere.apps
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.util.LruCache
@@ -55,6 +56,10 @@ class PackageManagerApps(
                         android.Manifest.permission.INTERNET,
                         info.packageName,
                     ) == PackageManager.PERMISSION_GRANTED,
+                // An updated system app is still a system app: it shipped with
+                // the device, and updating it did not make it the user's.
+                system = info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
+                installedAt = runCatching { packages.getPackageInfo(info.packageName, 0).firstInstallTime }.getOrDefault(0L),
             )
         }
 

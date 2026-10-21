@@ -13,6 +13,10 @@ package eu.nodepass.somewhere.apps
 data class InstalledApp(
     val packageName: String,
     val label: String,
+    /** Part of the system image rather than installed by the user. */
+    val system: Boolean = false,
+    /** When it was first installed, epoch milliseconds; 0 when unknown. */
+    val installedAt: Long = 0,
 )
 
 /**
@@ -27,6 +31,8 @@ data class AppCandidate(
     val label: String?,
     val uid: Int,
     val hasInternet: Boolean,
+    val system: Boolean = false,
+    val installedAt: Long = 0,
 )
 
 /**
@@ -80,8 +86,14 @@ data class AppInventory(
             return AppInventory(
                 routable =
                     routable
-                        .map { InstalledApp(it.packageName, it.label?.takeUnless(String::isBlank) ?: it.packageName) }
-                        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, InstalledApp::label).thenBy(InstalledApp::packageName)),
+                        .map {
+                            InstalledApp(
+                                it.packageName,
+                                it.label?.takeUnless(String::isBlank) ?: it.packageName,
+                                it.system,
+                                it.installedAt,
+                            )
+                        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, InstalledApp::label).thenBy(InstalledApp::packageName)),
                 unroutableCount = unroutable.size,
             )
         }
