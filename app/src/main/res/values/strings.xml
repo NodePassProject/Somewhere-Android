@@ -237,4 +237,8 @@
     <string name="subscription_remove_title">Remove this subscription?</string>
     <string name="subscription_remove_detail">Its nodes stay, as nodes you manage yourself; the ones it had already withdrawn go. The subscription link is forgotten.</string>
     <string name="subscription_never_fetched">Not fetched yet</string>
+    <string name="import_batch_summary">Nodes: %1$d · Subscriptions: %2$d</string>
+    <string name="import_batch_rejected">Not understood</string>
+    <string name="import_batch_line">Line %1$d: %2$s</string>
+    <string name="import_add_all">Add all</string>
 </resources>

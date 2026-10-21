@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.ImportBatch
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.CertificateVerification
@@ -90,7 +93,11 @@ fun ImportScreen(
     // either parser sees it. The field keeps showing what the user actually
     // gave; what was understood is shown below it, which is the honest way
     // round when the two differ.
-    val effective = remember(typed) { ImportLink.unwrap(typed.trim()) }
+    // More than one line is a batch, and every line is judged on its own. The
+    // single-link reading below would otherwise call the whole paste one
+    // malformed link.
+    val batch = remember(typed) { if (ImportBatch.isBatch(typed)) ImportBatch.read(typed) else null }
+    val effective = remember(typed, batch) { if (batch != null) "" else ImportLink.unwrap(typed.trim()) }
     val parsed = remember(effective) { effective.takeIf { it.isNotEmpty() }?.let { NowhereUrl.parse(it) } }
     val node = (parsed as? DecodeResult.Ok)?.value
     val subscriptionUrl = remember(effective) { effective.takeIf { it.looksLikeSubscription() } }
@@ -104,10 +111,13 @@ fun ImportScreen(
             backDescription = stringResource(R.string.action_close),
         )
 
+        // Scrolls: a pasted batch can list more lines than a screen holds, and
+        // the ones it could not read are the ones the user has to see.
         Column(
             modifier =
                 Modifier
                     .weight(1f)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -190,6 +200,8 @@ fun ImportScreen(
                         )
                     }
                 }
+
+                batch?.let { BatchSummary(it) }
 
                 // The parser's own reason, verbatim. It distinguishes a wrong
                 // scheme from a bad port from a key with a password component,
@@ -280,12 +292,12 @@ fun ImportScreen(
                 }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(12.dp))
         }
 
         // The affordance stays visible when disabled rather than hidden, so the
         // reason the button does nothing is on the screen next to it.
-        val enabled = node != null || (subscriptionUrl != null && !plaintext)
+        val enabled = node != null || (subscriptionUrl != null && !plaintext) || batch?.isEmpty == false
         Box(
             Modifier
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
@@ -295,6 +307,14 @@ fun ImportScreen(
                 .background(if (enabled) colors.primaryAction else colors.surfaceAlt)
                 .clickable(enabled = enabled) {
                     when {
+                        batch != null -> {
+                            nodes.addAll(batch.nodes)
+                            // Each on the repository's scope, like a single
+                            // subscribe: this screen closes on the next line.
+                            batch.subscriptions.forEach(nodes::subscribe)
+                            onClose()
+                        }
+
                         node != null -> {
                             nodes.add(node)
                             onClose()
@@ -315,13 +335,56 @@ fun ImportScreen(
             Text(
                 text =
                     stringResource(
-                        if (subscriptionUrl != null) R.string.import_subscribe else R.string.import_add_node,
+                        when {
+                            batch != null -> R.string.import_add_all
+                            subscriptionUrl != null -> R.string.import_subscribe
+                            else -> R.string.import_add_node
+                        },
                     ),
                 fontFamily = SomewhereType.Display,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 15.sp,
                 color = if (enabled) colors.onPrimaryAction else colors.faint,
             )
+        }
+    }
+}
+
+/**
+ * What a batch paste was understood as, and every line that was not.
+ *
+ * The lines that failed are listed by number with the parser's own reason, as
+ * a single failed paste is: a batch that said only "3 lines skipped" would
+ * leave the user to find them.
+ */
+@Composable
+private fun BatchSummary(batch: ImportBatch) {
+    val colors = SomewhereTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = stringResource(R.string.import_batch_summary, batch.nodes.size, batch.subscriptions.size),
+            fontFamily = SomewhereType.Body,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.5.sp,
+            color = if (batch.isEmpty) colors.critical else colors.good,
+        )
+        if (batch.rejected.isNotEmpty()) {
+            Text(
+                text = stringResource(R.string.import_batch_rejected),
+                fontFamily = SomewhereType.Body,
+                fontWeight = FontWeight.Medium,
+                fontSize = 12.sp,
+                color = colors.critical,
+            )
+            batch.rejected.forEach { rejected ->
+                Text(
+                    text = stringResource(R.string.import_batch_line, rejected.line, rejected.reason.detail),
+                    fontFamily = SomewhereType.Body,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = colors.inkMuted,
+                )
+            }
         }
     }
 }

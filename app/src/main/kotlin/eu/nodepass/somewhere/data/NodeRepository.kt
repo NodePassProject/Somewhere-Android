@@ -355,6 +355,11 @@ class NodeRepository(
         synchronized(storeLock) { _nodes.value = store.add(node) }
     }
 
+    /** Adds every node in [nodes] that is not already stored. */
+    fun addAll(nodes: List<NowhereUrl>) {
+        synchronized(storeLock) { nodes.forEach { _nodes.value = store.add(it) } }
+    }
+
     fun remove(node: NowhereUrl) {
         _probes.update { it - node.toUrl() }
         synchronized(storeLock) { _nodes.value = store.remove(node) }

@@ -200,4 +200,8 @@
     <string name="subscription_remove_title">要移除这个订阅吗？</string>
     <string name="subscription_remove_detail">它带来的节点会保留，改为由你手动管理；已被订阅撤下的节点会删除。订阅链接会被忘掉。</string>
     <string name="subscription_never_fetched">尚未获取</string>
+    <string name="import_batch_summary">节点：%1$d · 订阅：%2$d</string>
+    <string name="import_batch_rejected">无法识别</string>
+    <string name="import_batch_line">第 %1$d 行：%2$s</string>
+    <string name="import_add_all">全部添加</string>
 </resources>
