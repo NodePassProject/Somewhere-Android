@@ -10,7 +10,8 @@
 #
 # Usage:
 #   NOWHERE_E2E_PORTAL=host:port NOWHERE_E2E_TARGET=host:port \
-#   NOWHERE_PORTAL_LOG=/path/to/portal.log \
+#   NOWHERE_E2E_KEY=<32 hex> NOWHERE_E2E_PIN=<the Portal's fingerprint> \
+#   NOWHERE_BIN=/path/to/nowhere \
 #   conformance/scripts/device-acceptance.sh
 #
 # The target must be an HTTP origin the **Portal** can reach, serving /blob.bin
@@ -36,6 +37,10 @@ command -v adb >/dev/null || die "adb is not on PATH"
 [ -n "$DEVICE" ] || die "no device"
 [ -n "$PORTAL" ] || die "set NOWHERE_E2E_PORTAL"
 [ -n "$TARGET" ] || die "set NOWHERE_E2E_TARGET"
+KEY="${NOWHERE_E2E_KEY:-0123456789abcdef0123456789abcdef}"
+PIN="${NOWHERE_E2E_PIN:-}"
+[ -n "$PIN" ] || die "set NOWHERE_E2E_PIN to the fingerprint the Portal logged at startup; v3 has no unverified mode"
+export NOWHERE_E2E_KEY="$KEY" NOWHERE_E2E_PIN="$PIN"
 
 sh() { adb -s "$DEVICE" shell "$@" 2>/dev/null | tr -d '\r'; }
 
@@ -160,7 +165,7 @@ fi
 for CARRIER in tcp udp; do
     head2 "4. Traffic over the tunnel ($CARRIER)"
     if NOWHERE_E2E_CARRIER="$CARRIER" "$ROOT/e2e-tunnel-fetch.sh" "$TARGET" /blob.bin > "/tmp/somewhere-fetch-$CARRIER.log" 2>&1; then
-        RELAYED="$(grep -o 'the Portal relayed [0-9]* bytes' "/tmp/somewhere-fetch-$CARRIER.log" | head -1)"
+        RELAYED="$(grep -o 'the Portal relayed about [0-9]* bytes' "/tmp/somewhere-fetch-$CARRIER.log" | head -1)"
         ATTEMPT="$(grep -o 'on attempt [0-9]*' "/tmp/somewhere-fetch-$CARRIER.log" | head -1)"
         pass "20 MB intact over $CARRIER — ${RELAYED:-no counter}, ${ATTEMPT:-first attempt}"
     else
@@ -177,7 +182,8 @@ head2 "4a. What the platform actually built"
 if adb -s "$DEVICE" shell am instrument -w \
         -e class eu.nodepass.somewhere.vpn.TunFamiliesOnDeviceTest \
         -e nowhereE2ePortal "$PORTAL" \
-        -e nowhereE2eKey "${NOWHERE_E2E_KEY:-conformance-smoke-key}" \
+        -e nowhereE2eKey "$KEY" \
+        -e nowhereE2ePin "$PIN" \
         eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner 2>/dev/null \
         | tee /tmp/somewhere-families.log | grep -q "^OK ("; then
     pass "the TUN carries both families at the MTU asked for"
@@ -267,7 +273,11 @@ echo "can settle, and leaving it unsettled is the honest state until they do."
 #   1. Start a Portal on this machine, bound to every interface rather than
 #      loopback, and an origin beside it:
 #
-#        nowhere "portal://<key>@0.0.0.0:22095?net=mix&log=info" > portal.log &
+#        nowhere "portal://<key>@0.0.0.0:22095" > portal.log &
+#
+#      The key is 32 lowercase hex characters (`nowhere generate-key`). The
+#      Portal logs its certificate fingerprint on its first line; that is the
+#      pin.
 #
 #   2. Find this machine's address on the network the phone is on:
 #
@@ -278,8 +288,9 @@ echo "can settle, and leaving it unsettled is the honest state until they do."
 #
 #        NOWHERE_E2E_PORTAL=<that address>:22095 \
 #        NOWHERE_E2E_KEY=<key> \
+#        NOWHERE_E2E_PIN=<the fingerprint> \
 #        NOWHERE_E2E_TARGET=<that address>:28091 \
-#        NOWHERE_PORTAL_LOG=portal.log \
+#        NOWHERE_BIN=<path to nowhere> \
 #        conformance/scripts/device-acceptance.sh
 #
 # The phone and this machine must be on the same network, and this machine's

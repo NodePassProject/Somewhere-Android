@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SubscriptionEndpointTest {
-    private val allCapabilities = setOf(Capability.MUX, Capability.QUIC)
+    private val allCapabilities = setOf(Capability.NW3, Capability.QUIC)
 
     private fun ready(
         url: String,
@@ -24,10 +24,10 @@ class SubscriptionEndpointTest {
 
     @Test
     fun encodingIsStableRegardlessOfSetOrder() {
-        val one = Capability.encode(linkedSetOf(Capability.QUIC, Capability.MUX))
-        val other = Capability.encode(linkedSetOf(Capability.MUX, Capability.QUIC))
+        val one = Capability.encode(linkedSetOf(Capability.QUIC, Capability.NW3))
+        val other = Capability.encode(linkedSetOf(Capability.NW3, Capability.QUIC))
         assertEquals(one, other)
-        assertEquals("mux,quic", one)
+        assertEquals("nw3,quic", one)
     }
 
     @Test
@@ -39,7 +39,7 @@ class SubscriptionEndpointTest {
     fun capabilityTokensAreStableWireValues() {
         // Renaming any of these breaks the contract with dashboards, so they are
         // asserted literally rather than derived from the enum.
-        assertEquals("mux", Capability.MUX.token)
+        assertEquals("nw3", Capability.NW3.token)
         assertEquals("quic", Capability.QUIC.token)
     }
 
@@ -49,7 +49,7 @@ class SubscriptionEndpointTest {
     fun appendsTypeVersionAndCapabilities() {
         val result = ready("https://dash.example/sub/portal?token=abc")
         assertEquals(
-            "https://dash.example/sub/portal?token=abc&type=somewhere&ver=0.1.0&caps=mux%2Cquic",
+            "https://dash.example/sub/portal?token=abc&type=somewhere&ver=0.1.0&caps=nw3%2Cquic",
             result.requestUrl,
         )
     }
@@ -65,7 +65,7 @@ class SubscriptionEndpointTest {
     fun addsAQueryWhenTheUrlHadNone() {
         val result = ready("https://dash.example/sub/portal")
         assertEquals(
-            "https://dash.example/sub/portal?type=somewhere&ver=0.1.0&caps=mux%2Cquic",
+            "https://dash.example/sub/portal?type=somewhere&ver=0.1.0&caps=nw3%2Cquic",
             result.requestUrl,
         )
     }

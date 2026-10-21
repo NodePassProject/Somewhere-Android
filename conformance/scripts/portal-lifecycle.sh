@@ -20,12 +20,12 @@ BIN="${NOWHERE_BIN:-$NOWHERE_CLONE/target/release/nowhere}"
 
 [ -x "$BIN" ] || { echo "FAIL: no nowhere binary at $BIN" >&2; exit 1; }
 echo "Portal binary: $("$BIN" --version 2>&1 | head -1)"
-echo "These cases start and stop their own Portals; the reclaim case waits out a 40s deadline."
+echo "These cases start and stop their own Portals, on a certificate made here with openssl."
 echo
 
 # --rerun for the same reason oracle-diff.sh needs it: the interesting output is
 # a process lifecycle, and Gradle has no way to know the world changed.
 cd "$PROJECT" && NOWHERE_BIN="$BIN" ./gradlew --no-daemon testDebugUnitTest --rerun \
     --tests 'eu.nodepass.somewhere.conformance.PortalLifecycleTest' -i 2>&1 \
-    | grep -E "NW-P-11|PortalLifecycleTest|FAILED|BUILD|tests completed"
+    | grep -E "reclaimed|PortalLifecycleTest|FAILED|BUILD|tests completed"
 exit "${PIPESTATUS[0]}"

@@ -5,13 +5,13 @@ package eu.nodepass.somewhere.protocol
 
 import eu.nodepass.somewhere.protocol.auth.AuthReason
 import eu.nodepass.somewhere.protocol.auth.SharedKey
-import eu.nodepass.somewhere.protocol.frame.FlowHeaderReason
+import eu.nodepass.somewhere.protocol.frame.FlowStartReason
 import eu.nodepass.somewhere.protocol.frame.SetupResultReason
 import eu.nodepass.somewhere.protocol.frame.UotReason
-import eu.nodepass.somewhere.protocol.mux.MuxReason
 import eu.nodepass.somewhere.protocol.quic.DatagramReason
+import eu.nodepass.somewhere.protocol.quic.QuicFlowIdReason
 import eu.nodepass.somewhere.protocol.session.LaneReason
-import eu.nodepass.somewhere.protocol.session.SessionReason
+import eu.nodepass.somewhere.protocol.session.QuicCarrierReason
 import eu.nodepass.somewhere.protocol.target.TargetReason
 import eu.nodepass.somewhere.protocol.tls.ExporterReason
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
@@ -32,6 +32,10 @@ import org.junit.Test
  * obvious way to make it more helpful.
  */
 class FailureMessageTest {
+    private companion object {
+        const val SERVICE_KEY = "0123456789abcdef0123456789abcdef"
+    }
+
     private val everyReason: List<DecodeReason> =
         listOf(
             AuthReason.EmptySharedKey,
@@ -41,13 +45,8 @@ class FailureMessageTest {
             AuthReason.MalformedPercentEncoding,
             AuthReason.FrameTruncated(7),
             AuthReason.TagMismatch,
-            FlowHeaderReason.WrongLength(3),
-            FlowHeaderReason.ReservedRole,
-            FlowHeaderReason.ZeroFlowId,
-            FlowHeaderReason.HopsOutOfRange(9),
-            FlowHeaderReason.ClientFlowWithHops(2),
-            FlowHeaderReason.DuplexCarriersDiffer,
-            FlowHeaderReason.SplitCarriersMatch,
+            AuthReason.NotServiceFormat,
+            FlowStartReason.Missing,
             TargetReason.PortZero,
             TargetReason.UnknownAddressType(2),
             TargetReason.Truncated,
@@ -61,21 +60,12 @@ class FailureMessageTest {
             UotReason.PayloadTooLarge(70000),
             UotReason.TruncatedLength,
             UotReason.TruncatedPayload(10, 2),
-            MuxReason.Truncated(3),
-            MuxReason.UnknownKind(9),
-            MuxReason.DatagramUnsupported,
-            MuxReason.ReservedFlagBits(0x80),
-            MuxReason.ResetNotAlone,
-            MuxReason.ResetWithValue(5),
-            MuxReason.StreamFlowIdZero,
-            MuxReason.StreamPayloadTooLarge(99999),
-            MuxReason.WindowWithFlags(1),
-            MuxReason.WindowZeroCredit,
-            MuxReason.CreditExceedsWindow(999999, 524288),
-            MuxReason.UnknownFlow(42u),
             DatagramReason.Truncated(3, 5),
             DatagramReason.InvalidType,
-            DatagramReason.ReservedBitsSet(0x80),
+            DatagramReason.FlowIdOutOfRange(1u shl 31),
+            DatagramReason.ClosePayload,
+            DatagramReason.FragmentPayloadLength,
+            DatagramReason.TotalLengthTooSmall(1, 3),
             DatagramReason.FlowIdZero,
             DatagramReason.PacketIdZero,
             DatagramReason.FragmentIndexOutOfRange(5, 3),
@@ -90,9 +80,19 @@ class FailureMessageTest {
             UrlReason.WrongScheme("vector"),
             UrlReason.MissingHost,
             UrlReason.InvalidPort(0),
-            UrlReason.InvalidCarrier("up", "pigeon"),
-            UrlReason.InvalidAlpn(0),
+            UrlReason.CarrierPath("/tcp:1/udp:2"),
+            UrlReason.InvalidCarrier("pigeon"),
+            UrlReason.InvalidMorph("2"),
+            UrlReason.InvalidSni("a_b"),
             UrlReason.InvalidPin("nope"),
+            UrlReason.InvalidRate("rate", "-1"),
+            QuicFlowIdReason.NotBidirectional(2),
+            QuicFlowIdReason.WrongInitiator(1),
+            QuicFlowIdReason.Exhausted(4_294_967_292),
+            QuicCarrierReason.CarrierClosed,
+            QuicCarrierReason.NoSetupByte,
+            QuicCarrierReason.NoDatagrams,
+            QuicCarrierReason.StreamUnusable(QuicFlowIdReason.Exhausted(4_294_967_292)),
             ExporterReason.NotConnected,
             ExporterReason.WrongLength(16, 32),
             ExporterReason.Unsupported("no provider"),
@@ -101,8 +101,7 @@ class FailureMessageTest {
             LaneReason.TransportClosed,
             LaneReason.NoSetupByte,
             LaneReason.Rejected(eu.nodepass.somewhere.protocol.frame.SetupResult.FlowLimit),
-            LaneReason.HeaderInvalid(FlowHeaderReason.ZeroFlowId),
-            SessionReason.FlowIdsExhausted,
+            LaneReason.HeaderInvalid(SetupResultReason.OutOfRange(9)),
         )
 
     @Test
@@ -137,9 +136,13 @@ class FailureMessageTest {
                 "malformed escape" to
                     SharedKey.fromUserInfo("$secret%GG").reasonOrNull(),
                 "url with a token" to
-                    NowhereUrl.parse("nowhere://$secret@host:0?up=tcp").reasonOrNull(),
+                    NowhereUrl.parse("nowhere://$secret@host:0?net=tcp").reasonOrNull(),
+                "a key in the wrong form" to
+                    NowhereUrl.parse("nowhere://$secret@host:443").reasonOrNull(),
                 "bad pin" to
-                    NowhereUrl.parse("nowhere://k@host:443?pin=$secret").reasonOrNull(),
+                    NowhereUrl.parse("nowhere://$SERVICE_KEY@host:443?pin=$secret").reasonOrNull(),
+                "bad sni" to
+                    NowhereUrl.parse("nowhere://$SERVICE_KEY@host:443?sni=${secret}_").reasonOrNull(),
             )
 
         leaks.forEach { (what, reason) ->

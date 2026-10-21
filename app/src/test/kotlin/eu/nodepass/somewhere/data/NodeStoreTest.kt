@@ -6,7 +6,6 @@ package eu.nodepass.somewhere.data
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -31,8 +30,8 @@ class NodeStoreTest {
 
     private fun node(url: String): NowhereUrl = (NowhereUrl.parse(url) as DecodeResult.Ok).value
 
-    private val frankfurt = "nowhere://a-key@fra04.example.net:443?up=tcp&down=tcp&mux=1#Frankfurt"
-    private val singapore = "nowhere://b-key@sgp11.example.net:443?up=udp&down=udp#Singapore"
+    private val frankfurt = "nowhere://0123456789abcdef0123456789abcdef@fra04.example.net:443#Frankfurt"
+    private val singapore = "nowhere://fedcba9876543210fedcba9876543210@sgp11.example.net:443?net=udp#Singapore"
 
     @Test
     fun anAbsentFileIsAnEmptyListAndNotAFailure() {
@@ -49,10 +48,8 @@ class NodeStoreTest {
         val loaded = store.load().single().url
         assertEquals(original.host, loaded.host)
         assertEquals(original.port, loaded.port)
-        assertEquals(original.up, loaded.up)
-        assertEquals(original.down, loaded.down)
-        assertEquals(original.mux, loaded.mux)
-        assertEquals(original.alpn, loaded.alpn)
+        assertEquals(original.net, loaded.net)
+        assertEquals(original.morph, loaded.morph)
         assertEquals(original.displayName, loaded.displayName)
         assertEquals(original.certificateVerification, loaded.certificateVerification)
         // The key is the field a round trip is most likely to mangle, and the
@@ -62,42 +59,15 @@ class NodeStoreTest {
     }
 
     @Test
-    fun aKeyWithCharactersThatMeanSomethingInAUrlSurvives() {
-        // `+` must stay `+` and not become a space, `@` and `#` and `?` must not
-        // re-split the URL on the way back in. This is where a store that wrote
-        // the key raw instead of encoded quietly authenticates as something else.
-        val awkward = "p+a/s?s@w#o&r=d"
-        val original =
-            node("nowhere://${java.net.URLEncoder.encode(awkward, "UTF-8").replace("+", "%2B")}@h.example.net:443?up=tcp&down=tcp")
-        val store = store()
-        store.add(original)
-        assertEquals(
-            original.sharedKey,
-            store
-                .load()
-                .single()
-                .url.sharedKey,
-        )
-    }
-
-    @Test
-    fun aKeyThatIsNotValidTextSurvivesBeingStored() {
-        // The store persists a node as the text `toUrl` renders and reads it
-        // back with `parse`, so it inherits every rounding error that round
-        // trip has. It had one: the key was rendered through a String, which is
-        // a UTF-8 decode, so a key of bytes that are not valid UTF-8 came back
-        // as U+FFFD — a different key, silently, with the only symptom being an
-        // authentication failure days later. Fixed in NowhereUrl; pinned here
-        // because this is the layer where it would have cost someone a node.
-        val raw = "nowhere://%FF%FE%00%80@h.example.net:443?up=tcp&down=tcp"
-        val original = node(raw)
-        assertEquals(4, original.sharedKey.toByteArray().size)
-
-        val store = store()
-        store.add(original)
-        val loaded = store.load().single().url
-        assertEquals(original.sharedKey, loaded.sharedKey)
-        assertArrayEquals(original.sharedKey.toByteArray(), loaded.sharedKey.toByteArray())
+    fun aNodeStoredBeforeV3IsDroppedRatherThanHalfLoaded() {
+        // A v1 node's key is not a v3 key, its ALPN is not one a v3 Portal
+        // accepts, and its `up`/`down` may describe a split v3 cannot carry.
+        // Loading it would produce a node that never connects; dropping it is
+        // what the store already does with any line that no longer parses.
+        val file = File(folder.root, "nodes/nodes.txt")
+        file.parentFile.mkdirs()
+        file.writeText("nowhere://a-key@old.example.net:443?up=tcp&down=udp&mux=1\n$frankfurt\n")
+        assertEquals(listOf("fra04.example.net"), NodeStore(file).load().map { it.url.host })
     }
 
     @Test
@@ -111,10 +81,10 @@ class NodeStoreTest {
 
     @Test
     fun aNodeDifferingInOneParameterIsADifferentNode() {
-        // On this protocol it genuinely is: up and down select the carrier.
+        // On this protocol it genuinely is: net selects the carrier.
         val store = store()
         store.add(node(frankfurt))
-        store.add(node(frankfurt.replace("up=tcp", "up=udp")))
+        store.add(node(frankfurt.replace("#", "?net=udp#")))
         assertEquals(2, store.load().size)
     }
 
@@ -265,9 +235,9 @@ class NodeStoreTest {
         // It cannot, because toUrl() percent-encodes everything outside the
         // unreserved set. This asserts that rather than trusting it: the
         // property lives in the encoder, and the store depends on it.
-        val hostile = "A\tsub\tnowhere://x@evil.example.net:443?up=tcp&down=tcp\nB"
+        val hostile = "A\tsub\tnowhere://x@evil.example.net:443\nB"
         val original =
-            node("nowhere://k@h.example.net:443?up=tcp&down=tcp#" + java.net.URLEncoder.encode(hostile, "UTF-8"))
+            node("nowhere://0123456789abcdef0123456789abcdef@h.example.net:443#" + java.net.URLEncoder.encode(hostile, "UTF-8"))
         val store = store()
         store.add(original, NodeStore.Origin.Manual)
 
@@ -284,10 +254,10 @@ class NodeStoreTest {
         val store = store()
         store.add(node(frankfurt))
         store.add(node(singapore))
-        val edited = node(frankfurt.replace("up=tcp", "up=udp"))
+        val edited = node(frankfurt.replace("#", "?net=udp#"))
         val after = store.replace(node(frankfurt), edited)
         assertEquals(listOf("fra04.example.net", "sgp11.example.net"), after.map { it.url.host })
-        assertEquals(NextHopCarrier.Udp, after.first().url.up)
+        assertEquals(NextHopCarrier.Udp, after.first().url.net)
     }
 
     @Test

@@ -133,12 +133,18 @@ struct quic_conn {
     // The certificate this connection will accept, and nothing else.
     //
     // SHA-256 of the leaf's DER encoding, which is what a `pin=` parameter
-    // carries and what the TLS carrier already compares. Absent is the ordinary
-    // case and means no verification at all -- upstream's own behaviour when a
-    // node names neither `sni` nor `pin`, and what every URL current dashboards
-    // emit produces.
+    // carries and what the TLS carrier already compares. Absent means the
+    // node asked for chain verification instead, which Kotlin performs after
+    // the handshake and before the first Nowhere byte, against the platform's
+    // trust store: nativePeerCertificate hands it the chain. Nothing in this
+    // bridge ever accepts a connection unverified on its own say-so.
     uint8_t pin[SHA256_DIGEST_LENGTH];
     int has_pin;
+
+    // The largest UDP payload ngtcp2 may emit or ask the peer for. 1452 on a
+    // 1500-byte path, and twelve less under Morph, whose per-datagram nonce
+    // sits outside the QUIC packet and has to fit in the same path.
+    size_t max_udp_payload;
 
     // Datagrams waiting to go out, and ones that arrived. Both are FIFO, kept
     // as head/tail so a busy flow does not walk the list to append.
@@ -562,9 +568,11 @@ static int ssl_init(struct quic_conn *c, const char *server_name,
         SSL_set_tlsext_host_name(c->ssl, server_name);
     }
 
-    // Only when a pin was given. Without one this stays at BoringSSL's client
-    // default, which verifies nothing -- the state every node that names
-    // neither `sni` nor `pin` is in, and the one upstream is in too.
+    // Only when a pin was given. Without one the handshake itself verifies
+    // nothing, and QuicConnection.verifyPeer checks the chain against the
+    // platform's trust store before the connection is handed to anyone: v3
+    // has no unverified mode, so that check is not optional, it is just not
+    // here.
     if (c->has_pin) {
         SSL_set_custom_verify(c->ssl, SSL_VERIFY_PEER, verify_pin);
     }
@@ -612,6 +620,9 @@ static int quic_init(struct quic_conn *c) {
 
     ngtcp2_settings_default(&settings);
     settings.initial_ts = now_ns();
+    // Also the ceiling path MTU discovery probes up to, so a Morph connection
+    // never discovers a size its nonce would push past the path.
+    settings.max_tx_udp_payload_size = c->max_udp_payload;
 
     ngtcp2_transport_params_default(&params);
 
@@ -630,6 +641,7 @@ static int quic_init(struct quic_conn *c) {
     // is an upper bound on one frame, not a buffer: fragmentation above this
     // layer keeps every packet inside whatever the path actually allows.
     params.max_datagram_frame_size = 65535;
+    params.max_udp_payload_size = c->max_udp_payload;
     params.initial_max_stream_data_bidi_local = 512 * 1024;
     params.initial_max_data = 1024 * 1024;
 
@@ -690,7 +702,7 @@ JNIEXPORT jlong JNICALL
 Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
     JNIEnv *env, jclass clazz, jbyteArray local_ip, jint local_port,
     jbyteArray remote_ip, jint remote_port, jstring server_name,
-    jbyteArray alpn, jbyteArray pin) {
+    jbyteArray alpn, jbyteArray pin, jint max_udp_payload) {
     (void)clazz;
     struct quic_conn *c;
     jbyte local_buf[16], remote_buf[16], alpn_buf[255];
@@ -704,6 +716,10 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
     if ((local_len != 4 && local_len != 16) ||
         (remote_len != 4 && remote_len != 16) || alpn_len < 1 ||
         alpn_len > 255) {
+        return 0;
+    }
+    // RFC 9000 floors the payload at 1200; the write buffer caps it at 1452.
+    if (max_udp_payload < 1200 || max_udp_payload > 1452) {
         return 0;
     }
     // A pin of the wrong length is refused here rather than truncated or
@@ -726,6 +742,7 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeOpen(
     c->owner = pthread_self();
     c->conn_ref.get_conn = get_conn;
     c->conn_ref.user_data = c;
+    c->max_udp_payload = (size_t)max_udp_payload;
     ngtcp2_ccerr_default(&c->last_error);
 
     if (pin_len == SHA256_DIGEST_LENGTH) {
@@ -1209,6 +1226,41 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeExportKeyingMaterial(
     result = (*env)->NewByteArray(env, length);
     if (result) {
         (*env)->SetByteArrayRegion(env, result, 0, length, (const jbyte *)out);
+    }
+    return result;
+}
+
+// The DER encoding of the peer's certificate at `index`, leaf first, or NULL
+// past the end of the chain.
+//
+// Read after the handshake, for chain verification in Kotlin against the
+// platform's trust store (ADR-0002, option A). Copying the chain out rather
+// than calling up into Kotlin from the verify callback keeps every JNI
+// transition on the owner thread's own call path, and the ordering rule that
+// makes it safe is the one the TLS carrier already keeps: nothing is written
+// on the connection until Kotlin has said yes.
+JNIEXPORT jbyteArray JNICALL
+Java_eu_nodepass_somewhere_quic_QuicConnection_nativePeerCertificate(
+    JNIEnv *env, jclass clazz, jlong handle, jint index) {
+    (void)clazz;
+    int err;
+    struct quic_conn *c = checked(handle, &err);
+    const STACK_OF(CRYPTO_BUFFER) *chain;
+    const CRYPTO_BUFFER *cert;
+    jbyteArray result;
+
+    if (!c || index < 0) {
+        return NULL;
+    }
+    chain = SSL_get0_peer_certificates(c->ssl);
+    if (!chain || (size_t)index >= sk_CRYPTO_BUFFER_num(chain)) {
+        return NULL;
+    }
+    cert = sk_CRYPTO_BUFFER_value(chain, (size_t)index);
+    result = (*env)->NewByteArray(env, (jsize)CRYPTO_BUFFER_len(cert));
+    if (result) {
+        (*env)->SetByteArrayRegion(env, result, 0, (jsize)CRYPTO_BUFFER_len(cert),
+                                   (const jbyte *)CRYPTO_BUFFER_data(cert));
     }
     return result;
 }

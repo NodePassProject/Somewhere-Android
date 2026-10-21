@@ -8,9 +8,9 @@ import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 
 /*
- * How each of the eight outcomes reaches the user.
+ * How each of the five outcomes reaches the user.
  *
- * NW-P-06 requires all seven rejections to be distinguishable, so this is an
+ * The four rejections must stay distinguishable, so this is an
  * exhaustive `when` over the enum in both directions: adding an outcome to the
  * protocol stops compiling here until someone decides what it says and how loud
  * it is. A map with a default would have silently absorbed it.
@@ -29,11 +29,8 @@ val SetupResult.identifier: String
         when (this) {
             SetupResult.Ready -> "READY"
             SetupResult.InvalidRequest -> "INVALID_REQUEST"
-            SetupResult.MetadataConflict -> "METADATA_CONFLICT"
-            SetupResult.PairTimeout -> "PAIR_TIMEOUT"
             SetupResult.FlowLimit -> "FLOW_LIMIT"
             SetupResult.DialFailed -> "DIAL_FAILED"
-            SetupResult.SessionReplaced -> "SESSION_REPLACED"
             SetupResult.InternalError -> "INTERNAL_ERROR"
         }
 
@@ -44,11 +41,8 @@ val SetupResult.explanation: Int
         when (this) {
             SetupResult.Ready -> R.string.setup_ready
             SetupResult.InvalidRequest -> R.string.setup_invalid_request
-            SetupResult.MetadataConflict -> R.string.setup_metadata_conflict
-            SetupResult.PairTimeout -> R.string.setup_pair_timeout
             SetupResult.FlowLimit -> R.string.setup_flow_limit
             SetupResult.DialFailed -> R.string.setup_dial_failed
-            SetupResult.SessionReplaced -> R.string.setup_session_replaced
             SetupResult.InternalError -> R.string.setup_internal_error
         }
 
@@ -72,9 +66,6 @@ val SetupResult.severity: LogSeverity
             SetupResult.Ready -> LogSeverity.Good
             SetupResult.DialFailed -> LogSeverity.Critical
             SetupResult.FlowLimit -> LogSeverity.Warn
-            SetupResult.SessionReplaced -> LogSeverity.Warn
             SetupResult.InvalidRequest -> LogSeverity.Neutral
-            SetupResult.MetadataConflict -> LogSeverity.Neutral
-            SetupResult.PairTimeout -> LogSeverity.Neutral
             SetupResult.InternalError -> LogSeverity.Neutral
         }

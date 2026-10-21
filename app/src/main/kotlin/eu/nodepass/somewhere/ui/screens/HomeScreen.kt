@@ -34,16 +34,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
-import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
@@ -218,10 +214,6 @@ internal fun Home(
                     onClick = onOpenSettings,
                 )
             }
-
-            if (!node.url.certificateVerification.isVerified) {
-                UnverifiedBanner()
-            }
         }
 
         Column(
@@ -233,7 +225,7 @@ internal fun Home(
                 icon = SomewhereIcons.ArrowUp,
                 color = colors.direction(upstream = true).figure,
                 tint = colors.direction(upstream = true).tint,
-                carrier = carrierLabel(node.url.up, node.url.mux),
+                carrier = carrierLabel(node.url.net),
                 bytesPerSecond = session.upstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.upstreamOfPeak else 0f,
             )
@@ -242,7 +234,7 @@ internal fun Home(
                 icon = SomewhereIcons.ArrowDown,
                 color = colors.direction(upstream = false).figure,
                 tint = colors.direction(upstream = false).tint,
-                carrier = carrierLabel(node.url.down, node.url.mux),
+                carrier = carrierLabel(node.url.net),
                 bytesPerSecond = session.downstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.downstreamOfPeak else 0f,
             )
@@ -285,50 +277,6 @@ internal fun Home(
             }
             PrimaryAction(session = session, onClick = onToggleTunnel)
         }
-    }
-}
-
-/**
- * The certificate marker.
- *
- * D-11 / NW-P-09. Persistent and non-dismissible, because the condition persists
- * for as long as the node does — and because every URL NowhereDash currently
- * generates lands here. The two parameter names are arguments rather than part
- * of the sentence, so a translator is never offered the chance to localise them.
- */
-@Composable
-private fun UnverifiedBanner() {
-    val colors = SomewhereTheme.colors
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.criticalTint)
-                .border(1.dp, colors.criticalLine, RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Icon(SomewhereIcons.AlertTriangle, null, Modifier.size(15.dp), tint = colors.critical)
-        // One flowing sentence, two tones: the statement in the critical colour,
-        // the reason in ordinary ink. Two stacked Texts would fix a line break
-        // that the two Chinese translations do not want in the same place.
-        Text(
-            text =
-                buildAnnotatedString {
-                    withStyle(SpanStyle(color = colors.critical)) {
-                        append(stringResource(R.string.cert_unverified_short))
-                    }
-                    withStyle(SpanStyle(color = colors.inkMuted)) {
-                        append(" · ")
-                        append(stringResource(R.string.cert_unverified_reason, "sni", "pin"))
-                    }
-                },
-            fontFamily = SomewhereType.Body,
-            fontSize = 12.5.sp,
-            lineHeight = 17.sp,
-        )
     }
 }
 
@@ -514,43 +462,18 @@ private fun PrimaryAction(
 }
 
 /**
- * What a direction is actually riding on.
+ * What a node rides on: one carrier for both directions.
  *
  * Never translated: these are carrier names, and a user comparing their screen
- * with the Portal's configuration has to see the same word.
+ * with the Portal's configuration has to see the same word. v1 could put the
+ * two directions on different carriers and Mux one of them, and this took a
+ * direction; v3 has one carrier per node, so both cards show the same label.
  */
-fun carrierLabel(
-    carrier: NextHopCarrier,
-    mux: Boolean,
-): String =
+fun carrierLabel(carrier: NextHopCarrier): String =
     when (carrier) {
-        NextHopCarrier.Tcp -> if (mux) "TLS / TCP · MUX" else "TLS / TCP"
+        NextHopCarrier.Tcp -> "TLS / TCP"
         NextHopCarrier.Udp -> "QUIC"
     }
-
-/** `UP TCP`, `DOWN UDP` — the chip form, for the node list. */
-fun directionChip(
-    prefix: String,
-    carrier: NextHopCarrier,
-): String = "$prefix ${carrier.token.uppercase()}"
-
-/**
- * Whether a node cannot be carried as configured.
- *
- * This used to mean "needs QUIC", when QUIC was not implemented, and then "needs
- * certificate verification", when neither `sni` nor `pin` worked on it. It has
- * narrowed twice and now means one thing: **a QUIC node verifying the chain
- * against an `sni` name.** A bare `nowhere://key@host:port` connects, and so
- * does one carrying `pin`, which the QUIC carrier compares against the leaf the
- * peer presents. `sni` needs a trust store fed into the QUIC stack's TLS
- * backend, which is a different order of work, and carrying such a node without
- * it would be a security downgrade the user configured against and could not
- * observe.
- *
- * Kept next to [carrierLabel] so the two cannot disagree about a node.
- */
-val NowhereUrl.needsQuicNotice: Boolean
-    get() = requiresQuic && certificateVerification is CertificateVerification.Sni
 
 @Composable
 internal fun DividerBox(color: Color) {

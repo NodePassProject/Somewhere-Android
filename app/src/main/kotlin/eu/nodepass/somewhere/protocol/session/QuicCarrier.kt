@@ -8,12 +8,11 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
-import eu.nodepass.somewhere.protocol.frame.FlowCarrier
-import eu.nodepass.somewhere.protocol.frame.FlowHeader
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
-import eu.nodepass.somewhere.protocol.frame.FlowRole
+import eu.nodepass.somewhere.protocol.frame.FlowStart
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.protocol.quic.QuicFlowId
 import eu.nodepass.somewhere.protocol.target.Target
 
 /** Why a flow could not be opened on a QUIC carrier. */
@@ -40,9 +39,22 @@ sealed interface QuicCarrierReason : DecodeReason {
     }
 
     /**
+     * The stream this flow was given cannot carry one.
+     *
+     * In practice the 2^30 flow ids a connection derives have run out, and the
+     * specification's answer is a new connection rather than a recovery on
+     * this one.
+     */
+    data class StreamUnusable(
+        val reason: DecodeReason,
+    ) : QuicCarrierReason {
+        override val detail: String = reason.detail
+    }
+
+    /**
      * A UDP flow was asked for and this connection has no DATAGRAM extension.
      *
-     * Refused rather than carried over the control stream: section 9 puts UDP
+     * Refused rather than carried over the control stream: the specification puts UDP
      * in DATAGRAMs, and a Portal is not listening for length-prefixed packets
      * on a QUIC stream.
      */
@@ -64,30 +76,30 @@ sealed interface QuicCarrierReason : DecodeReason {
  * comes off once the flow is open — is the lane's behaviour unchanged, because
  * it is the protocol's behaviour rather than the carrier's.
  *
- * The AuthFrame is marked sent when it is **written**, not when it succeeds.
- * Authentication has no response frame: a Portal that answered differently on
- * failure would be an oracle for active probing, so success is not observable
- * here at all. What is observable is that this connection has already offered
- * one, and offering a second is the thing the specification forbids.
+ * Success is not observable. Authentication has no response frame — a Portal
+ * that answered differently on failure would be an oracle for active probing —
+ * so the first flow's READY is the only evidence, and a wrong key is silence.
+ * The AuthFrame is pipelined onto that first flow rather than sent on a
+ * stream of its own, which the specification permits and upstream's own
+ * Vector does.
  *
  * ## Rejections have one shape
  *
- * [QuicCarrierReason.Rejected] implements [FlowRejected] like the lane's and the
- * Mux carrier's. That interface exists because the same rejection reached the
- * caller as a named `DIAL_FAILED` over one carrier and as an unclassifiable
- * string over another, and the seven explanations the app renders are matched
- * on exactly this — so a third carrier growing a third shape would degrade all
- * seven to a generic failure, on screen, with every gate green.
+ * [QuicCarrierReason.Rejected] implements [FlowRejected] like the lane's. That
+ * interface exists because the same rejection reached the caller as a named
+ * `DIAL_FAILED` over one carrier and as an unclassifiable string over another,
+ * and the explanations the app renders are matched on exactly this — so a
+ * carrier growing its own shape would degrade all of them to a generic
+ * failure, on screen, with every gate green.
  */
 class QuicCarrier(
     private val streams: StreamFactory,
     private val sharedKey: SharedKey,
-    private val sessionId: SessionId,
     /**
      * The connection's DATAGRAM side, when it has one.
      *
      * Null means UDP flows are refused rather than carried over the stream:
-     * section 9 puts them in DATAGRAMs, and a client that quietly used the
+     * the specification puts them in DATAGRAMs, and a client that quietly used the
      * TLS carrier's length-prefixed framing instead would be interoperating
      * with a Portal that is not listening for it.
      */
@@ -95,23 +107,7 @@ class QuicCarrier(
 ) : AutoCloseable {
     /** Opens one client-initiated bidirectional stream as a byte transport. */
     fun interface StreamFactory {
-        fun open(): Transport
-
-        /**
-         * Which connection the last [open] came from.
-         *
-         * A QUIC connection authenticates once — but *once per connection*, and
-         * a connection that died and was rebuilt is a new one that has never
-         * authenticated. Without this the carrier would remember having
-         * authenticated and send the first flow on the new connection with no
-         * AuthFrame, which a Portal answers with the silence it answers every
-         * unauthenticated flow with: a tunnel that survives a network change
-         * and then carries nothing.
-         *
-         * A factory that never rebuilds returns a constant, which is why this
-         * has a default.
-         */
-        fun generation(): Int = 0
+        fun open(): StreamTransport
     }
 
     /** The unreliable half of a QUIC connection, as this carrier needs it. */
@@ -124,21 +120,15 @@ class QuicCarrier(
         fun maxDatagram(): Int
     }
 
-    /** The generation this carrier last offered an AuthFrame on, or null. */
-    private var authenticatedOn: Int? = null
     private var closed = false
     private val open = mutableListOf<Transport>()
 
-    /** Section 9's UDP carriage, when this connection has a datagram side. */
+    /** UDP carriage over DATAGRAMs, when this connection has a datagram side. */
     private val lane: DatagramLane? = datagrams?.let { DatagramLane(it) }
-
-    /** Whether the current connection has already offered its AuthFrame. */
-    val hasAuthenticated: Boolean get() = authenticatedOn == streams.generation()
 
     fun openFlow(
         target: Target,
         kind: FlowKind,
-        flowId: UInt,
         firstPayload: ByteArray = ByteArray(0),
     ): DecodeResult<Flow> {
         if (closed) return invalid(QuicCarrierReason.CarrierClosed)
@@ -149,46 +139,43 @@ class QuicCarrier(
         val transport = streams.open()
         open += transport
 
-        val header =
-            when (
-                val built =
-                    FlowHeader.forClient(
-                        FlowRole.Duplex,
-                        kind,
-                        FlowCarrier.Quic,
-                        FlowCarrier.Quic,
-                        flowId,
-                    )
-            ) {
-                is DecodeResult.Invalid -> return invalid(QuicCarrierReason.HeaderInvalid(built.reason))
-                is DecodeResult.Ok -> built.value
+        // The id is the stream's, derived rather than chosen: both ends compute
+        // it from the stream number and neither sends it. Over TCP it is only
+        // a name for logs; over UDP it is what every DATAGRAM is addressed by.
+        val flowId =
+            when (val derived = QuicFlowId.forClientStream(transport.streamId)) {
+                is DecodeResult.Invalid -> {
+                    transport.close()
+                    return invalid(QuicCarrierReason.StreamUnusable(derived.reason))
+                }
+                is DecodeResult.Ok -> derived.value
             }
 
-        // Exactly once per connection — and a rebuilt connection is a new one.
-        val generation = streams.generation()
+        // The AuthFrame leads client bidirectional Stream 0 and no other: "the
+        // authentication Stream is client bidirectional Stream ID 0". Keyed on
+        // the stream id rather than on remembering, because a connection that
+        // died and was rebuilt starts again at Stream 0 and has never
+        // authenticated — a carrier that remembered having done it would send
+        // that first flow bare, and a Portal answers a bare flow with silence.
+        // Only one stream is credited before authentication, so no later
+        // stream can be opened ahead of this one.
         val authFrame =
-            if (authenticatedOn == generation) {
-                ByteArray(0)
-            } else {
+            if (transport.streamId == AUTHENTICATION_STREAM) {
                 Authentication.encodeFrame(
                     sharedKey = sharedKey,
                     transport = AuthTransport.Quic,
                     exporter = transport.exporter,
-                    sessionId = sessionId.toByteArray(),
                 )
-            }
-        authenticatedOn = generation
-
-        // A UDP flow's payload does not ride the stream. Section 9 is explicit:
-        // after READY on the control stream, packets travel as DATAGRAMs — so
-        // the opening write carries the header and the Target and stops there,
-        // and the first packet is sent below once the Portal has answered.
-        val opening =
-            if (kind == FlowKind.Udp) {
-                authFrame + header.encode() + target.encode()
             } else {
-                authFrame + header.encode() + target.encode() + firstPayload
+                ByteArray(0)
             }
+
+        // No payload in the opening write, for either kind. "Target payload
+        // waits for READY", and a Portal that reads a byte early ends the flow.
+        // A UDP flow's payload never rides the stream at all: after READY the
+        // control stream "carries no business bytes" and packets travel as
+        // DATAGRAMs.
+        val opening = authFrame + byteArrayOf(FlowStart(kind).encode()) + target.encode()
         transport.write(opening)
         transport.flush()
 
@@ -207,7 +194,7 @@ class QuicCarrier(
         transport.setReadTimeout(0)
 
         if (kind == FlowKind.Udp) {
-            // Row 15: no DATA before READY. The lane refuses payload until this
+            // No DATA before READY. The lane refuses payload until this
             // is called, and it is called here — after a Portal has answered a
             // flow — rather than when the connection came up, so a datagram
             // arriving before any flow exists is discarded rather than queued
@@ -218,6 +205,10 @@ class QuicCarrier(
             return flow.ok()
         }
 
+        if (firstPayload.isNotEmpty()) {
+            transport.write(firstPayload)
+            transport.flush()
+        }
         return StreamFlow(flowId, target, kind, result, transport).ok()
     }
 
@@ -250,6 +241,7 @@ class QuicCarrier(
 
     private companion object {
         const val READ_MILLIS = 15_000L
+        const val AUTHENTICATION_STREAM = 0L
     }
 
     /** One UDP flow: a control stream that opened it, and DATAGRAMs after. */

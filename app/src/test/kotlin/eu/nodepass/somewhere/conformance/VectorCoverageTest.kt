@@ -32,12 +32,13 @@ class VectorCoverageTest {
         val IMPLEMENTED: Map<String, String> =
             mapOf(
                 "auth" to "eu.nodepass.somewhere.protocol.auth.AuthVectorTest",
-                "flowHeader" to "eu.nodepass.somewhere.protocol.frame.FlowHeaderVectorTest",
+                "flowStart" to "eu.nodepass.somewhere.protocol.frame.FlowStartVectorTest",
                 "target" to "eu.nodepass.somewhere.protocol.target.TargetVectorTest",
                 "setupResult" to "eu.nodepass.somewhere.protocol.frame.SetupResultVectorTest",
                 "uot" to "eu.nodepass.somewhere.protocol.frame.UdpOverTcpVectorTest",
-                "tlsMux" to "eu.nodepass.somewhere.protocol.mux.MuxHeaderVectorTest",
                 "quicDatagram" to "eu.nodepass.somewhere.protocol.quic.DatagramVectorTest",
+                "udpFlowId" to "eu.nodepass.somewhere.protocol.quic.QuicFlowIdVectorTest",
+                "morph" to "eu.nodepass.somewhere.protocol.morph.MorphVectorTest",
             )
     }
 

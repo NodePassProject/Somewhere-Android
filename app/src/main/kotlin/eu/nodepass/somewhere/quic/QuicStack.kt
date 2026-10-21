@@ -15,7 +15,7 @@ package eu.nodepass.somewhere.quic
  *
  * This package is RFC 9000, which is **not** the Nowhere protocol. Choosing a
  * library to implement it does not weaken "engine hand-written in Kotlin": the
- * AuthFrame, the FlowHeader, the Target, the SetupResult and every codec stay
+ * AuthFrame, the FlowStart, the Target, the SetupResult and every codec stay
  * where they are. What lives here is the binding to the thing underneath them.
  *
  * It is deliberately outside the coverage gate, and that is a decision rather

@@ -74,8 +74,13 @@ build_abi() {
     local abi=$1
     local out="$DEPS/out/$abi"
     local stamp="$out/.stamp"
+    # The host prefix is built for whatever this machine is, so the machine is
+    # part of what it is. Keyed by the pinned commits alone, a prefix built on
+    # macOS was reused on Linux and handed the linker Mach-O objects.
+    local key="$KEY"
+    [ "$abi" = "host" ] && key="$KEY-$(uname -s)-$(uname -m)"
 
-    if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$KEY" ]; then
+    if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$key" ]; then
         echo "PREFIX=$out"
         return 0
     fi
@@ -168,7 +173,7 @@ build_abi() {
     cp -R "$SRC/ngtcp2/crypto/includes/"* "$out/include/"
     cp -R "$SRC/aws-lc/include/"* "$out/include/"
 
-    echo "$KEY" > "$stamp"
+    echo "$key" > "$stamp"
     echo "PREFIX=$out"
 }
 

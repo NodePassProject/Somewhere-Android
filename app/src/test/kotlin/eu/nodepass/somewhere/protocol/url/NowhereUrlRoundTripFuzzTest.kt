@@ -37,54 +37,37 @@ class NowhereUrlRoundTripFuzzTest {
         sharedKey: SharedKey,
         host: String = "portal.example.net",
         port: Int = 443,
-        up: NextHopCarrier = NextHopCarrier.Tcp,
-        down: NextHopCarrier = NextHopCarrier.Tcp,
-        mux: Boolean = false,
-        alpn: String = NowhereUrl.DEFAULT_ALPN,
-        verification: CertificateVerification = CertificateVerification.Skipped,
+        net: NextHopCarrier = NextHopCarrier.Tcp,
+        morph: Boolean = true,
+        verification: CertificateVerification = CertificateVerification.Sni(host),
         rate: Int = 0,
         etar: Int = 0,
         displayName: String? = null,
-    ) = NowhereUrl(sharedKey, host, port, up, down, mux, alpn, verification, rate, etar, displayName)
+    ) = NowhereUrl(sharedKey, host, port, net, morph, verification, rate, etar, displayName)
+
+    private fun serviceKey(random: Random): SharedKey = key(ByteArray(32) { "0123456789abcdef"[random.nextInt(16)].code.toByte() })
 
     @Test
-    fun aKeyOfArbitraryBytesSurvivesTheRoundTrip() {
-        // SharedKey.of accepts any 1..255 bytes, and the URL decoder produces
-        // bytes rather than text precisely because a key is not required to be
-        // text. So a key that is not valid UTF-8 is reachable — `%FF%FE@…` is a
-        // URL upstream accepts — and it must come back byte for byte.
-        val notUtf8 = byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x00, 0x80.toByte())
-        val original = node(key(notUtf8))
-        assertEquals(original.sharedKey, roundTrip(original).sharedKey)
-    }
-
-    @Test
-    fun everySingleByteValueSurvivesAsAKey() {
-        // One byte at a time, all 256 of them: the cheapest way to find the
-        // ranges an encoder mangles.
-        (0..255).forEach { value ->
-            val original = node(key(byteArrayOf(value.toByte())))
-            val returned = roundTrip(original).sharedKey
-            assertEquals(
-                "a key of the single byte 0x%02X did not survive".format(value),
-                original.sharedKey,
-                returned,
-            )
-        }
-    }
-
-    @Test
-    fun randomKeysSurviveTheRoundTrip() {
+    fun randomServiceKeysSurviveTheRoundTrip() {
+        // v3 narrowed a key to 32 lowercase hex characters, which are all
+        // unreserved in a URL — so the encoder's job got easier, and this
+        // checks it did not get it wrong anyway.
         val random = Random(20260825)
         repeat(500) { attempt ->
-            val bytes = ByteArray(random.nextInt(1, 64)) { random.nextInt(0, 256).toByte() }
-            val original = node(key(bytes))
-            assertEquals(
-                "attempt $attempt with a ${bytes.size}-byte key",
-                original.sharedKey,
-                roundTrip(original).sharedKey,
-            )
+            val original = node(serviceKey(random))
+            assertEquals("attempt $attempt", original.sharedKey, roundTrip(original).sharedKey)
         }
+    }
+
+    @Test
+    fun aKeyOutsideServiceFormIsNeverEmitted() {
+        // A node can only be built with a key parse() accepted, but the type
+        // permits any 1-255 bytes. Should one be built by hand, the rendering
+        // must still be faithful, and parse must refuse it rather than accept
+        // something else — never a silent change of key.
+        val notService = node(key(byteArrayOf(0xFF.toByte(), 0x00, 0x80.toByte())))
+        val parsed = NowhereUrl.parse(notService.toUrl())
+        assertTrue(parsed is DecodeResult.Invalid)
     }
 
     @Test
@@ -102,59 +85,43 @@ class NowhereUrlRoundTripFuzzTest {
                 "emoji 🛰",
                 "a".repeat(120),
             )
-        val alpns = listOf(NowhereUrl.DEFAULT_ALPN, "h2", "now/1-test", "x".repeat(64))
-        val verifications =
-            listOf(
-                CertificateVerification.Skipped,
-                CertificateVerification.Sni("portal.example.net"),
-                CertificateVerification.Sni("xn--fsq.example"),
-                CertificateVerification.Pin("a".repeat(64)),
-            )
+        val hosts = listOf("a.example.net", "127.0.0.1", "xn--fsq.example", "h", "2001:db8::1")
 
         repeat(400) { attempt ->
+            val host = hosts.random(random)
+            val verifications =
+                listOf(
+                    CertificateVerification.Sni(host),
+                    CertificateVerification.Sni("portal.example.net"),
+                    CertificateVerification.Sni("xn--fsq.example"),
+                    CertificateVerification.Pin("a".repeat(64)),
+                )
             val original =
                 node(
-                    sharedKey = key(ByteArray(random.nextInt(1, 32)) { random.nextInt(0, 256).toByte() }),
-                    host = listOf("a.example.net", "127.0.0.1", "xn--fsq.example", "h").random(random),
+                    sharedKey = serviceKey(random),
+                    host = host,
                     port = random.nextInt(1, 65536),
-                    up = NextHopCarrier.entries.random(random),
-                    down = NextHopCarrier.entries.random(random),
-                    mux = random.nextBoolean(),
-                    alpn = alpns.random(random),
+                    net = NextHopCarrier.entries.random(random),
+                    morph = random.nextBoolean(),
                     verification = verifications.random(random),
                     rate = random.nextInt(0, 10_000),
                     etar = random.nextInt(0, 10_000),
                     displayName = names.random(random),
                 )
-            val returned = roundTrip(original)
-            assertEquals("attempt $attempt: shared key", original.sharedKey, returned.sharedKey)
-            assertEquals("attempt $attempt: host", original.host, returned.host)
-            assertEquals("attempt $attempt: port", original.port, returned.port)
-            assertEquals("attempt $attempt: up", original.up, returned.up)
-            assertEquals("attempt $attempt: down", original.down, returned.down)
-            assertEquals("attempt $attempt: mux", original.mux, returned.mux)
-            assertEquals("attempt $attempt: alpn", original.alpn, returned.alpn)
-            assertEquals(
-                "attempt $attempt: certificate verification",
-                original.certificateVerification,
-                returned.certificateVerification,
-            )
-            assertEquals("attempt $attempt: rate", original.rateMbps, returned.rateMbps)
-            assertEquals("attempt $attempt: etar", original.etarMbps, returned.etarMbps)
-            assertEquals("attempt $attempt: display name", original.displayName, returned.displayName)
+            assertEquals("attempt $attempt: ${original.toUrl()}", original, roundTrip(original))
         }
     }
 
     @Test
     fun aRenderedUrlIsAlwaysParseable() {
-        // Weaker than field equality and worth asserting separately: a renderer
-        // that emits something the parser rejects turns a stored node into a
-        // dropped one, which the store reports as "you have fewer nodes today".
+        // Weaker than equality and worth asserting separately: a renderer that
+        // emits something the parser rejects turns a stored node into a dropped
+        // one, which the store reports as "you have fewer nodes today".
         val random = Random(20260827)
         repeat(300) {
             val original =
                 node(
-                    sharedKey = key(ByteArray(random.nextInt(1, 255)) { random.nextInt(0, 256).toByte() }),
+                    sharedKey = serviceKey(random),
                     displayName = "n".repeat(random.nextInt(0, 40)).ifEmpty { null },
                 )
             assertTrue(NowhereUrl.parse(original.toUrl()) is DecodeResult.Ok)

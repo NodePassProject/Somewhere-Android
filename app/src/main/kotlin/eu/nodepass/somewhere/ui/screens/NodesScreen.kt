@@ -24,9 +24,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -47,6 +44,7 @@ import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.ProbeResult
 import eu.nodepass.somewhere.data.SubscriptionStore
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.subscription.SubscriptionUsage
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.IconSquare
@@ -62,10 +60,8 @@ import eu.nodepass.somewhere.ui.state.NodeEntry
 import eu.nodepass.somewhere.ui.state.NodeStatus
 import eu.nodepass.somewhere.ui.state.SubscriptionState
 import eu.nodepass.somewhere.ui.state.asMessage
-import eu.nodepass.somewhere.ui.state.switchedToTcp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
-import eu.nodepass.somewhere.ui.theme.direction
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -88,12 +84,6 @@ fun NodesScreen(
     val record by nodes.subscription.collectAsState()
     val refreshFailure by nodes.lastRefreshFailure.collectAsState()
     val refreshing by nodes.refreshing.collectAsState()
-
-    // Dismissals are deliberately not persisted. NW-P-25's "Keep as is" is the
-    // user saying "not now", not "never" — and a node that still cannot connect
-    // should say why again next time the list is opened rather than going quiet
-    // forever on the strength of one tap.
-    var dismissedNotices by remember { mutableStateOf(emptySet<String>()) }
 
     val entries =
         stored.map { entry ->
@@ -159,19 +149,12 @@ fun NodesScreen(
             // that could not be reached looked exactly like one that had
             // nothing to say.
             refreshFailure = refreshFailure?.asMessage(),
-            dismissedNotices = dismissedNotices,
             refreshing = refreshing,
             // The header already says how old the figures are. Making that the
             // control means the affordance sits on the thing it acts on, and
             // costs no new furniture on a screen the design drew without any.
             onRefresh = nodes::refreshInBackground,
             onEdit = onEdit,
-            // NW-P-25: the rewrite happens here, on the user's instruction, and
-            // nowhere else. The requirement is not that the app avoid changing
-            // the configuration — it is that the app never changes it without
-            // being told to.
-            onSwitchToTcp = { entry -> nodes.replace(entry.url, entry.url.switchedToTcp()) },
-            onKeepAsIs = { entry -> dismissedNotices = dismissedNotices + entry.url.toUrl() },
         )
     }
 }
@@ -186,12 +169,9 @@ internal fun NodeList(
     entries: List<NodeEntry>,
     subscription: SubscriptionState? = null,
     refreshFailure: String? = null,
-    dismissedNotices: Set<String> = emptySet(),
     refreshing: Boolean = false,
     onRefresh: () -> Unit = {},
     onEdit: (NodeEntry) -> Unit = {},
-    onSwitchToTcp: (NodeEntry) -> Unit = {},
-    onKeepAsIs: (NodeEntry) -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -214,9 +194,6 @@ internal fun NodeList(
             NodeCard(
                 node = node,
                 onClick = { onEdit(node) },
-                onSwitchToTcp = { onSwitchToTcp(node) },
-                onKeepAsIs = { onKeepAsIs(node) },
-                dismissed = node.url.toUrl() in dismissedNotices,
             )
         }
     }
@@ -445,9 +422,6 @@ private fun quotaText(usage: SubscriptionUsage): AnnotatedString {
 private fun NodeCard(
     node: NodeEntry,
     onClick: () -> Unit,
-    onSwitchToTcp: () -> Unit = {},
-    onKeepAsIs: () -> Unit = {},
-    dismissed: Boolean = false,
 ) {
     val colors = SomewhereTheme.colors
 
@@ -529,20 +503,15 @@ private fun NodeCard(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            CarrierChip(directionChip("UP", node.url.up), node.url.up.token == "tcp")
-            CarrierChip(directionChip("DOWN", node.url.down), node.url.down.token == "tcp")
-            if (node.url.mux) {
-                MonoChip("MUX", colors.muted, colors.surfaceAlt)
+            // One carrier for both directions, so one neutral chip: the
+            // direction hues belong to the two channels on the home screen, and
+            // a chip that was neither would borrow one of them.
+            MonoChip(carrierLabel(node.url.net), colors.muted, colors.surfaceAlt)
+            if (node.url.morph) {
+                MonoChip("MORPH", colors.muted, colors.surfaceAlt)
             }
-            if (!node.url.certificateVerification.isVerified) {
-                MonoChip(
-                    text = stringResource(R.string.chip_unverified).uppercase(),
-                    foreground = colors.critical,
-                    background = colors.criticalTint,
-                    leading = {
-                        Icon(SomewhereIcons.AlertTriangle, null, Modifier.size(10.dp), tint = colors.critical)
-                    },
-                )
+            if (node.url.certificateVerification is CertificateVerification.Pin) {
+                MonoChip("PIN", colors.muted, colors.surfaceAlt)
             }
         }
 
@@ -557,93 +526,6 @@ private fun NodeCard(
                 lineHeight = 16.sp,
                 color = colors.critical,
             )
-        }
-
-        if (node.url.needsQuicNotice && !dismissed) {
-            NeedsQuicNotice(
-                onSwitchToTcp = onSwitchToTcp,
-                onKeepAsIs = onKeepAsIs,
-            )
-        }
-    }
-}
-
-/** Upstream is teal, downstream is amber — everywhere, including in a chip. */
-@Composable
-private fun CarrierChip(
-    text: String,
-    upstreamHue: Boolean,
-) {
-    val colors = SomewhereTheme.colors
-    MonoChip(
-        text = text,
-        foreground = colors.direction(upstreamHue).figure,
-        background = colors.direction(upstreamHue).tint,
-    )
-}
-
-/**
- * NW-P-25, drawn.
- *
- * Upstream defaults both directions to `udp`, so a pasted default configuration
- * lands here. Two buttons, never one: rewriting the user's configuration on
- * their behalf is exactly what the requirement forbids.
- */
-@Composable
-private fun NeedsQuicNotice(
-    onSwitchToTcp: () -> Unit,
-    onKeepAsIs: () -> Unit,
-) {
-    val colors = SomewhereTheme.colors
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.warnTint)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-    ) {
-        Icon(
-            SomewhereIcons.AlertCircle,
-            null,
-            Modifier
-                .padding(top = 1.dp)
-                .size(14.dp),
-            tint = colors.warn,
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(
-                text = stringResource(R.string.node_needs_quic),
-                fontFamily = SomewhereType.Body,
-                fontSize = 12.sp,
-                lineHeight = 16.8.sp,
-                color = colors.warn,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SmallButton(
-                    label = stringResource(R.string.node_switch_to_tcp),
-                    onClick = onSwitchToTcp,
-                    fill = colors.warnAction,
-                    contentColor = colors.onWarnAction,
-                )
-                Box(
-                    Modifier
-                        .height(30.dp)
-                        .clickable(onClick = onKeepAsIs)
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.node_keep_as_is),
-                        style = SomewhereType.bodySmall,
-                        color = colors.muted,
-                    )
-                }
-            }
         }
     }
 }

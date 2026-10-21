@@ -4,9 +4,12 @@
 package eu.nodepass.somewhere.protocol.tls
 
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.Nw3
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
+import eu.nodepass.somewhere.protocol.morph.MorphKeys
+import eu.nodepass.somewhere.protocol.morph.MorphSocket
 import org.conscrypt.Conscrypt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -32,10 +35,10 @@ import javax.net.ssl.X509TrustManager
  * Nothing short of a real Portal accepting a real AuthFrame proves that, so this
  * test does exactly that:
  *
- * 1. Real TLS 1.3 handshake to a real Portal, through Conscrypt.
+ * 1. Real TLS 1.3 handshake to a real Portal, through Conscrypt, over Morph.
  * 2. Export with Nowhere's label and an empty-but-present context.
  * 3. Build the AuthFrame from those bytes and send it.
- * 4. Send a FlowHeader, and see whether the Portal keeps the connection.
+ * 4. Send a FlowStart and Target, and see whether the Portal answers.
  *
  * A Portal that rejects authentication closes without a response frame — there
  * is deliberately no error to read (that would be an oracle for active probing),
@@ -48,7 +51,7 @@ import javax.net.ssl.X509TrustManager
  */
 class ExporterAgainstPortalTest {
     private val portal: String? = System.getenv("NOWHERE_E2E_PORTAL")
-    private val sharedKeyText: String = System.getenv("NOWHERE_E2E_KEY") ?: "conformance-smoke-key"
+    private val sharedKeyText: String = System.getenv("NOWHERE_E2E_KEY") ?: "0123456789abcdef0123456789abcdef"
 
     private fun requirePortal(): Pair<String, Int> {
         assumeTrue(
@@ -64,8 +67,7 @@ class ExporterAgainstPortalTest {
      *
      * Correct for this test and nowhere else: the Portal under test presents a
      * self-signed certificate, and what is being verified is the exporter, not
-     * the chain. It also mirrors what upstream does when a node carries neither
-     * `sni` nor `pin` — see D-11.
+     * the chain. The dialer's own tests verify the chain.
      */
     private object TrustEverything : X509TrustManager {
         override fun checkClientTrusted(
@@ -91,12 +93,13 @@ class ExporterAgainstPortalTest {
 
         val raw = Socket()
         raw.connect(InetSocketAddress(host, port), 5_000)
-        val socket = context.socketFactory.createSocket(raw, host, port, true) as SSLSocket
+        // Engine mode, as the dialer uses: the other layered mode reads the
+        // raw descriptor and would bypass the Morph mask.
+        Conscrypt.setUseEngineSocket(context.socketFactory, true)
+        val masked = MorphSocket.over(raw, MorphKeys.derive((SharedKey.of(sharedKeyText) as DecodeResult.Ok).value))
+        val socket = context.socketFactory.createSocket(masked, host, port, true) as SSLSocket
         socket.soTimeout = 5_000
-        // Portal rejects any ALPN but now/1 — a mismatch ends the handshake with
-        // "no application protocol", which is a useful connectivity check in its
-        // own right.
-        Conscrypt.setApplicationProtocols(socket, arrayOf("now/1"))
+        Conscrypt.setApplicationProtocols(socket, arrayOf(Nw3.ALPN))
         socket.startHandshake()
         return socket
     }
@@ -108,7 +111,7 @@ class ExporterAgainstPortalTest {
         val sharedKey = (SharedKey.of(sharedKeyText) as DecodeResult.Ok).value
 
         conscryptSocket(host, port).use { socket ->
-            assertEquals("now/1", Conscrypt.getApplicationProtocol(socket))
+            assertEquals(Nw3.ALPN, Conscrypt.getApplicationProtocol(socket))
 
             val material =
                 exporter.export(socket, Authentication.EXPORTER_LABEL, ByteArray(0), Authentication.EXPORTER_LENGTH)
@@ -118,15 +121,12 @@ class ExporterAgainstPortalTest {
             assertTrue("an all-zero exporter would mean the call silently did nothing", bytes.any { it != 0.toByte() })
 
             // Build and send a real AuthFrame from those bytes.
-            val sessionId = ByteArray(16).also { SecureRandom().nextBytes(it) }
-            val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, bytes, sessionId)
-            assertEquals(32, frame.size)
+            val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, bytes)
+            assertEquals(16, frame.size)
 
             socket.outputStream.write(frame)
-            // A FlowHeader must follow within the Portal's bootstrap deadline
-            // (NW-P-11), so send one immediately: DUPLEX, TCP, both directions
-            // on TLS, hops 0, flow 1.
-            socket.outputStream.write(byteArrayOf(0x00, 0x00, 0x00, 0x00, 0x01))
+            // TLS requires a flow with the AuthFrame: FlowStart, TCP.
+            socket.outputStream.write(byteArrayOf(0x00))
             // Target: 127.0.0.1:9 (discard). Port 9 is closed, which is fine —
             // what is being tested is that authentication passed, and a Portal
             // that rejected the tag would never send a setup byte at all.
@@ -142,7 +142,7 @@ class ExporterAgainstPortalTest {
                 eu.nodepass.somewhere.protocol.frame.SetupResult
                     .decode(setup)
             assertTrue(
-                "Portal answered with a byte outside 0..7 (${setup.toInt() and 0xFF}), " +
+                "Portal answered with a byte outside 0..4 (${setup.toInt() and 0xFF}), " +
                     "which means the stream was not what we think it is",
                 result is DecodeResult.Ok,
             )

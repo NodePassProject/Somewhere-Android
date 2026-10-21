@@ -7,12 +7,14 @@ import eu.nodepass.somewhere.dns.DnsMessage
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
-import eu.nodepass.somewhere.protocol.frame.FlowHeader
+import eu.nodepass.somewhere.protocol.frame.FlowStart
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
-import eu.nodepass.somewhere.protocol.mux.MuxHeader
+import eu.nodepass.somewhere.protocol.morph.MorphDatagram
+import eu.nodepass.somewhere.protocol.morph.MorphKeys
 import eu.nodepass.somewhere.protocol.quic.DatagramFrame
 import eu.nodepass.somewhere.protocol.quic.DatagramReassembler
+import eu.nodepass.somewhere.protocol.quic.QuicDatagram
 import eu.nodepass.somewhere.protocol.target.Target
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import org.junit.Assert.assertTrue
@@ -45,16 +47,19 @@ class DecoderFuzzTest {
         val LENGTHS = listOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 14, 16, 31, 32, 33, 64, 255, 256, 1024)
     }
 
+    private val morphKeys = MorphKeys.derive("0123456789abcdef0123456789abcdef".encodeToByteArray())
+
     /** Every decoder under test, as a name and a call that must not throw. */
     private val decoders: List<Pair<String, (ByteArray) -> Any?>> =
         listOf(
-            "FlowHeader" to { bytes -> FlowHeader.decode(bytes) },
+            "FlowStart" to { bytes -> FlowStart.decode(bytes) },
             "Target" to { bytes -> Target.decode(bytes) },
             "SetupResult" to { bytes -> SetupResult.decode(bytes) },
             "UdpOverTcp.next" to { bytes -> UdpOverTcp.next(bytes) },
             "UdpOverTcp.decodeAll" to { bytes -> UdpOverTcp.decodeAll(bytes) },
-            "MuxHeader" to { bytes -> MuxHeader.decode(bytes) },
             "DatagramFrame" to { bytes -> DatagramFrame.decode(bytes) },
+            "QuicDatagram" to { bytes -> QuicDatagram.decode(bytes) },
+            "MorphDatagram.open" to { bytes -> MorphDatagram.forClient(morphKeys).open(bytes) ?: Unit },
             "UoT.encode" to { bytes -> UdpOverTcp.encode(bytes) },
             "SharedKey" to { bytes -> SharedKey.of(bytes) },
             "DnsMessage.parseQuestion" to { bytes -> DnsMessage.parseQuestion(bytes) },
@@ -109,8 +114,7 @@ class DecoderFuzzTest {
             listOf(
                 "Target domain" to byteArrayOf(0x03, 0xff.toByte(), 0x61),
                 "UoT" to byteArrayOf(0xff.toByte(), 0xff.toByte(), 0x61),
-                "Mux STREAM" to byteArrayOf(0x01, 0x00, 0xff.toByte(), 0xff.toByte(), 0, 0, 0, 1),
-                "Datagram FRAGMENT" to byteArrayOf(0x01, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0xff.toByte(), 0xff.toByte()),
+                "Datagram FRAGMENT" to byteArrayOf(0x40, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0xff.toByte(), 0xff.toByte()),
             )
         hostile.forEach { (name, bytes) ->
             val before = Runtime.getRuntime().let { it.totalMemory() - it.freeMemory() }
@@ -141,7 +145,7 @@ class DecoderFuzzTest {
 
     @Test
     fun theUrlParserSurvivesTruncationOfAValidUrl() {
-        val valid = "nowhere://a%2Bb@example.com:443?up=tcp&down=tcp&pin=${"ab".repeat(32)}#Node"
+        val valid = "nowhere://0123456789abcdef0123456789abcdef@example.com:443?net=udp&morph=0&pin=${"ab".repeat(32)}#Node"
         for (length in 0..valid.length) {
             val prefix = valid.take(length)
             try {

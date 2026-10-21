@@ -36,10 +36,26 @@ sealed interface DatagramReason : DecodeReason {
         override val detail: String = "frame type 3 is not a valid datagram type"
     }
 
-    data class ReservedBitsSet(
-        val firstByte: Int,
+    data class FlowIdOutOfRange(
+        val flowId: UInt,
     ) : DatagramReason {
-        override val detail: String = "first byte 0x%02x sets reserved bits".format(firstByte)
+        override val detail: String = "flow_id $flowId does not fit the 30 bits the base word gives it"
+    }
+
+    data object ClosePayload : DatagramReason {
+        override val detail: String = "a CLOSE datagram is exactly its four-byte base word"
+    }
+
+    data object FragmentPayloadLength : DatagramReason {
+        override val detail: String =
+            "a fragment carries at least one byte and leaves at least one for every other fragment"
+    }
+
+    data class TotalLengthTooSmall(
+        val totalLength: Int,
+        val count: Int,
+    ) : DatagramReason {
+        override val detail: String = "total_len $totalLength is smaller than the fragment count $count"
     }
 
     data object FlowIdZero : DatagramReason {
@@ -99,16 +115,20 @@ sealed interface DatagramReason : DecodeReason {
  * UDP carried inside QUIC DATAGRAM frames. NW-P-20, NW-P-21.
  *
  * ```
- * DATA      type(u8) || flow_id(u32) || payload        5-byte header
- * CLOSE     type(u8) || flow_id(u32)                   5-byte header
- * FRAGMENT  type(u8) || flow_id(u32) || packet_id(u32)
- *           || index(u8) || count(u8) || total_len(u16) 13-byte header
+ * base word  type(bits 31..30) || flow_id(bits 29..0)      4 bytes, big-endian
+ *
+ * DATA       base || payload                                4-byte header
+ * CLOSE      base                                           exactly 4 bytes
+ * FRAGMENT   base || packet_id(u32) || index(u8)
+ *            || count(u8) || total_len(u16)                 12-byte header
  * ```
  *
- * The frame type is the **low two bits** of the first byte. Every remaining bit
- * is reserved and must be zero — masking them away instead of rejecting would
- * accept frames a future version may define differently, and silently
- * misinterpret them.
+ * `docs/protocol.md` § QUIC datagrams. The type is the **top two bits** of one
+ * network-order word and the flow id is the rest, so there are no reserved bits
+ * left to check: every one of the 32 means something. v1 spent a whole byte on
+ * the type and four on the id, and kept six reserved bits; v3 gave the id 30
+ * bits, which is exactly what a stream-derived id needs
+ * ([QuicFlowId.MAX]).
  */
 sealed interface DatagramFrame {
     val flowId: UInt
@@ -176,39 +196,43 @@ sealed interface DatagramFrame {
         }
 
     companion object {
-        const val HEADER_LENGTH: Int = 5
-        const val FRAGMENT_HEADER_LENGTH: Int = 13
+        const val HEADER_LENGTH: Int = 4
+        const val FRAGMENT_HEADER_LENGTH: Int = 12
         const val PACKET_MAX: Int = 0xFFFF
         const val FRAGMENT_COUNT_MIN: Int = 2
         const val FRAGMENT_COUNT_MAX: Int = 255
 
-        private const val TYPE_MASK = 0b0000_0011
-        private const val RESERVED_MASK = 0b1111_1100
+        private const val TYPE_SHIFT = 30
 
+        /**
+         * The base word. A flow id above 30 bits would spill into the type and
+         * turn a DATA into a FRAGMENT, so it is refused rather than masked.
+         */
         private fun header(
             type: DatagramType,
             flowId: UInt,
-        ): ByteArray =
-            byteArrayOf(
-                type.value.toByte(),
-                (flowId shr 24).toByte(),
-                (flowId shr 16).toByte(),
-                (flowId shr 8).toByte(),
-                flowId.toByte(),
+        ): ByteArray {
+            require(flowId in 1u..QuicFlowId.MAX) { "flow id $flowId is outside 1..${QuicFlowId.MAX}" }
+            val word = (type.value.toUInt() shl TYPE_SHIFT) or flowId
+            return byteArrayOf(
+                (word shr 24).toByte(),
+                (word shr 16).toByte(),
+                (word shr 8).toByte(),
+                word.toByte(),
             )
+        }
 
         fun decode(input: ByteArray): DecodeResult<DatagramFrame> {
             if (input.size < HEADER_LENGTH) {
                 return invalid(DatagramReason.Truncated(input.size, HEADER_LENGTH))
             }
 
-            val first = input[0].toInt() and 0xFF
-            if (first and RESERVED_MASK != 0) return invalid(DatagramReason.ReservedBitsSet(first))
+            val word = readUInt(input, 0)
+            val type =
+                DatagramType.fromBits((word shr TYPE_SHIFT).toInt())
+                    ?: return invalid(DatagramReason.InvalidType)
 
-            val bits = first and TYPE_MASK
-            val type = DatagramType.fromBits(bits) ?: return invalid(DatagramReason.InvalidType)
-
-            val flowId = readUInt(input, 1)
+            val flowId = word and QuicFlowId.MAX
             if (flowId == 0u) return invalid(DatagramReason.FlowIdZero)
 
             return when (type) {
@@ -220,7 +244,8 @@ sealed interface DatagramFrame {
                         Data(flowId, payload).ok()
                     }
                 }
-                DatagramType.Close -> Close(flowId).ok()
+                DatagramType.Close ->
+                    if (input.size != HEADER_LENGTH) invalid(DatagramReason.ClosePayload) else Close(flowId).ok()
                 DatagramType.Fragment -> decodeFragment(input, flowId)
             }
         }
@@ -232,17 +257,26 @@ sealed interface DatagramFrame {
             if (input.size < FRAGMENT_HEADER_LENGTH) {
                 return invalid(DatagramReason.Truncated(input.size, FRAGMENT_HEADER_LENGTH))
             }
-            val packetId = readUInt(input, 5)
+            val packetId = readUInt(input, 4)
             if (packetId == 0u) return invalid(DatagramReason.PacketIdZero)
 
-            val index = input[9].toInt() and 0xFF
-            val count = input[10].toInt() and 0xFF
-            val totalLength = ((input[11].toInt() and 0xFF) shl 8) or (input[12].toInt() and 0xFF)
+            val index = input[8].toInt() and 0xFF
+            val count = input[9].toInt() and 0xFF
+            val totalLength = ((input[10].toInt() and 0xFF) shl 8) or (input[11].toInt() and 0xFF)
 
             if (count !in FRAGMENT_COUNT_MIN..FRAGMENT_COUNT_MAX) {
                 return invalid(DatagramReason.FragmentCountOutOfRange(count))
             }
             if (index >= count) return invalid(DatagramReason.FragmentIndexOutOfRange(index, count))
+            if (totalLength < count) return invalid(DatagramReason.TotalLengthTooSmall(totalLength, count))
+
+            // "A fragment must leave at least one byte for every other fragment":
+            // a fragment that claims more than that cannot be part of a packet
+            // of the declared length, however the others turn out.
+            val payloadLength = input.size - FRAGMENT_HEADER_LENGTH
+            if (payloadLength == 0 || payloadLength + (count - 1) > totalLength) {
+                return invalid(DatagramReason.FragmentPayloadLength)
+            }
 
             return Fragment(
                 flowId = flowId,

@@ -62,31 +62,23 @@ class DesignRuleUiTest {
     private fun sectionLabel(id: Int) = string(id).uppercase()
 
     @Test
-    fun theCertificateMarkerIsOnTheHomeScreenAndCannotBeDismissed() {
-        // D-11 / NW-P-09. Every URL a current dashboard emits has neither `sni`
-        // nor `pin`, so this is the ordinary case rather than the exception. It
-        // is a banner and not a dialog because the condition lasts as long as
-        // the node does — there is nothing to dismiss.
+    fun theEditorStatesHowTheCertificateIsChecked() {
+        // v3 has no unverified mode, so the panel is a statement rather than a
+        // warning — and it names the host, untranslated, so it can be compared
+        // with the Portal's certificate.
         compose.setContent {
-            SomewhereTheme {
-                Home(SampleState.frankfurt, SampleState.session, {}, {})
-            }
+            SomewhereTheme { NodeEditor(SampleState.frankfurt.url, {}, {}) }
         }
-        compose.onNodeWithText(string(R.string.cert_unverified_short), substring = true).assertIsDisplayed()
+        compose.onNodeWithText(context.getString(R.string.cert_trusted_as, "fra04.example.net")).assertIsDisplayed()
     }
 
     @Test
-    fun theCertificateMarkerNamesTheTwoParametersWithoutTranslatingThem() {
-        // docs/i18n.md: the sentence translates, `sni` and `pin` do not. They
-        // are arguments rather than part of the string, so this holds in every
-        // locale the device might be in.
+    fun aPinnedNodeShowsItsFingerprint() {
         compose.setContent {
-            SomewhereTheme {
-                Home(SampleState.frankfurt, SampleState.session, {}, {})
-            }
+            SomewhereTheme { NodeEditor(SampleState.taipei.url, {}, {}) }
         }
-        compose.onNodeWithText("sni", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("pin", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.cert_pinned)).assertIsDisplayed()
+        compose.onNodeWithText("6a5c1f0b9e2d4a8c", substring = true).assertIsDisplayed()
     }
 
     @Test
@@ -105,8 +97,8 @@ class DesignRuleUiTest {
     }
 
     @Test
-    fun allSevenRejectionsRenderAsSevenDistinctIdentifiers() {
-        // NW-P-06. The one rule that a well-meaning simplification breaks: it is
+    fun everyRejectionRendersAsItsOwnIdentifier() {
+        // The one rule that a well-meaning simplification breaks: it is
         // always tempting to render "connection failed" once.
         val entries =
             SetupResult.entries.filter { it.isRejection }.mapIndexed { index, result ->
@@ -137,36 +129,13 @@ class DesignRuleUiTest {
     }
 
     @Test
-    fun aNodeThatCannotBeCarriedAsConfiguredOffersBothChoicesAndRewritesNothing() {
-        // NW-P-25. Two buttons is the requirement: rewriting the user's pasted
-        // configuration on their behalf is what it forbids. A single "Fix it"
-        // would satisfy a reasonable reading of "handle this gracefully" and
-        // violate the rule.
-        //
-        // The node this applies to changed when QUIC shipped. It used to be any
-        // `up=udp` node — the specification's own default — and that is now an
-        // ordinary node that connects. What remains uncarriable is a QUIC node
-        // asking for certificate verification, which the QUIC carrier does not
-        // implement and must not silently drop.
-        compose.setContent {
-            SomewhereTheme {
-                NodeList(entries = listOf(SampleState.taipei))
-            }
-        }
-        compose.onNodeWithText(string(R.string.node_needs_quic), substring = true).assertIsDisplayed()
-        compose.onNodeWithText(string(R.string.node_switch_to_tcp)).assertIsDisplayed()
-        compose.onNodeWithText(string(R.string.node_keep_as_is)).assertIsDisplayed()
-    }
-
-    @Test
-    fun theEditorExposesAlpnAsAFieldRatherThanBuryingIt() {
-        // NW-P-08: a fixed ALPN is a ready-made fingerprint on a restricted
-        // network, so it cannot be a constant compiled into the client.
+    fun theEditorOffersMorphAsASwitch() {
+        // Morph must match the Portal and cannot be detected, so it is a choice
+        // the user can see and make — not something inferred.
         compose.setContent {
             SomewhereTheme { NodeEditor(SampleState.frankfurt.url, {}, {}) }
         }
-        compose.onNodeWithText(string(R.string.label_alpn)).assertIsDisplayed()
-        compose.onNodeWithText(SampleState.frankfurt.url.alpn).assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.editor_morph)).assertIsDisplayed()
     }
 
     @Test

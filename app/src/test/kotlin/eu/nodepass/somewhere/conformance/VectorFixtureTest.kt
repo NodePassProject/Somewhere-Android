@@ -19,9 +19,9 @@ class VectorFixtureTest {
     }
 
     @Test
-    fun fixtureCarriesTheSevenKnownFamilies() {
+    fun fixtureCarriesTheEightKnownFamilies() {
         assertEquals(
-            listOf("auth", "flowHeader", "target", "setupResult", "uot", "quicDatagram", "tlsMux"),
+            listOf("auth", "flowStart", "target", "setupResult", "uot", "quicDatagram", "udpFlowId", "morph"),
             VectorFixture.families,
         )
     }
@@ -29,14 +29,13 @@ class VectorFixtureTest {
     @Test
     fun theAnchorVectorIsIntact() {
         // Confirmed three ways: the spec prose, an independent implementation, and
-        // upstream's own Rust fixtures. If this value ever changes, the change is
-        // either an upstream break or a corrupted fixture — never a local decision.
-        val case = VectorFixture.cases("auth").first { it.str("name").contains("\"secret\"") }
-        assertEquals("secret", case.str("sharedKeyUtf8"))
-        assertEquals(
-            "1076221669fa28bcf70aa8545bddd6f760dcefbe279c3f38a5ff5d925708f867",
-            case.str("expectedAuthKeyHex"),
-        )
+        // upstream's own fixtures. If this value ever changes, the change is either
+        // an upstream break or a corrupted fixture — never a local decision.
+        val family = VectorFixture.family("auth")
+        assertEquals("0123456789abcdef0123456789abcdef", family.str("sharedKeyUtf8"))
+        val vectorTls = VectorFixture.cases("auth").first { it.str("role") == "vector" && it.str("transport") == "tlsTcp" }
+        assertEquals("1b5bddc7018f44cece1942211f94e5302c86827fda2e29bb4676ab667e5c95fb", vectorTls.str("expectedRoleKeyHex"))
+        assertEquals("1a26d8eb72ead8a223b54fd1f04f8e32", vectorTls.str("expectedFrameHex"))
     }
 
     @Test
@@ -49,8 +48,8 @@ class VectorFixtureTest {
         baselineFile?.close()
 
         assertEquals("NodePassProject/Nowhere", VectorFixture.Baseline.repository)
-        assertEquals("v1.8.2", VectorFixture.Baseline.tag)
-        assertEquals("8807960c", VectorFixture.Baseline.commit)
+        assertEquals("v3.0.1", VectorFixture.Baseline.tag)
+        assertEquals("00000e0", VectorFixture.Baseline.commit)
     }
 
     @Test
@@ -67,8 +66,8 @@ class VectorFixtureTest {
         // vectors fails loudly instead of quietly reducing what is checked.
         val cases = VectorFixture.families.sumOf { VectorFixture.cases(it).size }
         val rejects = VectorFixture.families.sumOf { VectorFixture.rejects(it).size }
-        assertEquals("positive cases", 25, cases)
-        assertEquals("rejection cases", 34, rejects)
+        assertEquals("positive cases", 34, cases)
+        assertEquals("rejection cases", 29, rejects)
     }
 
     @Test

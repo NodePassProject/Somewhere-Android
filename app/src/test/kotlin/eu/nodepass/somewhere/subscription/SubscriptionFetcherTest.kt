@@ -51,8 +51,8 @@ class SubscriptionFetcherTest {
 
     private val twoNodes =
         """
-        nowhere://secret@fra04.example.net:443?up=tcp&down=tcp&mux=1#Frankfurt
-        nowhere://secret@sin11.example.net:443?up=tcp&down=tcp#Singapore
+        nowhere://0123456789abcdef0123456789abcdef@fra04.example.net:443#Frankfurt
+        nowhere://0123456789abcdef0123456789abcdef@sin11.example.net:443#Singapore
         """.trimIndent()
 
     @Test
@@ -76,7 +76,7 @@ class SubscriptionFetcherTest {
         assertTrue("token must survive", request.contains("token=s3cr3t"))
         assertTrue("type must be sent", request.contains("type=somewhere"))
         assertTrue("version must be sent", request.contains("ver=0.1.0"))
-        assertTrue("capabilities must be sent", request.contains("caps=mux"))
+        assertTrue("capabilities must be sent", request.contains("caps=nw3%2Cquic"))
     }
 
     @Test
@@ -144,10 +144,10 @@ class SubscriptionFetcherTest {
         val url =
             serve(
                 """
-                nowhere://secret@a.example:443?up=tcp&down=tcp#Good
+                nowhere://0123456789abcdef0123456789abcdef@a.example:443#Good
                 this is not a url at all
                 vector://secret@b.example:443
-                nowhere://secret@c.example:443?up=tcp&down=tcp#Also%20good
+                nowhere://0123456789abcdef0123456789abcdef@c.example:443#Also%20good
                 """.trimIndent(),
             )
         val subscription = (fetcher().fetch(url) as DecodeResult.Ok).value
@@ -167,8 +167,8 @@ class SubscriptionFetcherTest {
         val url =
             serve(
                 """
-                nowhere://secret@a.example:443?up=tcp&down=tcp#Fine
-                nowhere://secret@b.example:443?up=tcp&down=tcp#Two Words
+                nowhere://0123456789abcdef0123456789abcdef@a.example:443#Fine
+                nowhere://0123456789abcdef0123456789abcdef@b.example:443#Two Words
                 """.trimIndent(),
             )
         val subscription = (fetcher().fetch(url) as DecodeResult.Ok).value

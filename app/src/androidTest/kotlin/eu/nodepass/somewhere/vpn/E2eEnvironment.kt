@@ -6,6 +6,10 @@ package eu.nodepass.somewhere.vpn
 import android.content.Context
 import android.net.VpnService
 import androidx.test.platform.app.InstrumentationRegistry
+import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.quic.QuicConnection
+import eu.nodepass.somewhere.quic.QuicDial
 import org.junit.Assume.assumeTrue
 
 /**
@@ -25,25 +29,24 @@ object E2eEnvironment {
     /** `host:port` of the Portal, as reachable *from the device*. */
     val portal: String? get() = argument("nowhereE2ePortal")
 
-    val sharedKey: String get() = argument("nowhereE2eKey") ?: "conformance-smoke-key"
+    /** In v3 service form; the scripts pass the key their Portal was started with. */
+    val sharedKey: String get() = argument("nowhereE2eKey") ?: "0123456789abcdef0123456789abcdef"
 
     /**
-     * Whether the tunnel should multiplex.
+     * The Portal's certificate fingerprint, as the Portal itself logged it.
      *
-     * The A-phase device cases run under both settings, which is rule 2 of the
-     * run stated as a test: turning Mux on must not have changed what happens
-     * when it is off. Absent means off, matching the protocol's own default.
+     * v3 has no unverified mode and the test Portal runs on a generated
+     * certificate, so every node in this suite is pinned — to a value neither
+     * the device nor the test produced.
      */
-    val mux: Boolean get() = argument("nowhereE2eMux") == "1"
+    val pin: String? get() = argument("nowhereE2ePin")
+
+    /** Whether the Portal masks with Morph. Absent means on, the protocol's default. */
+    val morph: Boolean get() = argument("nowhereE2eMorph") != "0"
 
     /**
-     * Which carrier the tunnel should use.
-     *
-     * Absent means `tcp`, which is **not** the protocol's own default — that is
-     * `udp` — but is what every case in this suite was written against. Stating
-     * it explicitly here rather than relying on the default keeps a run's
-     * carrier a decision of the run rather than of the parser, which matters
-     * now that both carriers work and a bare URL selects the other one.
+     * Which carrier the tunnel should use. Absent means `tcp`, which is also
+     * the v3 default for a share link.
      */
     val carrier: String get() = argument("nowhereE2eCarrier") ?: "tcp"
 
@@ -61,6 +64,29 @@ object E2eEnvironment {
      * remote resolution is, and it is not provable with an address.
      */
     val origin: String? get() = argument("nowhereE2eOrigin")
+
+    /** The node a case dials: this run's Portal, carrier and mask, pinned. */
+    fun node(
+        portal: String = requirePortal(),
+        net: String = carrier,
+        key: String = sharedKey,
+    ): NowhereUrl {
+        val pinned = pin ?: throw AssertionError("a Portal is configured without its fingerprint; pass -PnowhereE2ePin")
+        val url = "nowhere://$key@$portal?net=$net&pin=$pinned&morph=${if (morph) 1 else 0}"
+        return when (val parsed = NowhereUrl.parse(url)) {
+            is DecodeResult.Ok -> parsed.value
+            is DecodeResult.Invalid -> throw AssertionError(parsed.reason.detail)
+        }
+    }
+
+    /**
+     * A QUIC connection to [node]'s Portal, opened exactly as the tunnel opens
+     * one. Handshake not yet completed.
+     */
+    fun openQuic(
+        node: NowhereUrl = node(net = "udp"),
+        protect: (java.net.DatagramSocket) -> Boolean = { true },
+    ): QuicConnection = QuicDial.open(node, protect = protect)
 
     fun requirePortal(): String {
         val value = portal

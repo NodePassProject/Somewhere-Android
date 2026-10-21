@@ -112,20 +112,17 @@ class StringResourceTest {
     }
 
     @Test
-    fun theSevenRejectionsAllHaveAnExplanation() {
-        // NW-P-06: seven distinct rejections, seven distinct messages. Nothing
-        // else notices if one silently goes missing.
+    fun theFourRejectionsAllHaveAnExplanation() {
+        // Four distinct rejections, four distinct messages. Nothing else
+        // notices if one silently goes missing.
         val expected =
             listOf(
                 "setup_invalid_request",
-                "setup_metadata_conflict",
-                "setup_pair_timeout",
                 "setup_flow_limit",
                 "setup_dial_failed",
-                "setup_session_replaced",
                 "setup_internal_error",
             )
-        assertEquals("there are exactly seven rejection reasons", 7, expected.size)
+        assertEquals("there are exactly four rejection reasons", 4, expected.size)
         LOCALES.forEach { locale ->
             val present = strings(locale)
             expected.forEach { key ->
@@ -133,8 +130,8 @@ class StringResourceTest {
                 assertTrue("$locale/$key is empty", present.getValue(key).isNotBlank())
             }
             assertEquals(
-                "$locale: the seven explanations must all differ from one another",
-                7,
+                "$locale: the four explanations must all differ from one another",
+                4,
                 expected.map { present.getValue(it) }.toSet().size,
             )
         }
@@ -151,8 +148,7 @@ class StringResourceTest {
                 "dial_unreachable",
                 "dial_handshake_failed",
                 "dial_alpn_rejected",
-                "dial_pin_mismatch",
-                "dial_no_certificate",
+                "tunnel_certificate_refused",
                 "dial_unknown",
                 "subscription_unreachable",
                 "subscription_http_status",
@@ -231,12 +227,12 @@ class StringResourceTest {
 
     @Test
     fun protocolConstantsAreMarkedUntranslatable() {
-        // alpn_default and the scheme are wire values. A translator offered them
-        // has been set up to fail.
+        // The scheme and the baseline name are wire values. A translator offered
+        // them has been set up to fail.
         val file = File(resourceDir("values"), "strings.xml")
         val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file)
         val nodes = document.getElementsByTagName("string")
-        val required = mutableSetOf("alpn_default", "scheme_client")
+        val required = mutableSetOf("scheme_client", "protocol_baseline")
         for (index in 0 until nodes.length) {
             val node = nodes.item(index)
             val name = node.attributes.getNamedItem("name")?.nodeValue ?: continue

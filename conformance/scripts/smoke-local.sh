@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # side-by-side checkout next to the client repository.
 NOWHERE_CLONE="${NOWHERE_CLONE:-$ROOT/../../Nowhere}"
 BIN="${1:-${NOWHERE_BIN:-$NOWHERE_CLONE/target/release/nowhere}}"
-KEY="conformance-smoke-key"
+KEY="0123456789abcdef0123456789abcdef"
 PORTAL_PORT=22077
 SOCKS_PORT=21080
 TARGET_PORT=28000
@@ -57,37 +57,38 @@ printf 'nowhere-conformance-ok' > "$RUNDIR/probe.txt"
 PIDS+=($!)
 wait_for_port "$TARGET_PORT" "target service"
 
-# 2) Portal. tls=1 generates an in-memory self-signed certificate; the default
-#    net=mix accepts TLS/TCP and QUIC on the same port.
-"$BIN" "portal://${KEY}@127.0.0.1:${PORTAL_PORT}?log=info" \
+# 2) Portal. tls=1 generates a certificate at startup and logs its SHA-256;
+#    HOST:PORT is TLS and QUIC on the same port, and Morph is on by default.
+"$BIN" "portal://${KEY}@127.0.0.1:${PORTAL_PORT}" \
     > "$RUNDIR/portal.log" 2>&1 &
 PIDS+=($!)
 wait_for_port "$PORTAL_PORT" "Portal"
+PIN="$(sed -n 's/.*tls certificate fingerprint: \([0-9a-f]\{64\}\).*/\1/p' "$RUNDIR/portal.log" | head -1)"
+[ -n "$PIN" ] || fail "the Portal did not log its certificate fingerprint"
 
-# 3) Vector: TLS/TCP in both directions (the L1 target shape), local SOCKS5 entry.
-#    Deliberately no sni/pin, matching what NowhereDash currently generates —
-#    the configuration for which upstream skips certificate verification
-#    entirely. See decision D-11.
-"$BIN" "vector://${KEY}@127.0.0.1:${PORTAL_PORT}?up=tcp&down=tcp&socks=127.0.0.1:${SOCKS_PORT}&log=info" \
+# 3) Vectors: TLS and QUIC, local SOCKS5 entries. v3 has no unverified mode, so
+#    each pins the certificate the Portal itself reported.
+"$BIN" "vector://${KEY}@127.0.0.1:${PORTAL_PORT}?in=127.0.0.1:${SOCKS_PORT}&pin=${PIN}" \
     > "$RUNDIR/vector.log" 2>&1 &
 PIDS+=($!)
-wait_for_port "$SOCKS_PORT" "Vector SOCKS5 listener"
+wait_for_port "$SOCKS_PORT" "Vector SOCKS5 listener (TLS)"
+QUIC_SOCKS_PORT=$((SOCKS_PORT + 1))
+"$BIN" "vector://${KEY}@127.0.0.1/udp:${PORTAL_PORT}?in=127.0.0.1:${QUIC_SOCKS_PORT}&pin=${PIN}" \
+    > "$RUNDIR/vector-quic.log" 2>&1 &
+PIDS+=($!)
+wait_for_port "$QUIC_SOCKS_PORT" "Vector SOCKS5 listener (QUIC)"
 
 # 4) Fetch the payload through the tunnel. socks5h also proxies name resolution,
 #    which is closer to real client behaviour.
-BODY="$(curl -sS --max-time 15 --proxy "socks5h://127.0.0.1:${SOCKS_PORT}" \
-        "http://127.0.0.1:${TARGET_PORT}/probe.txt" || true)"
-
-if [ "$BODY" = "nowhere-conformance-ok" ]; then
-    echo "PASS: SOCKS5 -> Vector -> Nowhere(tcp/tcp) -> Portal -> target"
-else
-    echo "--- portal.log ---"; tail -20 "$RUNDIR/portal.log" || true
-    echo "--- vector.log ---"; tail -20 "$RUNDIR/vector.log" || true
-    fail "unexpected payload: '${BODY}'"
-fi
-
-# 5) Confirm the Portal side recorded the connection; EVENT-level logs are the
-#    reference stream for comparing client behaviour against.
-grep -qiE "flow|connect|ready|accept" "$RUNDIR/portal.log" \
-    && echo "PASS: Portal recorded the connection" \
-    || echo "NOTE: no matching connection record in the Portal log (log level may be too low; does not affect the result)"
+for carrier in "TLS:$SOCKS_PORT" "QUIC:$QUIC_SOCKS_PORT"; do
+    name="${carrier%%:*}"; port="${carrier##*:}"
+    BODY="$(curl -sS --max-time 15 --proxy "socks5h://127.0.0.1:${port}" \
+            "http://127.0.0.1:${TARGET_PORT}/probe.txt" || true)"
+    if [ "$BODY" = "nowhere-conformance-ok" ]; then
+        echo "PASS: SOCKS5 -> Vector -> Nowhere v3 ($name, morph) -> Portal -> target"
+    else
+        echo "--- portal.log ---"; tail -20 "$RUNDIR/portal.log" || true
+        echo "--- vector logs ---"; tail -20 "$RUNDIR"/vector*.log || true
+        fail "unexpected payload over $name: '${BODY}'"
+    fi
+done

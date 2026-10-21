@@ -14,7 +14,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.net.InetSocketAddress
 import kotlin.time.Duration.Companion.nanoseconds
 
 /**
@@ -104,13 +103,9 @@ class QuicKeepAliveTest {
 
     private fun withConnection(body: (QuicConnection) -> Unit) {
         val portal = E2eEnvironment.requirePortal()
-        QuicConnection
-            .open(
-                remote = InetSocketAddress(portal.substringBeforeLast(':'), portal.substringAfterLast(':').toInt()),
-                alpn = "now/1",
-                serverName = null,
-                protect = { true },
-            ).use { connection ->
+        E2eEnvironment
+            .openQuic(E2eEnvironment.node(portal, net = "udp"))
+            .use { connection ->
                 connection.completeHandshake()
                 body(connection)
             }

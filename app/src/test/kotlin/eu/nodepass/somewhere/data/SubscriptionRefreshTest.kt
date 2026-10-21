@@ -66,8 +66,8 @@ class SubscriptionRefreshTest {
             clock = { 1_756_000_000_000 },
         )
 
-    private val frankfurt = "nowhere://k@fra04.example.net:443?up=tcp&down=tcp&mux=1#Frankfurt"
-    private val singapore = "nowhere://k@sgp11.example.net:443?up=tcp&down=tcp#Singapore"
+    private val frankfurt = "nowhere://0123456789abcdef0123456789abcdef@fra04.example.net:443#Frankfurt"
+    private val singapore = "nowhere://0123456789abcdef0123456789abcdef@sgp11.example.net:443#Singapore"
 
     @Test
     fun subscribingStoresTheNodesAndTheFigures() =

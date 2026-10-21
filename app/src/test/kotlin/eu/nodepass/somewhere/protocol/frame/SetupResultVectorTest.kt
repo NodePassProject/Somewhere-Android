@@ -20,7 +20,7 @@ class SetupResultVectorTest {
 
     @Test
     fun everyPositiveVectorDecodesToItsNamedResult() {
-        assertEquals("fixture should carry 8 setupResult cases", 8, cases.size)
+        assertEquals("fixture should carry 5 setupResult cases", 5, cases.size)
         cases.forEach { case ->
             val decoded = SetupResult.decode(case.int("byte").toByte())
             val result = (decoded as DecodeResult.Ok).value
@@ -36,12 +36,9 @@ class SetupResultVectorTest {
             mapOf(
                 0 to SetupResult.Ready,
                 1 to SetupResult.InvalidRequest,
-                2 to SetupResult.MetadataConflict,
-                3 to SetupResult.PairTimeout,
-                4 to SetupResult.FlowLimit,
-                5 to SetupResult.DialFailed,
-                6 to SetupResult.SessionReplaced,
-                7 to SetupResult.InternalError,
+                2 to SetupResult.FlowLimit,
+                3 to SetupResult.DialFailed,
+                4 to SetupResult.InternalError,
             )
         cases.forEach { case ->
             val byte = case.int("byte")
@@ -66,21 +63,21 @@ class SetupResultVectorTest {
     @Test
     fun everyValueOutsideTheRangeIsAProtocolError() {
         // Not just the two the fixture names: the whole rest of the byte space.
-        for (value in 8..255) {
+        for (value in 5..255) {
             val reason = SetupResult.decode(value.toByte()).reasonOrNull()
             assertTrue("byte $value must be rejected", reason is SetupResultReason.OutOfRange)
         }
     }
 
     @Test
-    fun allSevenRejectionReasonsAreDistinct() {
-        // The requirement this task exists for. If these ever collapse, the user
-        // loses the difference between "the Portal is full" and "your session
-        // was replaced" — which is the information they need to act on.
+    fun allFourRejectionReasonsAreDistinct() {
+        // If these ever collapse, the user loses the difference between "the
+        // Portal is full" and "the target could not be reached" — which is the
+        // information they need to act on.
         val rejections = SetupResult.entries.filter { it.isRejection }
-        assertEquals("there are exactly seven rejection reasons", 7, rejections.size)
-        assertEquals("each must be a distinct value", 7, rejections.toSet().size)
-        assertEquals("each must have a distinct wire byte", 7, rejections.map { it.byte }.toSet().size)
+        assertEquals("there are exactly four rejection reasons", 4, rejections.size)
+        assertEquals("each must be a distinct value", 4, rejections.toSet().size)
+        assertEquals("each must have a distinct wire byte", 4, rejections.map { it.byte }.toSet().size)
     }
 
     @Test
@@ -93,6 +90,15 @@ class SetupResultVectorTest {
     }
 
     @Test
+    fun theV1NumberingIsGone() {
+        // v1's byte 4 was FLOW_LIMIT and its 5 was DIAL_FAILED. A client still
+        // reading v1 numbers would tell a user the Portal was busy when it had
+        // failed internally, and treat a real DIAL_FAILED as a protocol error.
+        assertEquals(SetupResult.InternalError, SetupResult.decode(4).valueOrNull())
+        assertTrue(SetupResult.decode(5).reasonOrNull() is SetupResultReason.OutOfRange)
+    }
+
+    @Test
     fun anAbsentByteIsDistinctFromABadOne() {
         // "The Portal said something invalid" and "the Portal said nothing" are
         // different failures and need different messages.
@@ -102,7 +108,7 @@ class SetupResultVectorTest {
 
     @Test
     fun decodingHonoursAnOffset() {
-        val buffer = byteArrayOf(0xff.toByte(), 0xff.toByte(), 4)
+        val buffer = byteArrayOf(0xff.toByte(), 0xff.toByte(), 2)
         assertEquals(SetupResult.FlowLimit, (SetupResult.decode(buffer, 2) as DecodeResult.Ok).value)
     }
 }

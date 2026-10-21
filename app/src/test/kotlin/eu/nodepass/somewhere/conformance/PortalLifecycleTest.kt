@@ -3,16 +3,17 @@
 
 package eu.nodepass.somewhere.conformance
 
+import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
+import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
-import eu.nodepass.somewhere.protocol.session.SessionId
+import eu.nodepass.somewhere.protocol.session.Transport
 import eu.nodepass.somewhere.protocol.target.Target
-import eu.nodepass.somewhere.protocol.tls.ConscryptExporter
-import eu.nodepass.somewhere.protocol.tls.TlsTransport
-import org.conscrypt.Conscrypt
+import eu.nodepass.somewhere.protocol.tls.ServerTrust
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,20 +23,27 @@ import java.io.File
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.security.SecureRandom
+import java.security.KeyStore
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 /**
- * The two L1 matrix rows that need a Portal to *stop* being there.
+ * The matrix rows that need a Portal to *stop* being there.
  *
  * Both are about time and process lifecycle rather than about bytes, which is
- * why neither could be reached by a fixture and why both sat uncovered: one
- * needs forty seconds of nothing happening, the other needs the Portal to die
- * and come back. So this class starts and stops its own Portals.
+ * why neither could be reached by a fixture: one needs a Portal to give up on
+ * a silent connection, the other needs the Portal to die and come back. So this
+ * class starts and stops its own Portals.
+ *
+ * They run on a **supplied** certificate (`tls=2`), generated here with
+ * `openssl` for `127.0.0.1` and used as the only trust anchor. A generated one
+ * (`tls=1`) is new on every start, so a pin taken before a restart would refuse
+ * the Portal after it — correctly, and not what the restart case is about. It
+ * also means these are the live cases for verification by name, which the
+ * pinned cases elsewhere do not reach.
  *
  * Skipped unless `NOWHERE_BIN` points at a built binary — these are slow and
  * they belong to `conformance/scripts/portal-lifecycle.sh`, not to the unit
@@ -43,7 +51,8 @@ import kotlin.concurrent.thread
  */
 class PortalLifecycleTest {
     private val binary: File? = System.getenv("NOWHERE_BIN")?.let(::File)?.takeIf { it.canExecute() }
-    private val key = "portal-lifecycle-key"
+    private val key = "abcdefabcdefabcdefabcdefabcdef01"
+    private val certificateDir: File by lazy { makeCertificate() }
     private val portals = mutableListOf<Process>()
     private val closers = mutableListOf<() -> Unit>()
 
@@ -70,8 +79,10 @@ class PortalLifecycleTest {
         // worth reading after a failure costs nothing anyway.
         val log = File.createTempFile("portal-", ".log").apply { deleteOnExit() }
         val process =
-            ProcessBuilder(requireBinary().absolutePath, "portal://$key@127.0.0.1:$port?log=info")
-                .redirectErrorStream(true)
+            ProcessBuilder(
+                requireBinary().absolutePath,
+                "portal://$key@127.0.0.1:$port?tls=2&crt=${File(certificateDir, "crt.pem")}&key=${File(certificateDir, "key.pem")}",
+            ).redirectErrorStream(true)
                 .redirectOutput(log)
                 .start()
         portals += process
@@ -103,40 +114,74 @@ class PortalLifecycleTest {
         throw AssertionError("timed out waiting for $what")
     }
 
-    private object TrustEverything : X509TrustManager {
-        override fun checkClientTrusted(
-            chain: Array<X509Certificate>,
-            authType: String,
-        ) = Unit
-
-        override fun checkServerTrusted(
-            chain: Array<X509Certificate>,
-            authType: String,
-        ) = Unit
-
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    /** A self-signed certificate naming 127.0.0.1, or the test is skipped without openssl. */
+    private fun makeCertificate(): File {
+        val dir =
+            File.createTempFile("portal-cert-", "").apply {
+                delete()
+                mkdirs()
+                deleteOnExit()
+            }
+        val made =
+            runCatching {
+                ProcessBuilder(
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "ec",
+                    "-pkeyopt",
+                    "ec_paramgen_curve:P-256",
+                    "-nodes",
+                    "-keyout",
+                    File(dir, "key.pem").path,
+                    "-out",
+                    File(dir, "crt.pem").path,
+                    "-days",
+                    "2",
+                    "-subj",
+                    "/CN=127.0.0.1",
+                    "-addext",
+                    "subjectAltName=IP:127.0.0.1",
+                ).redirectErrorStream(true).start().waitFor()
+            }.getOrDefault(-1)
+        assumeTrue("openssl is needed to make the Portal's certificate", made == 0)
+        return dir
     }
 
-    private fun tlsSocket(
+    /** Trusts exactly the certificate made above, through the same trust-manager path the platform uses. */
+    private val trust: ServerTrust by lazy {
+        val anchor =
+            File(certificateDir, "crt.pem").inputStream().use {
+                CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+            }
+        val store =
+            KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+                load(null, null)
+                setCertificateEntry("portal", anchor)
+            }
+        val manager =
+            TrustManagerFactory
+                .getInstance(TrustManagerFactory.getDefaultAlgorithm())
+                .apply { init(store) }
+                .trustManagers
+                .filterIsInstance<X509TrustManager>()
+                .first()
+        ServerTrust { chain, _ -> manager.checkServerTrusted(chain, "UNKNOWN") }
+    }
+
+    private fun node(port: Int): NowhereUrl = (NowhereUrl.parse("nowhere://$key@127.0.0.1:$port") as DecodeResult.Ok).value
+
+    private fun transport(
         port: Int,
         readTimeoutMillis: Int,
-    ): SSLSocket {
-        val context = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
-        context.init(null, arrayOf(TrustEverything), SecureRandom())
-        val raw = Socket().apply { connect(InetSocketAddress("127.0.0.1", port), 5_000) }
-        return (context.socketFactory.createSocket(raw, "127.0.0.1", port, true) as SSLSocket).apply {
-            soTimeout = readTimeoutMillis
-            Conscrypt.setApplicationProtocols(this, arrayOf("now/1"))
-            startHandshake()
+    ): Transport =
+        when (val dialed = NowhereDialer(readTimeoutMillis = readTimeoutMillis, trust = trust).connect(node(port))) {
+            is DecodeResult.Ok -> dialed.value
+            is DecodeResult.Invalid -> throw AssertionError("could not dial the Portal: ${dialed.reason.detail}")
         }
-    }
 
-    private fun session(port: Int): NowhereSession {
-        val shared = (SharedKey.of(key) as DecodeResult.Ok).value
-        return NowhereSession(shared, {
-            (TlsTransport.over(tlsSocket(port, 10_000), ConscryptExporter()) as DecodeResult.Ok).value
-        })
-    }
+    private fun session(port: Int): NowhereSession = NowhereSession(node(port).sharedKey, { transport(port, 10_000) })
 
     /** Answers one request with the bytes it was sent. */
     private fun echoServer(): Int {
@@ -163,53 +208,58 @@ class PortalLifecycleTest {
 
     @Test
     fun aConnectionThatAuthenticatesAndThenSaysNothingIsReclaimed() {
-        // NW-P-11. The Portal reclaims a connection whose first FlowHeader byte
-        // does not arrive within forty seconds of authentication.
+        // "Vector TLS requires a Flow because it is a dedicated connection."
+        // A connection that sends its AuthFrame and no FlowStart is holding a
+        // Portal resource for nothing, and the Portal must give it up.
         //
-        // DedicatedTlsLane writes the header in the same call as the frame, so
-        // nothing this client does can spend that budget — which is exactly why
-        // the number was only ever recorded as a constant and never observed.
-        // Anything that later separates the two writes needs to know the
-        // deadline is real and how long it really is.
+        // DedicatedTlsLane writes the FlowStart in the same call as the frame,
+        // so nothing this client does can spend that budget — which is why the
+        // number is observed here rather than assumed. Anything that later
+        // separates the two writes needs to know how long it really is.
         val port = freePort()
         startPortal(port)
 
         // Longer than the deadline, so a Portal that never reclaims is observed
         // as a read timeout rather than as this test hanging.
-        val socket = tlsSocket(port, RECLAIM_CEILING_MILLIS.toInt())
-        closers += { runCatching { socket.close() } }
-        val transport = (TlsTransport.over(socket, ConscryptExporter()) as DecodeResult.Ok).value
+        val transport = transport(port, RECLAIM_CEILING_MILLIS.toInt())
+        closers += { runCatching { transport.close() } }
 
         val frame =
             Authentication.encodeFrame(
                 sharedKey = (SharedKey.of(key) as DecodeResult.Ok).value,
                 transport = AuthTransport.TlsTcp,
                 exporter = transport.exporter,
-                sessionId = SessionId.random().toByteArray(),
             )
         transport.write(frame)
         transport.flush()
 
         val startedAt = System.currentTimeMillis()
-        val read = runCatching { transport.read(ByteArray(1)) }
+        val answer = ByteArray(1)
+        val read = runCatching { transport.read(answer) }
         val elapsed = System.currentTimeMillis() - startedAt
 
-        assertTrue(
-            "the Portal neither closed nor answered within ${RECLAIM_CEILING_MILLIS / 1000}s " +
-                "(read returned ${read.getOrNull()}, ${read.exceptionOrNull()?.javaClass?.simpleName})",
-            read.getOrNull() == -1,
+        // Measured against v3.0.1: the Portal waits out its handshake deadline
+        // for the flow request, answers INVALID_REQUEST, and shuts the stream.
+        // An answer rather than silence, which is why this asserts the byte.
+        assertEquals(
+            "the Portal should answer a missing flow request (read returned ${read.getOrNull()}, " +
+                "${read.exceptionOrNull()?.javaClass?.simpleName})",
+            1,
+            read.getOrNull(),
         )
+        assertEquals(SetupResult.InvalidRequest, SetupResult.decode(answer[0]).valueOrNull())
+        assertEquals("and then end the stream", -1, runCatching { transport.read(ByteArray(1)) }.getOrNull())
         assertTrue(
-            "reclaimed after ${elapsed}ms, which is not the ${DEDICATED_LANE_DEADLINE_SECONDS}s the specification states",
+            "answered after ${elapsed}ms, outside the ${RECLAIM_FLOOR_MILLIS}..${RECLAIM_CEILING_MILLIS}ms window",
             elapsed in RECLAIM_FLOOR_MILLIS..RECLAIM_CEILING_MILLIS,
         )
-        println("NW-P-11: the Portal reclaimed a silent connection after ${elapsed}ms")
+        println("the Portal reclaimed an authenticated connection with no flow after ${elapsed}ms, answering INVALID_REQUEST")
     }
 
     @Test
     fun aNewFlowSucceedsAfterThePortalHasRestarted() {
         // The Portal going away and coming back is ordinary — a restart, a
-        // deploy, a network that dropped. At L1 every flow is its own
+        // deploy, a network that dropped. Over TLS every flow is its own
         // connection, so recovery should need nothing from the user; this is
         // what says that out loud, because "should" and "does" have differed
         // before and a session that quietly poisoned itself would look like a
@@ -253,17 +303,17 @@ class PortalLifecycleTest {
     }
 
     private companion object {
-        const val DEDICATED_LANE_DEADLINE_SECONDS = 40
-
         /**
-         * The window the reclaim has to land in.
+         * The window the reclaim has to land in: around the five-second
+         * handshake deadline (`NOW_HANDSHAKE_TIMEOUT`), which is what upstream
+         * applies to the flow request. Measured at 5.08 s.
          *
          * Wide, and deliberately so: the assertion is that the deadline exists
          * and is of this order, not that upstream's timer is precise to the
          * second. A window narrow enough to be interesting would only measure
          * how loaded the machine is.
          */
-        const val RECLAIM_FLOOR_MILLIS = 25_000L
-        const val RECLAIM_CEILING_MILLIS = 75_000L
+        const val RECLAIM_FLOOR_MILLIS = 3_000L
+        const val RECLAIM_CEILING_MILLIS = 15_000L
     }
 }

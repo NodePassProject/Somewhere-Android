@@ -75,14 +75,19 @@ PORT="${TARGET##*:}"
 FAMILY="${NOWHERE_E2E_FAMILY:-}"
 
 PORTAL="${NOWHERE_E2E_PORTAL:-}"
-KEY="${NOWHERE_E2E_KEY:-conformance-smoke-key}"
-CARRIER="${NOWHERE_E2E_CARRIER:-udp}"
+KEY="${NOWHERE_E2E_KEY:-0123456789abcdef0123456789abcdef}"
+# v3 has no unverified mode, and a test Portal is on a generated certificate:
+# the fingerprint it logged at startup is the pin.
+PIN="${NOWHERE_E2E_PIN:-}"
+MORPH="${NOWHERE_E2E_MORPH:-1}"
+CARRIER="${NOWHERE_E2E_CARRIER:-tcp}"
 # Long enough for a twenty-megabyte transfer plus the retries below. A hold that
 # expires mid-transfer truncates it, and a truncated file is non-empty -- which
 # the first version of the retry loop accepted, then failed on the digest with
 # no attempt left, reporting a corrupt tunnel when what it had was a short read.
 HOLD="${NOWHERE_HOLD_SECONDS:-300}"
 [ -n "$PORTAL" ] || fail "set NOWHERE_E2E_PORTAL to the Portal as the device sees it"
+[ -n "$PIN" ] || fail "set NOWHERE_E2E_PIN to the fingerprint the Portal logged"
 
 step "consent"
 adb -s "$DEVICE" shell cmd appops set eu.nodepass.somewhere ACTIVATE_VPN allow >/dev/null 2>&1 \
@@ -96,6 +101,8 @@ adb -s "$DEVICE" shell am instrument -w \
     -e nowhereHoldSeconds "$HOLD" \
     -e nowhereE2ePortal "$PORTAL" \
     -e nowhereE2eKey "$KEY" \
+    -e nowhereE2ePin "$PIN" \
+    -e nowhereE2eMorph "$MORPH" \
     -e nowhereE2eCarrier "$CARRIER" \
     -e nowhereE2eTarget "$TARGET" \
     eu.nodepass.somewhere.test/androidx.test.runner.AndroidJUnitRunner \
@@ -118,10 +125,33 @@ done
 [ "$UP" = 1 ] || { grep -E "^eu\.|Error|Exception" "$HOLDER_LOG" | head -5; fail "no tun0 within 60s"; }
 echo "OK  tun0 is up, held for ${HOLD}s"
 
-PORTAL_LOG="${NOWHERE_PORTAL_LOG:-}"
+# The Portal's own count of what it relayed toward the device, from its local
+# telemetry (`nowhere status`), in bytes. v1 printed counters into its log on a
+# timer; v3 serves them on request instead, which is both exact and immediate.
+# Needs the Portal on this host and NOWHERE_BIN pointing at the binary.
+# NOWHERE_STATUS overrides how the status is read, for a Portal in a container:
+# `docker exec <container> nowhere status`.
+NOWHERE_BIN="${NOWHERE_BIN:-}"
+NOWHERE_STATUS="${NOWHERE_STATUS:-}"
 counter() {
-    [ -n "$PORTAL_LOG" ] && [ -f "$PORTAL_LOG" ] || { echo ""; return; }
-    grep -o "TCPTX=[0-9]*" "$PORTAL_LOG" | tail -1 | cut -d= -f2
+    local read_status
+    if [ -n "$NOWHERE_STATUS" ]; then
+        read_status="$NOWHERE_STATUS"
+    elif [ -n "$NOWHERE_BIN" ] && [ -x "$NOWHERE_BIN" ]; then
+        read_status="$NOWHERE_BIN status"
+    else
+        echo ""; return
+    fi
+    $read_status 2>/dev/null | python3 -c '
+import re, sys
+units = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3}
+total = 0
+for line in sys.stdin:
+    m = re.match(r"\s*(TCP|UDP) download\s+([0-9.]+) (B|KiB|MiB|GiB)", line)
+    if m:
+        total += float(m.group(2)) * units[m.group(3)]
+print(int(total))
+'
 }
 
 # The address `nc` is pointed at. For family 6 it is resolved on the device,
@@ -203,10 +233,9 @@ if [ -n "$BEFORE" ]; then
     # took the underlying network instead leaves them exactly where they were,
     # which is what happened to this suite's device cases for two runs without
     # anyone noticing.
-    # A Portal emits its counters on a timer, so the last line may still predate
-    # the fetch. Waiting for the number to move is the condition; a fixed sleep
-    # shorter than that timer reports "relayed nothing" about a transfer that
-    # plainly happened.
+    # Polled rather than read once: the telemetry snapshot is published on its
+    # own schedule, and a fixed sleep would either be too short or hide a
+    # Portal that took long to account for what it moved.
     MOVED=0
     for _ in $(seq 1 15); do
         AFTER="$(counter)"
@@ -215,11 +244,13 @@ if [ -n "$BEFORE" ]; then
         sleep 1
     done
     [ "$MOVED" -gt 0 ] \
-        || fail "the Portal relayed nothing in fifteen seconds: TCPTX stayed at ${BEFORE}. The fetch did not go through the tunnel."
-    echo "OK  the Portal relayed $MOVED bytes ($BEFORE -> $AFTER)"
+        || fail "the Portal relayed nothing in fifteen seconds: its download total stayed at ${BEFORE}. The fetch did not go through the tunnel."
+    # Rounded by `nowhere status` to two decimals of its unit, so this is a
+    # lower bound on movement rather than an exact byte count.
+    echo "OK  the Portal relayed about $MOVED bytes toward the device ($BEFORE -> $AFTER)"
 else
-    echo "--  NOWHERE_PORTAL_LOG is not set, so nothing here shows the bytes"
-    echo "    went through the Portal rather than around it. Set it."
+    echo "--  neither NOWHERE_BIN nor NOWHERE_STATUS is set, so nothing here"
+    echo "    shows the bytes went through the Portal rather than around it."
 fi
 
 step "digest, split on the host"

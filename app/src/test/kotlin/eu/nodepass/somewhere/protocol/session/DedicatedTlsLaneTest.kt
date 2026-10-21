@@ -8,53 +8,55 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
-import eu.nodepass.somewhere.protocol.frame.FlowHeader
 import eu.nodepass.somewhere.protocol.frame.FlowKind
-import eu.nodepass.somewhere.protocol.frame.FlowOrigin
-import eu.nodepass.somewhere.protocol.frame.FlowRole
+import eu.nodepass.somewhere.protocol.frame.FlowStart
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.target.Target
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** NW-P-10 and NW-P-11: one flow per lane, one opening write, no reuse. */
+/** `docs/protocol.md` § Connection establishment, over TLS: one flow per connection, one opening write. */
 class DedicatedTlsLaneTest {
-    private val key = (SharedKey.of("secret") as DecodeResult.Ok).value
-    private val session = SessionId.of(ByteArray(16) { it.toByte() })
+    private val key = (SharedKey.of("0123456789abcdef0123456789abcdef") as DecodeResult.Ok).value
     private val target = (Target.ofIpv4(byteArrayOf(127, 0, 0, 1), 443) as DecodeResult.Ok).value
 
     private fun lane(
         peer: ByteArray = byteArrayOf(0),
         transport: FakeTransport = FakeTransport(peerBytes = peer),
-    ) = transport to DedicatedTlsLane(transport, key, session)
+    ) = transport to DedicatedTlsLane(transport, key)
 
     @Test
-    fun theOpeningWriteIsOneWriteInTheSpecifiedOrder() {
-        // NW-P-10 permits AuthFrame || FlowHeader || Target || payload in a
-        // single write, and this takes it — four separate writes would produce
-        // four distinguishable packets with client timing between them, on every
-        // connection.
+    fun theOpeningIsOneWriteAndThePayloadWaitsForReady() {
+        // AuthFrame || FlowStart || Target in one write, so three records do
+        // not leave with client timing between them. The payload is not in it:
+        // "target payload waits for READY", and a Portal that reads a byte
+        // early ends the flow.
         val (transport, lane) = lane()
         val payload = "hello".encodeToByteArray()
-        val opened = lane.open(target, FlowKind.Tcp, flowId = 1u, firstPayload = payload)
+        val opened = lane.open(target, FlowKind.Tcp, logId = 1u, firstPayload = payload)
         assertTrue("open should succeed: ${opened.reasonOrNull()?.detail}", opened is DecodeResult.Ok)
 
         val written = transport.writtenBytes()
-        val expectedAuth =
-            Authentication.encodeFrame(key, AuthTransport.TlsTcp, transport.exporter, session.toByteArray())
-        assertEquals("frame starts with the AuthFrame", expectedAuth.toHex(), written.copyOf(32).toHex())
+        val expectedAuth = Authentication.encodeFrame(key, AuthTransport.TlsTcp, transport.exporter)
+        assertEquals("frame starts with the 16-byte AuthFrame", expectedAuth.toHex(), written.copyOf(16).toHex())
 
-        val header = FlowHeader.decode(written.copyOfRange(32, 37), FlowOrigin.Client)
-        assertEquals(FlowRole.Duplex, (header as DecodeResult.Ok).value.role)
-        assertEquals(1u, header.value.flowId)
+        assertEquals("then one FlowStart byte", FlowKind.Tcp, FlowStart.decode(written[16]).kind)
 
-        val decodedTarget = Target.decode(written, offset = 37)
+        val decodedTarget = Target.decode(written, offset = 17)
         assertEquals(target, (decodedTarget as DecodeResult.Ok).value.target)
 
-        val payloadStart = 37 + decodedTarget.value.consumed
-        assertEquals("the payload rides the same write", "hello", String(written.copyOfRange(payloadStart, written.size)))
-        assertEquals("exactly one flush", 1, transport.flushCount)
+        val payloadStart = 17 + decodedTarget.value.consumed
+        assertEquals("nothing but the opening before READY", payloadStart, transport.writtenBeforeFirstRead)
+        assertEquals("the payload follows READY", "hello", String(written.copyOfRange(payloadStart, written.size)))
+        assertEquals("one flush for the opening, one for the payload", 2, transport.flushCount)
+    }
+
+    @Test
+    fun aRejectedFlowNeverSendsItsPayload() {
+        val (transport, lane) = lane(peer = byteArrayOf(SetupResult.DialFailed.byte.toByte()))
+        lane.open(target, FlowKind.Tcp, logId = 1u, firstPayload = "hello".encodeToByteArray())
+        assertEquals("only the opening was written", transport.writtenBeforeFirstRead, transport.writtenBytes().size)
     }
 
     @Test
@@ -68,8 +70,7 @@ class DedicatedTlsLaneTest {
 
     @Test
     fun everyRejectionReachesTheCallerAsItself() {
-        // NW-P-06 again, at this layer: the lane must not flatten seven
-        // rejections into one failure.
+        // The lane must not flatten the rejections into one failure.
         SetupResult.entries.filter { it.isRejection }.forEach { rejection ->
             val (_, lane) = lane(peer = byteArrayOf(rejection.byte.toByte()))
             val result = lane.open(target, FlowKind.Tcp, 1u)
@@ -100,7 +101,7 @@ class DedicatedTlsLaneTest {
         // gets no answer AND no close, so the read times out. Both outcomes mean
         // the same thing to a caller, and neither may escape as an exception.
         val transport = FakeTransport(silentPeer = true)
-        val lane = DedicatedTlsLane(transport, key, session)
+        val lane = DedicatedTlsLane(transport, key)
         val result = lane.open(target, FlowKind.Tcp, 1u)
         assertEquals(LaneReason.NoSetupByte, result.reasonOrNull())
     }
@@ -118,22 +119,22 @@ class DedicatedTlsLaneTest {
     fun aClosedTransportIsRefusedBeforeAnythingIsWritten() {
         val transport = FakeTransport(peerBytes = byteArrayOf(0))
         transport.close()
-        val lane = DedicatedTlsLane(transport, key, session)
+        val lane = DedicatedTlsLane(transport, key)
         assertEquals(LaneReason.TransportClosed, lane.open(target, FlowKind.Tcp, 1u).reasonOrNull())
         assertEquals("nothing may be written to a closed transport", 0, transport.writtenBytes().size)
     }
 
     @Test
-    fun aZeroFlowIdIsRefusedByTheHeaderRules() {
-        val (_, lane) = lane()
-        val reason = lane.open(target, FlowKind.Tcp, 0u).reasonOrNull()
-        assertTrue("flow 0 must not reach the wire", reason is LaneReason.HeaderInvalid)
+    fun aUdpFlowSaysSoInItsFlowStart() {
+        val (transport, lane) = lane()
+        lane.open(target, FlowKind.Udp, 1u)
+        assertEquals(FlowKind.Udp, FlowStart.decode(transport.writtenBytes()[16]).kind)
     }
 
     @Test
     fun theFlowReadsAndWritesThroughTheTransport() {
         val transport = FakeTransport(peerBytes = byteArrayOf(0) + "response".encodeToByteArray())
-        val lane = DedicatedTlsLane(transport, key, session)
+        val lane = DedicatedTlsLane(transport, key)
         val flow = (lane.open(target, FlowKind.Tcp, 1u) as DecodeResult.Ok).value
 
         flow.write("request".encodeToByteArray())
@@ -150,15 +151,15 @@ class DedicatedTlsLaneTest {
         // At L1 the lane's whole transport belongs to the flow, so the two die
         // together. That stops being true at L2, which is why callers hold flows.
         val transport = FakeTransport(peerBytes = byteArrayOf(0))
-        val lane = DedicatedTlsLane(transport, key, session)
+        val lane = DedicatedTlsLane(transport, key)
         val flow = (lane.open(target, FlowKind.Tcp, 1u) as DecodeResult.Ok).value
         flow.close()
         assertTrue(!transport.isOpen)
     }
 
     @Test
-    fun theBootstrapDeadlineIsRecorded() {
-        assertEquals("NW-P-11", 40, DedicatedTlsLane.BOOTSTRAP_DEADLINE_SECONDS)
+    fun theHandshakeDeadlineIsRecorded() {
+        assertEquals("NOW_HANDSHAKE_TIMEOUT", 5, DedicatedTlsLane.HANDSHAKE_DEADLINE_SECONDS)
     }
 
     @Test
@@ -179,7 +180,7 @@ class DedicatedTlsLaneTest {
             transport.readTimeouts.isEmpty(),
         )
 
-        val opened = lane.open(target, FlowKind.Tcp, flowId = 1u)
+        val opened = lane.open(target, FlowKind.Tcp, logId = 1u)
         assertTrue("open should succeed", opened is DecodeResult.Ok)
         assertEquals(
             "the lane must clear the read deadline exactly once, after setup",
@@ -194,7 +195,7 @@ class DedicatedTlsLaneTest {
         // business relaxing anything, and the connection it holds is about to
         // be closed anyway.
         val (transport, lane) = lane(peer = byteArrayOf(SetupResult.FlowLimit.byte.toByte()))
-        val opened = lane.open(target, FlowKind.Tcp, flowId = 1u)
+        val opened = lane.open(target, FlowKind.Tcp, logId = 1u)
         assertTrue("open should be rejected", opened is DecodeResult.Invalid)
         assertTrue(
             "a rejected open must not clear the deadline: ${transport.readTimeouts}",

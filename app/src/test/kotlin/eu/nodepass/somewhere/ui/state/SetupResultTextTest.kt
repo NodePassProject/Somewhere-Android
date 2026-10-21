@@ -26,16 +26,13 @@ class SetupResultTextTest {
 
     @Test
     fun theWireNameIsTheSpecificationsName() {
-        // Transcribed from `docs/protocol.md` section 6, not derived from the
+        // Transcribed from `docs/protocol.md` § Setup results, not derived from the
         // Kotlin enum names — deriving would make a rename in the client
         // silently rename the thing users search for.
         assertEquals("READY", SetupResult.Ready.identifier)
         assertEquals("INVALID_REQUEST", SetupResult.InvalidRequest.identifier)
-        assertEquals("METADATA_CONFLICT", SetupResult.MetadataConflict.identifier)
-        assertEquals("PAIR_TIMEOUT", SetupResult.PairTimeout.identifier)
         assertEquals("FLOW_LIMIT", SetupResult.FlowLimit.identifier)
         assertEquals("DIAL_FAILED", SetupResult.DialFailed.identifier)
-        assertEquals("SESSION_REPLACED", SetupResult.SessionReplaced.identifier)
         assertEquals("INTERNAL_ERROR", SetupResult.InternalError.identifier)
     }
 
@@ -52,12 +49,12 @@ class SetupResultTextTest {
     }
 
     @Test
-    fun theSevenRejectionsReachSevenDifferentExplanations() {
+    fun theFourRejectionsReachFourDifferentExplanations() {
         val rejections = SetupResult.entries.filter { it.isRejection }
-        assertEquals(7, rejections.size)
+        assertEquals(4, rejections.size)
         assertEquals(
-            "two rejections point at the same message, which is the collapse NW-P-06 forbids",
-            7,
+            "two rejections point at the same message, which collapses what the Portal said",
+            4,
             rejections.map { it.explanation }.toSet().size,
         )
     }

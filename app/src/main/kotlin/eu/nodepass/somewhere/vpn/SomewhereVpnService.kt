@@ -28,12 +28,12 @@ import eu.nodepass.somewhere.nodes.Failover
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
-import eu.nodepass.somewhere.protocol.session.SplitCarrier
-import eu.nodepass.somewhere.protocol.session.Transport
-import eu.nodepass.somewhere.protocol.url.CertificateVerification
-import eu.nodepass.somewhere.protocol.url.NextHopCarrier
+import eu.nodepass.somewhere.protocol.session.StreamTransport
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.quic.QuicConnection
+import eu.nodepass.somewhere.quic.QuicDial
+import eu.nodepass.somewhere.quic.QuicException
+import eu.nodepass.somewhere.quic.QuicFailure
 import eu.nodepass.somewhere.quic.QuicStreamTransport
 import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.DirectDialer
@@ -77,11 +77,10 @@ import java.net.InetSocketAddress
  * The fake-IP layer does not help here — the Portal is where the names go, so
  * its own name cannot be one of them.
  *
- * **Whether a flow gets its own TLS connection is the node's choice.** A node
- * carrying `mux=1` multiplexes: a page with forty subresources costs ten
- * connections rather than forty. Without it, every flow is its own connection,
- * which works and is slow. The parameter is the user's — or their dashboard's —
- * and this client does not override it in either direction.
+ * **The carrier is the node's choice.** `net=tcp` gives every flow its own TLS
+ * connection, which is what v3 specifies for TLS; `net=udp` carries every flow
+ * as a stream on one QUIC connection. The parameter is the user's — or their
+ * dashboard's — and this client does not override it in either direction.
  */
 class SomewhereVpnService : VpnService() {
     companion object {
@@ -306,46 +305,24 @@ class SomewhereVpnService : VpnService() {
         val dialer = NowhereDialer(protect = { socket -> protect(socket) })
         val resolved = node.copy(host = portal)
 
-        // A node whose carriers are `udp` is a QUIC node, and that is the
-        // specification's default for both directions — so a bare
-        // `nowhere://key@host:port` arrives here, not as an exotic case.
+        // `net=udp` is a QUIC node: one connection, opened here, and every
+        // flow a stream on it. `net=tcp` — the v3 default — opens nothing yet;
+        // each flow dials its own TLS connection when it starts.
         //
-        // The connection is opened once and every flow becomes a stream on it,
-        // which is why `mux` has nothing to add: QUIC multiplexes by
-        // construction.
-        // `pin` works on both carriers; chain verification against an `sni`
-        // name does not work on QUIC yet, and a node that asked for it is
-        // refused rather than carried without it. Silently dropping it because
-        // the carrier changed would be a security downgrade the user configured
-        // against and has no way to observe. `sni=none` and `pin=none` are the
-        // documented defaults and what NowhereDash emits, so this refuses the
-        // configured case rather than the ordinary one.
-        if (resolved.requiresQuic && resolved.certificateVerification is CertificateVerification.Sni) {
-            Log.w(TAG, "a QUIC node asked for certificate verification, which this carrier does not do")
-            TunnelController.report(TunnelState.Failed(R.string.tunnel_quic_verification_unsupported))
-            descriptor.close()
-            stopSelf()
-            return
-        }
-
-        // A split node uses both carriers at once: one direction on QUIC, the
-        // other on TLS. So a QUIC connection is opened whenever either
-        // direction asks for it, which `requiresQuic` already means.
+        // Verification is never skipped, on either carrier: v3 has no mode for
+        // it. A pin is compared inside the QUIC handshake; otherwise the chain
+        // is checked against the platform store once the handshake completes,
+        // before the AuthFrame is written. Either way the name sent as SNI is
+        // the one being verified — `sni`, or the host the link named — unless
+        // it is an IP literal, which RFC 6066 does not allow as SNI.
+        //
+        // The node is the one the user configured, not `resolved`: the name to
+        // verify is the host they named, and `resolved` has the address in its
+        // place so that dialling it does not resolve through our own tunnel.
         val quicConnection =
-            if (resolved.requiresQuic) {
+            if (resolved.usesQuic) {
                 ReconnectingQuic {
-                    QuicConnection.open(
-                        remote = InetSocketAddress(portal, resolved.port),
-                        alpn = resolved.alpn,
-                        // No SNI: an `sni` node was refused above, so what is
-                        // left is `pin` or nothing, and neither names a host to
-                        // send. A literal address as SNI is both wrong and a
-                        // fingerprint.
-                        serverName = null,
-                        pinSha256 =
-                            (resolved.certificateVerification as? CertificateVerification.Pin)?.bytes,
-                        protect = { socket -> protect(socket) },
-                    )
+                    QuicDial.open(node, InetSocketAddress(portal, resolved.port), protect = { socket -> protect(socket) })
                 }
             } else {
                 null
@@ -356,18 +333,19 @@ class SomewhereVpnService : VpnService() {
         //
         // And it is the one place a QUIC node's reachability is known at
         // startup, which is what makes failing over to another node possible
-        // rather than guesswork. A refused pin is *not* unreachability — the
-        // Portal answered, and every other node will answer the same way to the
-        // same wrong pin — so it stops here instead of walking the list.
+        // rather than guesswork. A refused certificate is *not* unreachability —
+        // the Portal answered, and every other node will answer the same way to
+        // the same wrong pin — so it stops here instead of walking the list.
         try {
             quicConnection?.current()
         } catch (error: Exception) {
             Log.w(TAG, "the QUIC Portal did not answer: ${error.message}")
             descriptor.close()
-            val refused = error.message?.contains("pin") == true
+            val refused =
+                (error as? QuicException)?.failure is QuicFailure.Untrusted || error.message?.contains("pin") == true
             if (refused) {
                 (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Refused)
-                TunnelController.report(TunnelState.Failed(R.string.tunnel_quic_unreachable))
+                TunnelController.report(TunnelState.Failed(R.string.tunnel_certificate_refused))
                 stopSelf()
             } else {
                 unreachable(url, R.string.tunnel_quic_unreachable)
@@ -378,7 +356,6 @@ class SomewhereVpnService : VpnService() {
         val nowhere =
             NowhereSession(
                 sharedKey = node.sharedKey,
-                mux = node.mux,
                 connect = {
                     when (val transport = dialer.connect(resolved)) {
                         is DecodeResult.Ok -> transport.value
@@ -386,25 +363,8 @@ class SomewhereVpnService : VpnService() {
                     }
                 },
                 quicStreams = quicConnection?.streams(),
-                // Needed by both shapes: a duplex QUIC flow sends every packet
-                // as a DATAGRAM, and a split flow does it in whichever
-                // direction is QUIC.
+                // A QUIC UDP flow sends every packet as a DATAGRAM.
                 quicDatagrams = quicConnection?.datagrams(),
-                // Present together or not at all. `up != down` puts one
-                // direction on each carrier, and which is which is the node's
-                // choice rather than this client's.
-                splitUplink =
-                    if (resolved.isSplit) {
-                        laneFactory(resolved.up, quicConnection!!, dialer, resolved)
-                    } else {
-                        null
-                    },
-                splitDownlink =
-                    if (resolved.isSplit) {
-                        laneFactory(resolved.down, quicConnection!!, dialer, resolved)
-                    } else {
-                        null
-                    },
             )
 
         // Read once, at the moment the tunnel is built, exactly as the
@@ -449,7 +409,7 @@ class SomewhereVpnService : VpnService() {
                 sinceElapsedRealtime = android.os.SystemClock.elapsedRealtime(),
             ),
         )
-        Log.i(TAG, "tunnel up via ${node.host}:${node.port}${if (node.mux) " (mux)" else ""}")
+        Log.i(TAG, "tunnel up via ${node.host}:${node.port} over ${node.net.token}${if (node.morph) " with morph" else ""}")
     }
 
     /**
@@ -534,34 +494,6 @@ class SomewhereVpnService : VpnService() {
     }
 
     /**
-     * A lane on whichever carrier this direction names.
-     *
-     * The two directions of a split flow are asymmetric on the wire but not
-     * here: each is simply a transport, and which carrier provides it is read
-     * off the node rather than decided by position.
-     */
-    private fun laneFactory(
-        carrier: NextHopCarrier,
-        connection: ReconnectingQuic,
-        dialer: NowhereDialer,
-        node: NowhereUrl,
-    ): SplitCarrier.LaneFactory =
-        when (carrier) {
-            NextHopCarrier.Udp ->
-                SplitCarrier.LaneFactory {
-                    val live = connection.current()
-                    QuicStreamTransport(live, live.openStream())
-                }
-            NextHopCarrier.Tcp ->
-                SplitCarrier.LaneFactory {
-                    when (val transport = dialer.connect(node)) {
-                        is DecodeResult.Ok -> transport.value
-                        is DecodeResult.Invalid -> error(transport.reason.detail)
-                    }
-                }
-        }
-
-    /**
      * A QUIC connection that comes back after the path under it goes away.
      *
      * A network change is not something QUIC recovers from here: the connection
@@ -570,11 +502,10 @@ class SomewhereVpnService : VpnService() {
      * carries nothing — which is worse than failing, because a user watching a
      * "Connected" screen has no reason to restart it.
      *
-     * **A rebuilt connection is a new one and has never authenticated**, which
-     * is why the stream factory reports a generation. The carrier remembers
-     * which one it authenticated on, so the first flow after a rebuild carries
-     * an AuthFrame again. Getting that wrong produces a tunnel that survives a
-     * network change and then carries nothing, for the opposite reason.
+     * **A rebuilt connection is a new one and has never authenticated.** Its
+     * stream ids start again at 0, and the carrier puts the AuthFrame on
+     * Stream 0 of whatever connection it is given, so the first flow after a
+     * rebuild authenticates again without anything here having to remember.
      */
     private class ReconnectingQuic(
         private val open: () -> QuicConnection,
@@ -597,12 +528,10 @@ class SomewhereVpnService : VpnService() {
 
         fun streams(): QuicCarrier.StreamFactory =
             object : QuicCarrier.StreamFactory {
-                override fun open(): Transport {
+                override fun open(): StreamTransport {
                     val live = current()
                     return QuicStreamTransport(live, live.openStream())
                 }
-
-                override fun generation(): Int = synchronized(lock) { generation }
             }
 
         /**

@@ -5,42 +5,50 @@ package eu.nodepass.somewhere.protocol.url
 
 import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.auth.AuthReason
 import eu.nodepass.somewhere.protocol.auth.SharedKey
 import eu.nodepass.somewhere.protocol.invalid
 import eu.nodepass.somewhere.protocol.ok
 import java.net.URI
 import java.net.URISyntaxException
 
-/** The next-hop carrier a direction uses, as expressed in configuration. */
+/** The carrier a node connects over, as `net` names it. */
 enum class NextHopCarrier(
     val token: String,
 ) {
+    /** TLS 1.3 over TCP, one connection per flow. */
     Tcp("tcp"),
+
+    /** QUIC, one connection carrying every flow. */
     Udp("udp"),
     ;
 
     companion object {
-        val DEFAULT: NextHopCarrier = Udp
+        /**
+         * `tcp`, per `docs/configuration.md` § Share links.
+         *
+         * **This flipped in v3.** v1 defaulted both directions to `udp`, so a
+         * bare v1 link was a QUIC node; a bare v3 link is a TLS one.
+         */
+        val DEFAULT: NextHopCarrier = Tcp
 
-        fun fromToken(token: String): NextHopCarrier? = entries.firstOrNull { it.token == token.lowercase() }
+        fun fromToken(token: String): NextHopCarrier? = entries.firstOrNull { it.token == token }
     }
 }
 
 /**
  * How the server certificate will be checked.
  *
- * Modelled as a value in the parsed configuration rather than as a pair of
- * nullable strings, so that a `when` over it cannot quietly omit the insecure
- * case. [Skipped] is what upstream does when neither `sni` nor `pin` is given —
- * and it is what every URL NowhereDash currently generates produces, so the
- * parser accepts it and states it. Whether to warn or refuse is the UI's call
- * (D-11).
+ * Two modes and no third. v3 states it plainly — "Normal clients verify system
+ * CA trust and hostname, or an exact certificate SHA-256 pin" — and the `sni`
+ * default is the endpoint host, so a link carrying neither parameter is a link
+ * asking for ordinary chain verification against the host it names. v1's
+ * "verify nothing" mode is gone, and there is deliberately no way to spell it.
+ *
+ * A Portal on its generated certificate (`tls=1`) therefore needs a `pin`.
  */
 sealed interface CertificateVerification {
-    /** Neither `sni` nor `pin`: upstream skips verification entirely. */
-    data object Skipped : CertificateVerification
-
-    /** Chain verification against this name. */
+    /** Chain and hostname verification against this name. */
     data class Sni(
         val host: String,
     ) : CertificateVerification
@@ -48,7 +56,8 @@ sealed interface CertificateVerification {
     /**
      * Leaf certificate SHA-256, lower-case hex.
      *
-     * Takes priority over [Sni] when a URL carries both, matching upstream.
+     * Takes priority over [Sni] when a URL carries both, matching upstream. The
+     * chain is not consulted: a pinned certificate is usually self-signed.
      */
     data class Pin(
         val sha256: String,
@@ -79,8 +88,6 @@ sealed interface CertificateVerification {
                 else -> throw IllegalStateException("a pin holds hex and nothing else")
             }
     }
-
-    val isVerified: Boolean get() = this !is Skipped
 }
 
 sealed interface UrlReason : DecodeReason {
@@ -105,17 +112,37 @@ sealed interface UrlReason : DecodeReason {
         override val detail: String = "port $port is outside 1..65535"
     }
 
-    data class InvalidCarrier(
-        val parameter: String,
-        val value: String,
+    /**
+     * `host/tcp:P/udp:Q` and its relatives.
+     *
+     * Service URLs accept carrier paths and share links do not. A dashboard
+     * that targets Nowhere 2.x emits them when a Portal's two listeners use
+     * different ports; the link names a real Portal, and saying which form it
+     * is in is what lets someone ask for the other.
+     */
+    data class CarrierPath(
+        val path: String,
     ) : UrlReason {
-        override val detail: String = "$parameter='$value' is neither tcp nor udp"
+        override val detail: String =
+            "share links take HOST:PORT; '$path' is a carrier path, which only service URLs accept"
     }
 
-    data class InvalidAlpn(
-        val length: Int,
+    data class InvalidCarrier(
+        val value: String,
     ) : UrlReason {
-        override val detail: String = "alpn is $length bytes; 1-255 are required"
+        override val detail: String = "net='$value' is neither tcp nor udp"
+    }
+
+    data class InvalidMorph(
+        val value: String,
+    ) : UrlReason {
+        override val detail: String = "morph='$value' is neither 0 nor 1"
+    }
+
+    data class InvalidSni(
+        val value: String,
+    ) : UrlReason {
+        override val detail: String = "sni must be an ASCII DNS name"
     }
 
     data class InvalidPin(
@@ -123,13 +150,21 @@ sealed interface UrlReason : DecodeReason {
     ) : UrlReason {
         override val detail: String = "pin must be 64 lower-case hex characters"
     }
+
+    data class InvalidRate(
+        val parameter: String,
+        val value: String,
+    ) : UrlReason {
+        override val detail: String = "$parameter='$value' is not a whole number of Mbps in 0..2147483647"
+    }
 }
 
 /**
- * A node as it arrives from a dashboard, a QR code, or a paste. NW-P-23, NW-P-24.
+ * A node as it arrives from a dashboard, a QR code, or a paste.
+ * `docs/configuration.md` § Share links.
  *
  * ```
- * nowhere://<pct-encoded shared key>@<host>:<port>?up=..&down=..&mux=..#<name>
+ * nowhere://<pct-encoded shared key>@<host>:<port>[?net=tcp|udp][&morph=0|1][&sni=..][&pin=..]#<name>
  * ```
  *
  * **This is not `vector://`.** That is the command URL used to start the
@@ -137,76 +172,67 @@ sealed interface UrlReason : DecodeReason {
  * has a test asserting its own responses never contain it. Any scheme but
  * `nowhere` is rejected here.
  *
- * Unknown and deprecated parameters are **ignored, never rejected** (NW-P-24).
- * Upstream's own rule is that unknown keys are ignored, and NowhereDash still
- * emits 1.7-era URLs carrying `pool=5`, a parameter 1.8 removed. Rejecting those
- * would reject a live dashboard's entire output.
+ * ## Parameters
+ *
+ * Unknown parameters are **ignored, never rejected**. For a recognised one the
+ * **first occurrence wins, and an invalid first value is an error**:
+ * `morph=1&morph=0` is Morph on, `morph=invalid&morph=1` does not parse. Both
+ * are upstream's rules, written out in its parsing table.
+ *
+ * ## The dashboard that has not caught up
+ *
+ * NowhereDash targets Nowhere 2.1.1 and emits `up=…&down=…[&mux=1]` with no
+ * `net`. Read strictly, those are unknown parameters, and the link would land
+ * on the `tcp` default — a QUIC-only node dialled over TLS, failing with a
+ * timeout. So when `net` is absent and `up` and `down` agree, their value is
+ * taken as `net`. When they disagree the node asked for a split flow, which v3
+ * cannot carry, and the default applies. `mux` and `alpn` are ignored: v3 has
+ * no Mux and one fixed ALPN.
  */
 data class NowhereUrl(
     val sharedKey: SharedKey,
     val host: String,
     val port: Int,
-    val up: NextHopCarrier,
-    val down: NextHopCarrier,
-    val mux: Boolean,
-    val alpn: String,
-    val certificateVerification: CertificateVerification,
-    val rateMbps: Int,
-    val etarMbps: Int,
-    val displayName: String?,
+    val net: NextHopCarrier = NextHopCarrier.DEFAULT,
+    /** Shared-key wire masking. On unless the link says `morph=0`; both peers must agree. */
+    val morph: Boolean = true,
+    val certificateVerification: CertificateVerification = CertificateVerification.Sni(host),
+    val rateMbps: Int = 0,
+    val etarMbps: Int = 0,
+    val displayName: String? = null,
 ) {
-    /**
-     * True when this configuration needs QUIC, which has not shipped.
-     *
-     * Upstream defaults both directions to `udp`, so a default configuration
-     * lands here. NW-P-25 requires saying so and offering `tcp` — never silently
-     * rewriting the user's configuration, and never failing without explanation.
-     */
-    val requiresQuic: Boolean
-        get() = up == NextHopCarrier.Udp || down == NextHopCarrier.Udp
-
-    /**
-     * Whether the two directions travel on different carriers.
-     *
-     * A split flow is a different shape on the wire — two client-initiated
-     * lanes, two FlowHeaders, and an answer that arrives on only one of them —
-     * rather than a variation of a duplex one, which is why this is asked
-     * rather than inferred from [requiresQuic] at each call site.
-     */
-    val isSplit: Boolean get() = up != down
+    /** True when this node connects over QUIC. */
+    val usesQuic: Boolean get() = net == NextHopCarrier.Udp
 
     fun toUrl(): String {
         val query =
             buildList {
-                add("up=${up.token}")
-                add("down=${down.token}")
-                if (mux) add("mux=1")
-                if (alpn != DEFAULT_ALPN) add("alpn=${percentEncode(alpn)}")
+                if (net != NextHopCarrier.DEFAULT) add("net=${net.token}")
+                if (!morph) add("morph=0")
                 when (val verification = certificateVerification) {
-                    is CertificateVerification.Sni -> add("sni=${percentEncode(verification.host)}")
+                    // The default is the endpoint host, so naming it again
+                    // would be noise in every link this client shares.
+                    is CertificateVerification.Sni ->
+                        if (verification.host != host) add("sni=${percentEncode(verification.host)}")
                     is CertificateVerification.Pin -> add("pin=${verification.sha256}")
-                    CertificateVerification.Skipped -> Unit
                 }
                 if (rateMbps != 0) add("rate=$rateMbps")
                 if (etarMbps != 0) add("etar=$etarMbps")
             }.joinToString("&")
 
         val fragment = displayName?.let { "#${percentEncode(it)}" }.orEmpty()
+        val authority = if (':' in host) "[$host]" else host
         // Encoded from the key's bytes, never through a String. `String(bytes)`
         // is a UTF-8 decode, and a key is not required to be text: the parser
-        // decodes userinfo to bytes precisely so that it need not be. Rendering
-        // a non-UTF-8 key through a String replaced every stray byte with U+FFFD
-        // — a one-byte key of 0x80 came back as the three bytes EF BF BD — so a
-        // node saved and reloaded authenticated as something else, with no
-        // message anywhere. Found by fuzzing the round trip.
-        return "$SCHEME://${percentEncode(sharedKey.toByteArray())}@$host:$port?$query$fragment"
+        // decodes userinfo to bytes precisely so that it need not be. Found by
+        // fuzzing the round trip, when a one-byte key of 0x80 came back as the
+        // three bytes EF BF BD.
+        val separator = if (query.isEmpty()) "" else "?"
+        return "$SCHEME://${percentEncode(sharedKey.toByteArray())}@$authority:$port$separator$query$fragment"
     }
 
     companion object {
         const val SCHEME: String = "nowhere"
-        const val DEFAULT_ALPN: String = "now/1"
-        const val ALPN_MIN_LENGTH: Int = 1
-        const val ALPN_MAX_LENGTH: Int = 255
         private const val PIN_LENGTH = 64
         private const val NONE = "none"
 
@@ -222,7 +248,15 @@ data class NowhereUrl(
             val scheme = uri.scheme?.lowercase() ?: return invalid(UrlReason.Malformed)
             if (scheme != SCHEME) return invalid(UrlReason.WrongScheme(scheme))
 
-            val host = uri.host ?: return invalid(UrlReason.MissingHost)
+            // Before the port: a carrier path has no authority port, and
+            // reporting "port -1" for it would name the wrong problem.
+            val path = uri.rawPath.orEmpty()
+            if (path.isNotEmpty() && path != "/") return invalid(UrlReason.CarrierPath(path))
+
+            // `URI` keeps an IPv6 literal's brackets. They are URL syntax, not
+            // part of the address, and a name to verify a certificate against
+            // or to hand to a resolver does not have them.
+            val host = uri.host?.removeSurrounding("[", "]") ?: return invalid(UrlReason.MissingHost)
             if (host.isEmpty()) return invalid(UrlReason.MissingHost)
             val port = uri.port
             if (port !in 1..65535) return invalid(UrlReason.InvalidPort(port))
@@ -232,53 +266,73 @@ data class NowhereUrl(
                     is DecodeResult.Invalid -> return extracted
                     is DecodeResult.Ok -> extracted.value
                 }
+            if (!SharedKey.isServiceFormat(sharedKey.toByteArray())) return invalid(AuthReason.NotServiceFormat)
 
             val parameters = parseQuery(uri.rawQuery)
 
-            val up =
-                carrier("up", parameters["up"]) ?: return invalid(
-                    UrlReason.InvalidCarrier("up", parameters.getValue("up")),
-                )
-            val down =
-                carrier("down", parameters["down"]) ?: return invalid(
-                    UrlReason.InvalidCarrier("down", parameters.getValue("down")),
-                )
+            val net =
+                when (val raw = parameters["net"]) {
+                    null -> legacyCarrier(parameters) ?: NextHopCarrier.DEFAULT
+                    else -> NextHopCarrier.fromToken(raw) ?: return invalid(UrlReason.InvalidCarrier(raw))
+                }
 
-            val alpn = parameters["alpn"]?.let(::percentDecode) ?: DEFAULT_ALPN
-            if (alpn.encodeToByteArray().size !in ALPN_MIN_LENGTH..ALPN_MAX_LENGTH) {
-                return invalid(UrlReason.InvalidAlpn(alpn.encodeToByteArray().size))
-            }
+            val morph =
+                when (val raw = parameters["morph"]) {
+                    null, "1" -> true
+                    "0" -> false
+                    else -> return invalid(UrlReason.InvalidMorph(raw))
+                }
 
             val verification =
-                when (val result = verification(parameters)) {
+                when (val result = verification(parameters, host)) {
                     is DecodeResult.Invalid -> return result
                     is DecodeResult.Ok -> result.value
                 }
+
+            val rate = mbps("rate", parameters) ?: return invalid(UrlReason.InvalidRate("rate", parameters.getValue("rate")))
+            val etar = mbps("etar", parameters) ?: return invalid(UrlReason.InvalidRate("etar", parameters.getValue("etar")))
 
             return NowhereUrl(
                 sharedKey = sharedKey,
                 host = host,
                 port = port,
-                up = up,
-                down = down,
-                // Anything but "1" is the default. Upstream treats mux as a
-                // boolean switch, so an unparseable value must not be an error.
-                mux = parameters["mux"] == "1",
-                alpn = alpn,
+                net = net,
+                morph = morph,
                 certificateVerification = verification,
-                rateMbps = parameters["rate"]?.toIntOrNull() ?: 0,
-                etarMbps = parameters["etar"]?.toIntOrNull() ?: 0,
+                rateMbps = rate,
+                etarMbps = etar,
                 displayName = uri.rawFragment?.let(::percentDecode)?.takeIf { it.isNotEmpty() },
             ).ok()
         }
 
-        private fun carrier(
-            name: String,
-            raw: String?,
-        ): NextHopCarrier? = if (raw == null) NextHopCarrier.DEFAULT else NextHopCarrier.fromToken(raw)
+        /**
+         * A Nowhere 2.x dashboard's `up`/`down`, when they agree. See the class
+         * comment; null means "no usable hint", never an error, because these
+         * are not v3 parameters and v3 ignores what it does not recognise.
+         */
+        private fun legacyCarrier(parameters: Map<String, String>): NextHopCarrier? {
+            val up = parameters["up"]?.let(NextHopCarrier::fromToken) ?: return null
+            val down = parameters["down"]?.let(NextHopCarrier::fromToken) ?: return null
+            return up.takeIf { it == down }
+        }
 
-        /** `pin` wins over `sni`, matching upstream's precedence. */
-        private fun verification(parameters: Map<String, String>): DecodeResult<CertificateVerification> {
+        /** `0..=2147483647`, absent meaning 0. Null for a value that is present and wrong. */
+        private fun mbps(
+            name: String,
+            parameters: Map<String, String>,
+        ): Int? {
+            val raw = parameters[name] ?: return 0
+            return raw.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }?.toIntOrNull()
+        }
+
+        /**
+         * `pin` wins over `sni`, matching upstream's precedence, and the
+         * default for both is chain verification against [host].
+         */
+        private fun verification(
+            parameters: Map<String, String>,
+            host: String,
+        ): DecodeResult<CertificateVerification> {
             val pin = parameters["pin"]?.takeIf { it.isNotEmpty() && !it.equals(NONE, ignoreCase = true) }
             if (pin != null) {
                 val normalised = pin.lowercase()
@@ -289,12 +343,21 @@ data class NowhereUrl(
                     invalid(UrlReason.InvalidPin(pin))
                 }
             }
-            val sni =
-                parameters["sni"]
-                    ?.let(::percentDecode)
-                    ?.takeIf { it.isNotEmpty() && !it.equals(NONE, ignoreCase = true) }
-            return (sni?.let { CertificateVerification.Sni(it) } ?: CertificateVerification.Skipped).ok()
+            val rawSni = parameters["sni"]?.let(::percentDecode)
+            val sni = rawSni?.takeIf { it.isNotEmpty() && !it.equals(NONE, ignoreCase = true) }
+            if (sni != null && !isAsciiDnsName(sni)) return invalid(UrlReason.InvalidSni(sni))
+            return CertificateVerification.Sni(sni ?: host).ok()
         }
+
+        /** Letters, digits, hyphens and dots, in non-empty labels; what `ASCII DNS name` admits. */
+        private fun isAsciiDnsName(name: String): Boolean =
+            name.length <= 253 &&
+                name.split('.').all { label ->
+                    label.length in 1..63 &&
+                        label.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' } &&
+                        !label.startsWith('-') &&
+                        !label.endsWith('-')
+                }
 
         /**
          * Splits the raw query. Later duplicates lose to earlier ones, and

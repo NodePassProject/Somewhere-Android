@@ -8,23 +8,26 @@ import eu.nodepass.somewhere.conformance.VectorFixture.str
 import eu.nodepass.somewhere.conformance.hexToByteArrayCompat
 import eu.nodepass.somewhere.conformance.toHex
 import eu.nodepass.somewhere.protocol.DecodeResult
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Drives every vector in the `auth` family. NW-P-01.
+ * Drives every vector in the `auth` family, `docs/protocol.md` § Authentication.
  *
- * The family's rejection vectors cover shared-key extraction from a URL as well
- * as the key itself — the URL rules are what decide which bytes become the key,
- * so they belong with authentication rather than with URL parsing.
+ * The positive vectors are upstream's own (`src/tests/protocol/vectors.json`):
+ * both role keys and all four AuthFrames, over both transports, for one shared
+ * key and one exporter.
  */
 class AuthVectorTest {
+    private val family = VectorFixture.family("auth")
     private val cases = VectorFixture.cases("auth")
     private val rejects = VectorFixture.rejects("auth")
+    private val exporter = family.str("exporterHex").hexToByteArrayCompat()
+    private val sharedKey = key(family.str("sharedKeyUtf8"))
 
     private fun key(text: String): SharedKey = (SharedKey.of(text) as DecodeResult.Ok).value
 
@@ -35,116 +38,131 @@ class AuthVectorTest {
             else -> error("unknown transport in fixture: $name")
         }
 
+    private fun roleOf(name: String): AuthRole =
+        when (name) {
+            "vector" -> AuthRole.Vector
+            "egress" -> AuthRole.Egress
+            else -> error("unknown role in fixture: $name")
+        }
+
     // ── Positive vectors ────────────────────────────────────────────────────
 
     @Test
     fun everyPositiveVectorIsReproduced() {
-        assertEquals("fixture should carry 3 auth cases", 3, cases.size)
-        var checked = 0
+        assertEquals("fixture should carry 4 auth cases", 4, cases.size)
         cases.forEach { case ->
-            when {
-                "expectedAuthKeyHex" in case -> {
-                    val derived = Authentication.deriveAuthKey(key(case.str("sharedKeyUtf8")))
-                    assertEquals(case.str("name"), case.str("expectedAuthKeyHex"), derived.toHex())
-                    checked++
-                }
-                "expectedFrameHex" in case -> {
-                    val frame =
-                        Authentication.encodeFrame(
-                            sharedKey = key(case.str("sharedKeyUtf8")),
-                            transport = transportOf(case.str("transport")),
-                            exporter = case.str("exporterHex").hexToByteArrayCompat(),
-                            sessionId = case.str("sessionIdHex").hexToByteArrayCompat(),
-                        )
-                    assertEquals(case.str("name"), case.str("expectedFrameHex"), frame.toHex())
-                    checked++
-                }
-                else -> error("unhandled auth case shape: ${case.str("name")}")
-            }
+            val role = roleOf(case.str("role"))
+            val roleKey = Authentication.deriveRoleKey(sharedKey, role)
+            assertEquals("${case.str("name")} role key", case.str("expectedRoleKeyHex"), roleKey.toHex())
+            val frame = Authentication.tag(roleKey, transportOf(case.str("transport")), exporter)
+            assertEquals(case.str("name"), case.str("expectedFrameHex"), frame.toHex())
         }
-        assertEquals("every case must be exercised", cases.size, checked)
+    }
+
+    @Test
+    fun thisClientSendsTheVectorFrame() {
+        // encodeFrame is what goes on the wire, and it must be the Vector role's:
+        // an Egress tag over TLS is refused, and over QUIC it would register as
+        // an Egress and never be offered a flow.
+        cases.filter { it.str("role") == "vector" }.forEach { case ->
+            val frame = Authentication.encodeFrame(sharedKey, transportOf(case.str("transport")), exporter)
+            assertEquals(case.str("name"), case.str("expectedFrameHex"), frame.toHex())
+        }
+    }
+
+    @Test
+    fun theExporterLabelIsTheV3One() {
+        assertEquals(family["derivation"]!!.jsonObject.str("exporterLabel"), Authentication.EXPORTER_LABEL)
+        assertEquals("EXPORTER-Nowhere-nw3-Auth", Authentication.EXPORTER_LABEL)
     }
 
     @Test
     fun theTransportByteChangesTheTag() {
         // The whole point of binding transport into the tag: a frame minted for
         // TLS must not be replayable on QUIC.
-        val tls = cases.first { it.str("name").contains("TLS") }
-        val quic = cases.first { it.str("name").contains("QUIC") }
-        assertNotEquals(tls.str("expectedFrameHex"), quic.str("expectedFrameHex"))
+        val tls = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter)
+        val quic = Authentication.encodeFrame(sharedKey, AuthTransport.Quic, exporter)
+        assertNotEquals(tls.toHex(), quic.toHex())
     }
 
     @Test
     fun theExporterBindsTheTagToOneConnection() {
-        val sharedKey = key("secret")
-        val sessionId = ByteArray(16)
-        val one = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 1 }, sessionId)
-        val other = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 2 }, sessionId)
+        val one = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 1 })
+        val other = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 2 })
         assertNotEquals(one.toHex(), other.toHex())
     }
 
     @Test
-    fun aFrameVerifiesAgainstItsOwnInputs() {
-        val sharedKey = key("secret")
-        val exporter = ByteArray(32) { it.toByte() }
-        val sessionId = ByteArray(16) { (it * 3).toByte() }
-        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter, sessionId)
-
+    fun aFrameVerifiesAsTheVectorRole() {
+        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter)
         val verified = Authentication.verifyFrame(frame, sharedKey, AuthTransport.TlsTcp, exporter)
-        assertEquals(sessionId.toHex(), (verified as DecodeResult.Ok).value.toHex())
+        assertEquals(AuthRole.Vector, (verified as DecodeResult.Ok).value)
+    }
+
+    @Test
+    fun anEgressTagVerifiesOverQuicOnly() {
+        val roleKey = Authentication.deriveRoleKey(sharedKey, AuthRole.Egress)
+        val overQuic = Authentication.tag(roleKey, AuthTransport.Quic, exporter)
+        assertEquals(AuthRole.Egress, Authentication.verifyFrame(overQuic, sharedKey, AuthTransport.Quic, exporter).valueOrNull())
+
+        val overTls = Authentication.tag(roleKey, AuthTransport.TlsTcp, exporter)
+        assertEquals(AuthReason.TagMismatch, Authentication.verifyFrame(overTls, sharedKey, AuthTransport.TlsTcp, exporter).reasonOrNull())
     }
 
     @Test
     fun aFrameDoesNotVerifyOnAnotherConnection() {
-        val sharedKey = key("secret")
-        val sessionId = ByteArray(16)
-        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 1 }, sessionId)
-
+        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 1 })
         val replayed = Authentication.verifyFrame(frame, sharedKey, AuthTransport.TlsTcp, ByteArray(32) { 2 })
         assertEquals(AuthReason.TagMismatch, replayed.reasonOrNull())
     }
 
     @Test
     fun aFrameDoesNotVerifyOnAnotherTransport() {
-        val sharedKey = key("secret")
-        val exporter = ByteArray(32) { it.toByte() }
-        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter, ByteArray(16))
-
+        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter)
         val crossed = Authentication.verifyFrame(frame, sharedKey, AuthTransport.Quic, exporter)
         assertEquals(AuthReason.TagMismatch, crossed.reasonOrNull())
     }
 
     @Test
-    fun theFrameIsExactlyThirtyTwoBytes() {
-        val frame = Authentication.encodeFrame(key("secret"), AuthTransport.TlsTcp, ByteArray(32), ByteArray(16))
-        assertEquals(32, frame.size)
+    fun theFrameIsExactlySixteenBytes() {
+        val frame = Authentication.encodeFrame(sharedKey, AuthTransport.TlsTcp, exporter)
+        assertEquals(16, frame.size)
         assertEquals(Authentication.FRAME_LENGTH, frame.size)
+    }
+
+    @Test
+    fun theRoleKeysDiffer() {
+        // One shared key derives both, and the specification is explicit that
+        // this is role distinction rather than credential isolation — but the
+        // two must still differ, or a Portal could not tell the roles apart.
+        assertNotEquals(
+            Authentication.deriveRoleKey(sharedKey, AuthRole.Vector).toHex(),
+            Authentication.deriveRoleKey(sharedKey, AuthRole.Egress).toHex(),
+        )
     }
 
     // ── Rejection vectors ───────────────────────────────────────────────────
 
     @Test
     fun everyRejectionVectorIsRefused() {
-        assertEquals("fixture should carry 5 auth rejects", 5, rejects.size)
+        assertEquals("fixture should carry 4 auth rejects", 4, rejects.size)
         var checked = 0
         rejects.forEach { reject ->
             val name = reject.str("name")
             when {
-                "sharedKeyLen" in reject -> {
-                    val length = reject["sharedKeyLen"]!!.jsonPrimitive.content.toInt()
-                    val result = SharedKey.of(ByteArray(length))
-                    assertTrue("$name should be rejected", result is DecodeResult.Invalid)
+                "sharedKeyUtf8" in reject -> {
+                    assertFalse(name, SharedKey.isServiceFormat(reject.str("sharedKeyUtf8").encodeToByteArray()))
                     checked++
                 }
-                "url" in reject -> {
-                    assertTrue("$name should be rejected", userInfoOf(reject.str("url")).let(::rejectsUserInfo))
+                "frameLen" in reject -> {
+                    val length = reject.str("frameLen").toInt()
+                    val result = Authentication.verifyFrame(ByteArray(length), sharedKey, AuthTransport.TlsTcp, exporter)
+                    assertEquals(name, AuthReason.FrameTruncated(length), result.reasonOrNull())
                     checked++
                 }
-                "urls" in reject -> {
-                    reject["urls"]!!.jsonArray.forEach { element ->
-                        val url = element.jsonPrimitive.content
-                        assertTrue("$name ($url) should be rejected", rejectsUserInfo(userInfoOf(url)))
-                    }
+                name.startsWith("Egress tag over TLS") -> {
+                    // Covered by anEgressTagVerifiesOverQuicOnly; counted here so
+                    // that the fixture and this suite cannot drift apart.
                     checked++
                 }
                 else -> error("unhandled auth reject shape: $name")
@@ -153,9 +171,10 @@ class AuthVectorTest {
         assertEquals("every rejection must be exercised", rejects.size, checked)
     }
 
-    private fun userInfoOf(url: String): String? = url.substringAfter("://").substringBefore('@').takeIf { it != url.substringAfter("://") }
-
-    private fun rejectsUserInfo(userInfo: String?): Boolean = SharedKey.fromUserInfo(userInfo) is DecodeResult.Invalid
+    @Test
+    fun theVectorsKeyIsInServiceForm() {
+        assertTrue(SharedKey.isServiceFormat(family.str("sharedKeyUtf8").encodeToByteArray()))
+    }
 
     @Test
     fun rejectionsAreDistinguishable() {
@@ -174,12 +193,12 @@ class AuthVectorTest {
         assertTrue(SharedKey.of(ByteArray(255)) is DecodeResult.Ok)
     }
 
-    // ── Fixture notes rendered as tests ─────────────────────────────────────
+    // ── Shared-key handling ─────────────────────────────────────────────────
 
     @Test
     fun plusIsALiteralPlusAndNotASpace() {
-        // The fixture states this explicitly. Using a form decoder here would
-        // silently turn a key containing '+' into a different key.
+        // Using a form decoder here would silently turn a key containing '+'
+        // into a different key.
         val decoded = SharedKey.fromUserInfo("a+b")
         assertEquals("a+b", String((decoded as DecodeResult.Ok).value.toByteArray()))
     }
@@ -188,6 +207,13 @@ class AuthVectorTest {
     fun percentEncodedBytesAreDecoded() {
         val decoded = SharedKey.fromUserInfo("a%2Bb") as DecodeResult.Ok
         assertEquals("a+b", String(decoded.value.toByteArray()))
+    }
+
+    @Test
+    fun hexLookingTextIsNotHexDecoded() {
+        // "Its text bytes enter the KDF directly; hexadecimal-looking text is
+        // not hex-decoded." The 32 characters are 32 bytes, not 16.
+        assertEquals(32, sharedKey.size)
     }
 
     @Test

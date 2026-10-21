@@ -18,10 +18,6 @@ sealed interface QuicDatagramReason : DecodeReason {
         override val detail: String = "type 3 does not exist"
     }
 
-    data object ReservedBits : QuicDatagramReason {
-        override val detail: String = "the six reserved bits of the flags byte must be zero"
-    }
-
     data object ZeroFlowId : QuicDatagramReason {
         override val detail: String = "flow_id is nonzero"
     }
@@ -31,7 +27,7 @@ sealed interface QuicDatagramReason : DecodeReason {
     }
 
     data object CloseCarriesPayload : QuicDatagramReason {
-        override val detail: String = "a CLOSE datagram is exactly five bytes"
+        override val detail: String = "a CLOSE datagram is exactly four bytes"
     }
 
     data class FragmentCount(
@@ -48,11 +44,11 @@ sealed interface QuicDatagramReason : DecodeReason {
     }
 
     data object TotalLength : QuicDatagramReason {
-        override val detail: String = "total_len is nonzero and at most 65535"
+        override val detail: String = "total_len is at least the fragment count and at most 65535"
     }
 
     data object PayloadEmpty : QuicDatagramReason {
-        override val detail: String = "a fragment carries at least one byte"
+        override val detail: String = "a fragment carries at least one byte and leaves at least one for every other fragment"
     }
 
     data class DoesNotFit(
@@ -63,10 +59,10 @@ sealed interface QuicDatagramReason : DecodeReason {
 }
 
 /**
- * One UDP packet inside one QUIC DATAGRAM. `docs/protocol.md` section 9.
+ * One UDP packet inside one QUIC DATAGRAM. `docs/protocol.md` § QUIC datagrams.
  *
- * Every DATAGRAM carries exactly one frame, and the frame's type is the low two
- * bits of the first byte. DATA needs no length field because the DATAGRAM
+ * Every DATAGRAM carries exactly one frame, opened by a four-byte base word
+ * whose top two bits are the type and whose low thirty are the flow id. DATA needs no length field because the DATAGRAM
  * boundary supplies it — which is the whole reason this framing is shorter than
  * UDP-over-stream's.
  */
@@ -84,7 +80,7 @@ sealed interface QuicDatagram {
         override fun hashCode(): Int = 31 * flowId.hashCode() + payload.contentHashCode()
     }
 
-    /** The route for this flow is gone. Five bytes, never more. */
+    /** The route for this flow is gone. Four bytes, never more. */
     data class Close(
         override val flowId: UInt,
     ) : QuicDatagram
@@ -122,11 +118,10 @@ sealed interface QuicDatagram {
 
     fun encode(): ByteArray =
         when (this) {
-            is Data -> byteArrayOf(TYPE_DATA.toByte()) + flowId.toBytes() + payload
-            is Close -> byteArrayOf(TYPE_CLOSE.toByte()) + flowId.toBytes()
+            is Data -> base(TYPE_DATA, flowId) + payload
+            is Close -> base(TYPE_CLOSE, flowId)
             is Fragment ->
-                byteArrayOf(TYPE_FRAGMENT.toByte()) +
-                    flowId.toBytes() +
+                base(TYPE_FRAGMENT, flowId) +
                     packetId.toBytes() +
                     byteArrayOf(index.toByte(), count.toByte()) +
                     byteArrayOf((totalLength shr 8).toByte(), totalLength.toByte()) +
@@ -138,11 +133,21 @@ sealed interface QuicDatagram {
         const val TYPE_FRAGMENT = 1
         const val TYPE_CLOSE = 2
 
-        /** flags(1) + flow_id(4). */
-        const val COMMON_HEADER_SIZE = 5
+        /** The base word: type(2 bits) + flow_id(30 bits). */
+        const val COMMON_HEADER_SIZE = 4
 
-        /** flags(1) + flow_id(4) + packet_id(4) + ix(1) + count(1) + total_len(2). */
-        const val FRAGMENT_HEADER_SIZE = 13
+        /** base(4) + packet_id(4) + ix(1) + count(1) + total_len(2). */
+        const val FRAGMENT_HEADER_SIZE = 12
+
+        private const val TYPE_SHIFT = 30
+
+        private fun base(
+            type: Int,
+            flowId: UInt,
+        ): ByteArray {
+            require(flowId in 1u..QuicFlowId.MAX) { "flow id $flowId is outside 1..${QuicFlowId.MAX}" }
+            return ((type.toUInt() shl TYPE_SHIFT) or flowId).toBytes()
+        }
 
         const val MIN_FRAGMENT_COUNT = 2
         const val MAX_FRAGMENT_COUNT = 255
@@ -152,13 +157,11 @@ sealed interface QuicDatagram {
 
         fun decode(bytes: ByteArray): DecodeResult<QuicDatagram> {
             if (bytes.size < COMMON_HEADER_SIZE) return invalid(QuicDatagramReason.Truncated)
-            val flags = bytes[0].toInt() and 0xFF
-            if (flags and 0xFC != 0) return invalid(QuicDatagramReason.ReservedBits)
-
-            val flowId = bytes.uint(1)
+            val word = bytes.uint(0)
+            val flowId = word and QuicFlowId.MAX
             if (flowId == 0u) return invalid(QuicDatagramReason.ZeroFlowId)
 
-            return when (flags and 0x03) {
+            return when ((word shr TYPE_SHIFT).toInt()) {
                 TYPE_DATA -> Data(flowId, bytes.copyOfRange(COMMON_HEADER_SIZE, bytes.size)).ok()
 
                 TYPE_CLOSE ->
@@ -179,16 +182,20 @@ sealed interface QuicDatagram {
             flowId: UInt,
         ): DecodeResult<QuicDatagram> {
             if (bytes.size <= FRAGMENT_HEADER_SIZE) return invalid(QuicDatagramReason.PayloadEmpty)
-            val packetId = bytes.uint(5)
+            val packetId = bytes.uint(4)
             if (packetId == 0u) return invalid(QuicDatagramReason.ZeroPacketId)
 
-            val index = bytes[9].toInt() and 0xFF
-            val count = bytes[10].toInt() and 0xFF
+            val index = bytes[8].toInt() and 0xFF
+            val count = bytes[9].toInt() and 0xFF
             if (count < MIN_FRAGMENT_COUNT) return invalid(QuicDatagramReason.FragmentCount(count))
             if (index >= count) return invalid(QuicDatagramReason.FragmentIndex(index, count))
 
-            val totalLength = ((bytes[11].toInt() and 0xFF) shl 8) or (bytes[12].toInt() and 0xFF)
-            if (totalLength == 0) return invalid(QuicDatagramReason.TotalLength)
+            val totalLength = ((bytes[10].toInt() and 0xFF) shl 8) or (bytes[11].toInt() and 0xFF)
+            if (totalLength < count) return invalid(QuicDatagramReason.TotalLength)
+            // Every other fragment needs at least one byte of what is left.
+            if (bytes.size - FRAGMENT_HEADER_SIZE + (count - 1) > totalLength) {
+                return invalid(QuicDatagramReason.PayloadEmpty)
+            }
 
             return Fragment(
                 flowId = flowId,
@@ -213,7 +220,7 @@ sealed interface QuicDatagram {
             maxDatagram: Int,
         ): DecodeResult<Int> {
             // Zero is a valid packet and not an absence — `docs/protocol.md`
-            // section 9 says so of DATA explicitly, and the fixture has a case
+            // the specification says so of DATA explicitly, and the fixture has a case
             // for it. The nonzero rule belongs to `total_len`, which only a
             // *fragment* carries; applying it here refused an empty packet that
             // the specification accepts, and the vectors caught it.

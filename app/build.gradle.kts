@@ -73,7 +73,7 @@ android {
         // form a script uses when it varies a setting between runs — that form
         // reaches `am instrument` without changing the APK, so it does not
         // trigger a reinstall, and a reinstall clears the VPN consent grant.
-        listOf("nowhereE2ePortal", "nowhereE2eKey", "nowhereE2eTarget", "nowhereE2eOrigin", "nowhereE2eMux")
+        listOf("nowhereE2ePortal", "nowhereE2eKey", "nowhereE2ePin", "nowhereE2eMorph", "nowhereE2eTarget", "nowhereE2eOrigin")
             .forEach { name ->
                 (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }?.let {
                     testInstrumentationRunnerArguments[name] = it
@@ -561,7 +561,7 @@ abstract class NativeBridgeChecksTask : DefaultTask() {
             }
 
         // A second source-level rule, in the same file and of the same kind.
-        // Section 3 of the specification says unidirectional streams are not
+        // The specification says unidirectional streams are not
         // used. This client advertises initial_max_streams_uni = 0, so the
         // statement is on the wire — but nothing stops a later change from
         // opening one, and a stream the peer will never read is a flow that

@@ -4,8 +4,9 @@
 package eu.nodepass.somewhere.quic
 
 import eu.nodepass.somewhere.protocol.auth.Authentication
-import eu.nodepass.somewhere.protocol.session.Transport
+import eu.nodepass.somewhere.protocol.session.StreamTransport
 import eu.nodepass.somewhere.protocol.session.TransportKind
+import java.io.IOException
 
 /**
  * One QUIC stream, seen as the byte transport the session layer already knows.
@@ -19,8 +20,8 @@ import eu.nodepass.somewhere.protocol.session.TransportKind
  * that had to be new is where the AuthFrame goes.
  *
  * The exporter is the **connection's**, not the stream's, which is correct:
- * NW-P-01 binds a session to a connection, so every stream on one connection
- * derives the same tag input. It is cached because RFC 5705 derivation is not
+ * authentication is connection-wide, so every stream on one connection derives
+ * the same tag input. It is cached because RFC 5705 derivation is not
  * free and the value cannot change once the handshake is complete.
  *
  * ## Reads block only their own flow
@@ -32,8 +33,8 @@ import eu.nodepass.somewhere.protocol.session.TransportKind
  */
 class QuicStreamTransport(
     private val connection: QuicConnection,
-    val streamId: Long,
-) : Transport {
+    override val streamId: Long,
+) : StreamTransport {
     private var readTimeoutMillis: Int = DEFAULT_READ_TIMEOUT_MILLIS
     private var closed = false
 
@@ -46,7 +47,7 @@ class QuicStreamTransport(
     override val isOpen: Boolean get() = !closed
 
     override fun write(bytes: ByteArray) {
-        connection.send(streamId, bytes)
+        ioFailure { connection.send(streamId, bytes) }
     }
 
     /**
@@ -64,7 +65,24 @@ class QuicStreamTransport(
         into: ByteArray,
         offset: Int,
         length: Int,
-    ): Int = connection.receive(streamId, into, offset, length, readTimeoutMillis.toLong())
+    ): Int = ioFailure { connection.receive(streamId, into, offset, length, readTimeoutMillis.toLong()) }
+
+    /**
+     * A connection that died under this stream is an I/O failure of the
+     * stream, which is what the Transport interface promises its callers.
+     *
+     * Found by the oracle differential: a v3 Portal closes the connection on a
+     * refused AuthFrame, the read for the setup byte saw the native
+     * `QuicException`, and it escaped the carrier as a transport failure where
+     * the TLS carrier — reading an end of stream for the same refusal — said
+     * "no answer". The oracle agrees with the TLS reading.
+     */
+    private inline fun <T> ioFailure(body: () -> T): T =
+        try {
+            body()
+        } catch (failure: QuicException) {
+            throw IOException(failure.failure.detail, failure)
+        }
 
     override fun setReadTimeout(millis: Int) {
         readTimeoutMillis = millis
@@ -91,7 +109,12 @@ class QuicStreamTransport(
          * wrong shared key does not hang: authentication is answered with
          * silence rather than a close, so this deadline is the only thing that
          * ends that wait.
+         *
+         * Twenty seconds because that is the Portal's own flow-setup limit
+         * (`NOW_FLOW_SETUP_TIMEOUT`). Its target dial gives up at fifteen and
+         * answers `DIAL_FAILED`; a client deadline at fifteen races that answer
+         * and reports silence instead, which reads as a wrong key.
          */
-        const val DEFAULT_READ_TIMEOUT_MILLIS = 15_000
+        const val DEFAULT_READ_TIMEOUT_MILLIS = 20_000
     }
 }

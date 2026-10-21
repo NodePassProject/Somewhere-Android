@@ -3,6 +3,8 @@
 
 package eu.nodepass.somewhere.quic
 
+import eu.nodepass.somewhere.protocol.Nw3
+import eu.nodepass.somewhere.protocol.morph.MorphDatagram
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
 import java.io.Closeable
 import java.net.DatagramPacket
@@ -60,6 +62,18 @@ sealed interface QuicFailure {
             }
     }
 
+    /**
+     * The handshake finished and the certificate chain did not verify.
+     *
+     * Raised before the connection is handed to anyone, so no Nowhere byte —
+     * the AuthFrame least of all — has been written on it.
+     */
+    data class Untrusted(
+        val cause: String,
+    ) : QuicFailure {
+        override val detail: String = "the Portal's certificate was not accepted: $cause"
+    }
+
     /** The connection has been closed, by this side or by the peer. */
     data class Closed(
         val cause: String,
@@ -112,17 +126,28 @@ class QuicException(
  */
 class QuicConnection private constructor(
     private val remote: InetSocketAddress,
-    private val alpn: String,
     private val serverName: String?,
     /**
      * SHA-256 of the leaf certificate this connection will accept, or null.
      *
-     * Null means no verification at all, which is upstream's behaviour for a
-     * node naming neither `sni` nor `pin` and what every URL current dashboards
-     * emit produces. It is not a default this class chose; it is the one the
-     * protocol has.
+     * Compared inside the handshake, by the bridge. Null means [peerCheck]
+     * decides instead; exactly one of the two is present, which [open]
+     * enforces, because v3 has no unverified mode to fall back to.
      */
     private val pinSha256: ByteArray?,
+    /**
+     * Chain verification, for a connection without a pin. Run once the
+     * handshake completes and before [completeHandshake] returns.
+     */
+    private val peerCheck: PeerCheck?,
+    /**
+     * Morph's datagram transform, or null with `morph=0`.
+     *
+     * Applied here, at the socket, because this is the only place the whole
+     * UDP datagram exists: below it is the kernel, above it is ngtcp2, which
+     * must see exactly the QUIC packet and nothing around it.
+     */
+    private val morph: MorphDatagram?,
     private val protect: (DatagramSocket) -> Boolean,
     private val openSocket: () -> DatagramSocket,
 ) : Closeable,
@@ -180,7 +205,10 @@ class QuicConnection private constructor(
 
     private fun run() {
         val out = ByteArray(MAX_DATAGRAM)
-        val incoming = ByteArray(MAX_DATAGRAM)
+        // Room for a peer's largest packet and the Morph nonce in front of it,
+        // with margin: a datagram larger than the buffer is truncated by the
+        // kernel without a word, and a truncated QUIC packet is just loss.
+        val incoming = ByteArray(RECEIVE_BUFFER_DATAGRAM)
         val packet = DatagramPacket(incoming, incoming.size)
         val harvest = ByteArray(HARVEST_BYTES)
 
@@ -210,8 +238,9 @@ class QuicConnection private constructor(
                     remote.address.address,
                     remote.port,
                     serverName,
-                    alpn.toByteArray(Charsets.US_ASCII),
+                    Nw3.ALPN.toByteArray(Charsets.US_ASCII),
                     pinSha256,
+                    if (morph == null) MAX_DATAGRAM else MAX_DATAGRAM - MorphDatagram.OVERHEAD,
                 )
             if (handle == 0L) {
                 throw QuicException(QuicFailure.NotOpened("the transport refused the parameters"))
@@ -266,7 +295,12 @@ class QuicConnection private constructor(
             val written = nativeWrite(handle, out)
             if (written == 0) return
             require(written)
-            socket.send(DatagramPacket(out, written))
+            if (morph == null) {
+                socket.send(DatagramPacket(out, written))
+            } else {
+                val wire = morph.seal(out, 0, written)
+                socket.send(DatagramPacket(wire, wire.size))
+            }
         }
     }
 
@@ -299,7 +333,15 @@ class QuicConnection private constructor(
                 if (taken == 0) require(nativeHandleExpiry(handle))
                 return
             }
-            require(nativeReceive(handle, incoming, packet.length))
+            if (morph == null) {
+                require(nativeReceive(handle, incoming, packet.length))
+            } else {
+                // Too short to be Morph is dropped, as the specification says;
+                // a wrong key is not detected here at all — the unmasked bytes
+                // are noise, and QUIC discards them as it would any other.
+                val plain = morph.open(incoming, 0, packet.length)
+                if (plain != null) require(nativeReceive(handle, plain, plain.size))
+            }
             taken++
         }
     }
@@ -308,7 +350,7 @@ class QuicConnection private constructor(
     private fun harvestDatagrams(buffer: ByteArray) {
         while (true) {
             // One more than the length, so that a zero-length datagram — which
-            // section 9 makes valid — is distinguishable from none waiting.
+            // the specification makes valid — is distinguishable from none waiting.
             val n = nativeReadDatagram(handle, buffer)
             if (n <= 0) {
                 if (n < 0) require(n)
@@ -386,6 +428,38 @@ class QuicConnection private constructor(
             }
             Thread.sleep(HANDSHAKE_POLL_MILLIS)
         }
+        verifyPeer()
+    }
+
+    /**
+     * Chain verification, when there is no pin: after the handshake, before
+     * anything is written.
+     *
+     * Here rather than in the TLS callback so that the trust decision runs in
+     * Kotlin, against the platform's own store, with no upcall from C on the
+     * owner thread. The order is what makes it equivalent: the connection is
+     * not handed to anyone until this returns, so the AuthFrame cannot have
+     * gone out to a Portal that has not been verified.
+     */
+    private fun verifyPeer() {
+        val check = peerCheck ?: return
+        val chain =
+            onOwner {
+                generateSequence(0) { it + 1 }
+                    .map { nativePeerCertificate(handle, it) }
+                    .takeWhile { it != null }
+                    .filterNotNull()
+                    .toList()
+            }
+        val refusal = check.refusal(chain) ?: return
+        close()
+        throw QuicException(QuicFailure.Untrusted(refusal))
+    }
+
+    /** Decides whether a peer's chain, DER and leaf first, is acceptable. */
+    fun interface PeerCheck {
+        /** Null to accept; otherwise the reason, for the user. */
+        fun refusal(chain: List<ByteArray>): String?
     }
 
     val handshakeCompleted: Boolean get() = handshakeDone
@@ -538,7 +612,7 @@ class QuicConnection private constructor(
      * Takes one received DATAGRAM, waiting up to [timeoutMillis].
      *
      * @return the bytes, or null when nothing arrived in time. A zero-length
-     *   datagram is a real frame — section 9 says an empty DATA is valid — so
+     *   datagram is a real frame — the specification says an empty DATA is valid — so
      *   "nothing" cannot be spelled as an empty array.
      */
     fun receiveDatagram(timeoutMillis: Long): ByteArray? {
@@ -557,7 +631,7 @@ class QuicConnection private constructor(
      * The largest Nowhere DATA frame one DATAGRAM can carry right now, or 0
      * when the peer did not enable RFC 9221.
      *
-     * **It can shrink**, which is not a detail: section 9 says replanning after
+     * **It can shrink**, which is not a detail: the specification says replanning after
      * it does must use a new `packet_id`, because a peer reassembling the old
      * plan and the new one under one id would produce a packet that is neither.
      */
@@ -621,8 +695,13 @@ class QuicConnection private constructor(
          * The largest datagram this client will send or accept in one piece.
          * 1452 is ngtcp2's own default send size on a 1500-byte path, and the
          * bridge refuses a buffer smaller than that rather than truncating.
+         * Under Morph the QUIC packet gets twelve bytes less, so that the
+         * packet and its nonce together still fit this.
          */
         const val MAX_DATAGRAM = 1452
+
+        /** What one socket read can hold; see the receive loop. */
+        private const val RECEIVE_BUFFER_DATAGRAM = 2048
 
         /**
          * A pin is a SHA-256 of the leaf's DER encoding, so it is 32 bytes.
@@ -665,17 +744,22 @@ class QuicConnection private constructor(
          */
         fun open(
             remote: InetSocketAddress,
-            alpn: String,
             serverName: String?,
-            /** The leaf's SHA-256, or null for no verification. See [pinSha256]. */
+            /** The leaf's SHA-256, compared in the handshake. See [pinSha256]. */
             pinSha256: ByteArray? = null,
+            /** Chain verification after the handshake, when there is no pin. */
+            peerCheck: PeerCheck? = null,
+            morph: MorphDatagram? = null,
             protect: (DatagramSocket) -> Boolean,
             openSocket: () -> DatagramSocket = ::DatagramSocket,
         ): QuicConnection {
             require(pinSha256 == null || pinSha256.size == PIN_LENGTH) {
                 "a pin is $PIN_LENGTH bytes, got ${pinSha256?.size}"
             }
-            val connection = QuicConnection(remote, alpn, serverName, pinSha256, protect, openSocket)
+            require((pinSha256 == null) != (peerCheck == null)) {
+                "exactly one of a pin or a chain check: v3 has no unverified mode, and two would be two answers"
+            }
+            val connection = QuicConnection(remote, serverName, pinSha256, peerCheck, morph, protect, openSocket)
             connection.owner.start()
             connection.ready.await()
             connection.startupFailure.get()?.let { throw it }
@@ -698,6 +782,7 @@ class QuicConnection private constructor(
             serverName: String?,
             alpn: ByteArray,
             pin: ByteArray?,
+            maxUdpPayload: Int,
         ): Long
 
         @JvmStatic
@@ -738,6 +823,12 @@ class QuicConnection private constructor(
 
         @JvmStatic
         private external fun nativeOpenStream(handle: Long): Long
+
+        @JvmStatic
+        private external fun nativePeerCertificate(
+            handle: Long,
+            index: Int,
+        ): ByteArray?
 
         @JvmStatic
         private external fun nativeSend(

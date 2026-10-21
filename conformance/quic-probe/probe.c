@@ -8,9 +8,13 @@
  *     backend aws-lc speaks;
  *   - libev was replaced with a `poll()` loop, so the probe has no dependency
  *     that is not already on the machine;
- *   - the ALPN is `now/1` and the destination comes from the command line;
- *   - and the stream carries an AuthFrame, a FlowHeader and a Target instead
+ *   - the ALPN is `nw3` and the destination comes from the command line;
+ *   - and the stream carries an AuthFrame, a FlowStart and a Target instead
  *     of a fixed message, so the Portal has something to answer.
+ *
+ * It speaks Nowhere v3 without Morph, against a Portal started with
+ * `morph=0`: what it measures is the QUIC stack's exporter, and Morph is a
+ * datagram transform below that, proven by the client's own bridge.
  *
  * This file is a spike, not a component. Nothing in the app links against it:
  * it exists to answer D-15 with a measurement, and to keep answering it.
@@ -73,7 +77,7 @@
 static const char *remote_host = "127.0.0.1";
 static const char *remote_port = "4433";
 static const char *shared_key = "conformance-smoke-key";
-#define ALPN "\x5now/1"
+#define ALPN "\x3nw3"
 
 /*
  * Example 1: Handshake with www.google.com
@@ -284,20 +288,19 @@ static void log_printf(void *user_data, const char *fmt, ...) {
   fprintf(stderr, "\n");
 }
 
-/* The Portal's one setup byte, on the logical downlink. Section 6. */
+/* The Portal's one setup byte. docs/protocol.md § Setup results. */
 static int recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
                                int64_t stream_id, uint64_t offset,
                                const uint8_t *data, size_t datalen,
                                void *user_data, void *stream_user_data) {
   struct client *c = user_data;
   static const char *names[] = {
-    "READY",      "INVALID_REQUEST",  "METADATA_CONFLICT", "PAIR_TIMEOUT",
-    "FLOW_LIMIT", "DIAL_FAILED",      "SESSION_REPLACED",  "INTERNAL_ERROR"};
+    "READY", "INVALID_REQUEST", "FLOW_LIMIT", "DIAL_FAILED", "INTERNAL_ERROR"};
   (void)conn; (void)flags; (void)stream_id; (void)offset; (void)stream_user_data;
 
   if (datalen > 0) {
     printf("setup_result=0x%02x %s\n", data[0],
-           data[0] < 8 ? names[data[0]] : "unknown");
+           data[0] < 5 ? names[data[0]] : "unknown");
     c->done = 1;
   }
   return 0;
@@ -466,7 +469,10 @@ static size_t client_get_message(struct client *c, int64_t *pstream_id,
 
   if (c->stream.stream_id != -1 && c->stream.nwrite < c->stream.datalen) {
     *pstream_id = c->stream.stream_id;
-    *pfin = 1;
+    /* No FIN. A v3 Portal watches the stream while it dials, and an end of
+       stream before READY is the client going away: it stops and answers
+       nothing. */
+    *pfin = 0;
     datav->base = (uint8_t *)c->stream.data + c->stream.nwrite;
     datav->len = c->stream.datalen - c->stream.nwrite;
     return 1;
@@ -632,30 +638,23 @@ static void client_free(struct client *c) {
  * accept the AuthFrame built from it.
  */
 
-static void put_u32(uint8_t *p, uint32_t v) {
-  p[0] = (uint8_t)(v >> 24);
-  p[1] = (uint8_t)(v >> 16);
-  p[2] = (uint8_t)(v >> 8);
-  p[3] = (uint8_t)v;
-}
-
-/* AuthFrame, FlowHeader and Target, in the one write the specification asks
-   for. docs/protocol.md sections 2, 4 and 5. */
+/* AuthFrame, FlowStart and Target, in the one write the specification asks
+   for. docs/protocol.md § Authentication and § FlowStart and Target. */
 static int build_opening(struct client *c, const char *target_host,
                          uint16_t target_port) {
   uint8_t exporter[32], salt[SHA256_DIGEST_LENGTH];
   uint8_t auth_root[SHA256_DIGEST_LENGTH], auth_key[SHA256_DIGEST_LENGTH];
-  uint8_t session_id[16], tag_input[1 + 32 + 16], tag[SHA256_DIGEST_LENGTH];
-  uint8_t info[15];
+  uint8_t tag_input[1 + 32], tag[SHA256_DIGEST_LENGTH];
+  uint8_t info[22];
   unsigned int len = 0;
-  const char *root_label = "nowhere/now/1/auth-root";
+  const char *root_label = "nowhere/nw3/auth-root";
   size_t n = 0, i;
   struct in_addr addr;
 
-  /* The whole point of the spike. Empty context, and the label is fixed even
-     when a custom ALPN is configured. */
+  /* The whole point of the spike. Empty context, and lowercase nw3 in the
+     label. */
   if (SSL_export_keying_material(c->ssl, exporter, sizeof(exporter),
-                                 "EXPORTER-Nowhere-Auth", 21, NULL, 0,
+                                 "EXPORTER-Nowhere-nw3-Auth", 25, NULL, 0,
                                  1) != 1) {
     fprintf(stderr, "PROBE FAIL: SSL_export_keying_material refused\n");
     return -1;
@@ -668,30 +667,23 @@ static int build_opening(struct client *c, const char *target_host,
   SHA256((const uint8_t *)root_label, strlen(root_label), salt);
   HMAC(EVP_sha256(), salt, sizeof(salt), (const uint8_t *)shared_key,
        strlen(shared_key), auth_root, &len);
-  memcpy(info, "authentication", 14);
-  info[14] = 0x01;
+  /* The Vector role key. */
+  memcpy(info, "vector-authentication", 21);
+  info[21] = 0x01;
   HMAC(EVP_sha256(), auth_root, sizeof(auth_root), info, sizeof(info), auth_key,
        &len);
 
-  if (RAND_bytes(session_id, sizeof(session_id)) != 1) {
-    fprintf(stderr, "PROBE FAIL: RAND_bytes\n");
-    return -1;
-  }
-
   tag_input[0] = 0x02; /* transport = QUIC */
   memcpy(tag_input + 1, exporter, 32);
-  memcpy(tag_input + 33, session_id, 16);
   HMAC(EVP_sha256(), auth_key, sizeof(auth_key), tag_input, sizeof(tag_input),
        tag, &len);
 
-  memcpy(c->opening, session_id, 16);
-  memcpy(c->opening + 16, tag, 16);
-  n = 32;
+  /* The AuthFrame is the 16-byte tag and nothing else. */
+  memcpy(c->opening, tag, 16);
+  n = 16;
 
-  /* FlowHeader: DUPLEX, TCP, up=QUIC, down=QUIC, hops 0. */
-  c->opening[n++] = 0x18;
-  put_u32(c->opening + n, 1);
-  n += 4;
+  /* FlowStart: TCP. */
+  c->opening[n++] = 0x00;
 
   /* Target: an IPv4 literal. */
   c->opening[n++] = 0x01;
