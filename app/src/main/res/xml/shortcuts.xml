@@ -6,7 +6,8 @@
         android:shortcutId="toggle"
         android:enabled="true"
         android:icon="@drawable/ic_shortcut"
-        android:shortcutShortLabel="@string/shortcut_toggle">
+        android:shortcutShortLabel="@string/shortcut_toggle_short"
+        android:shortcutLongLabel="@string/shortcut_toggle">
         <intent
             android:action="eu.nodepass.somewhere.action.TOGGLE"
             android:targetClass="eu.nodepass.somewhere.QuickActionActivity"

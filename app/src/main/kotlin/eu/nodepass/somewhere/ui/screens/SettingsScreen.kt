@@ -55,6 +55,7 @@ import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.vpn.SomewhereVpnService
 
 @Composable
 fun SettingsScreen(
@@ -471,8 +472,13 @@ private fun Context.openVpnSettings() {
     runCatching { startActivity(vpn) }.recoverCatching { startActivity(fallback) }
 }
 
-private fun Context.notificationsEnabled(): Boolean =
-    getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() != false
+/** Off altogether, or only the tunnel's channel blocked: either way the shade shows nothing. */
+private fun Context.notificationsEnabled(): Boolean {
+    val manager = getSystemService(android.app.NotificationManager::class.java) ?: return true
+    if (!manager.areNotificationsEnabled()) return false
+    val channel = manager.getNotificationChannel(SomewhereVpnService.CHANNEL) ?: return true
+    return channel.importance != android.app.NotificationManager.IMPORTANCE_NONE
+}
 
 /** The app's own notification settings, where the permission can be given once the system stops asking. */
 private fun Context.openNotificationSettings() {

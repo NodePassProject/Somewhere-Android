@@ -279,4 +279,5 @@
     <string name="theme_dark">Dark</string>
     <string name="settings_language">Language</string>
     <string name="language_system">Device language</string>
+    <string name="shortcut_toggle_short">Toggle</string>
 </resources>

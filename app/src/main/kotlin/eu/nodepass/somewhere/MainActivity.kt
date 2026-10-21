@@ -132,7 +132,11 @@ class MainActivity : ComponentActivity() {
                 openAsset = { assets.open(it).bufferedReader().use { reader -> reader.readText() } },
             ).also { routing = it }
 
-        if (savedInstanceState == null && application.settings.settings.value.connectOnLaunch) connectOnLaunch()
+        // Only when the user opened the app from the launcher. Any app can
+        // start this activity — it is exported for links and for the tile —
+        // and none of them should be able to bring the tunnel up through it.
+        val fromLauncher = intent?.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+        if (savedInstanceState == null && fromLauncher && application.settings.settings.value.connectOnLaunch) connectOnLaunch()
 
         // Recents follows the switch while the app is open, so turning it on
         // takes effect without a restart.
@@ -196,33 +200,58 @@ class MainActivity : ComponentActivity() {
      */
     private fun connectOnLaunch() {
         if (TunnelController.isEngaged || VpnService.prepare(this) != null) return
+        val start = resolveStart() ?: return
         val guard = (application as SomewhereApplication).launchGuard
         if (!guard.beginAttempt()) {
             android.util.Log.w("SomewhereLaunch", "the last automatic connects did not survive; not connecting this time")
             return
         }
-        resolveStart()?.let(::startTunnel)
-        lifecycleScope.launch {
-            kotlinx.coroutines.delay(eu.nodepass.somewhere.data.LaunchGuard.SURVIVAL_MILLIS)
-            guard.survived()
-        }
+        startTunnel(start)
+        // On the process's main looper, not the activity's scope: a rotation,
+        // a theme change or Back within the window destroys the activity, and
+        // a reset tied to it never ran, counting an ordinary exit as a crash.
+        // Only the process dying stops this, which is the event being counted.
+        android.os
+            .Handler(android.os.Looper.getMainLooper())
+            .postDelayed({ guard.survived() }, eu.nodepass.somewhere.data.LaunchGuard.SURVIVAL_MILLIS)
     }
 
     /**
-     * Asks once for permission to post the tunnel's notification (API 33+).
+     * Asks for permission to post the tunnel's notification (API 33+), until
+     * the user has answered.
      *
-     * Without it the tunnel runs with nothing on screen saying so. Asked at
-     * the first connect rather than at install, because that is the moment
-     * the reason is obvious; a refusal is respected, and Settings says what
-     * it costs.
+     * Without it the tunnel runs with nothing on screen saying so. Asked once
+     * a tunnel is up — after VPN consent rather than beside it, where the two
+     * system dialogs stacked and the first was lost — and again whenever the
+     * app is opened with a tunnel up and no answer yet, which is what catches
+     * a tunnel started from the tile, a shortcut or on launch. Only an answer
+     * stops it; a dialog dismissed by something else is asked again. Settings
+     * says what a refusal costs.
      */
-    private fun askForNotificationsOnce() {
+    private fun askForNotificationsIfUnanswered() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
-        val asked = getPreferences(MODE_PRIVATE)
-        if (asked.getBoolean(ASKED_NOTIFICATIONS, false)) return
-        asked.edit().putBoolean(ASKED_NOTIFICATIONS, true).apply()
-        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+        if (getPreferences(MODE_PRIVATE).getBoolean(ANSWERED_NOTIFICATIONS, false)) return
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            // Granted, or refused in a way the system will remember: either is
+            // an answer. A refusal the system will still ask about again is
+            // not, and is left for next time.
+            val refusedForGood =
+                !granted &&
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
+            if (granted || refusedForGood) {
+                getPreferences(MODE_PRIVATE).edit().putBoolean(ANSWERED_NOTIFICATIONS, true).apply()
+            }
+        }
+
+    override fun onResume() {
+        super.onResume()
+        if (TunnelController.isEngaged) askForNotificationsIfUnanswered()
     }
 
     /**
@@ -237,7 +266,6 @@ class MainActivity : ComponentActivity() {
             SomewhereVpnService.stop(this)
             return
         }
-        askForNotificationsOnce()
         val start = resolveStart()
         if (start == null) {
             TunnelController.report(TunnelState.Failed(R.string.tunnel_no_node))
@@ -280,6 +308,7 @@ class MainActivity : ComponentActivity() {
     private fun startTunnel(start: Start) {
         running = start
         SomewhereVpnService.start(this, start.node, start.mayFailOver)
+        askForNotificationsIfUnanswered()
     }
 
     /**
@@ -345,6 +374,6 @@ class MainActivity : ComponentActivity() {
             ?.toString()
 
     private companion object {
-        const val ASKED_NOTIFICATIONS = "asked-notifications"
+        const val ANSWERED_NOTIFICATIONS = "answered-notifications"
     }
 }

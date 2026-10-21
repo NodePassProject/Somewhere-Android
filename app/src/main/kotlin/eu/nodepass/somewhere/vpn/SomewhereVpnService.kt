@@ -88,7 +88,7 @@ import java.net.InetSocketAddress
 class SomewhereVpnService : VpnService() {
     companion object {
         private const val TAG = "SomewhereVpn"
-        private const val CHANNEL = "tunnel"
+        const val CHANNEL = "tunnel"
         private const val NOTIFICATION = 1
 
         const val ACTION_START = "eu.nodepass.somewhere.START"
