@@ -41,7 +41,10 @@ sealed interface TunnelState {
          * from.
          */
         val nodeUrl: String = "",
-    ) : TunnelState
+    ) : TunnelState {
+        // The URL carries the shared key, and a data class prints every field.
+        override fun toString(): String = "Connected(node=$node, sinceElapsedRealtime=$sinceElapsedRealtime)"
+    }
 
     /**
      * The tunnel stopped or never started.
@@ -119,6 +122,10 @@ object TunnelController {
 
     internal fun report(next: TunnelState) {
         mutable.value = next
+        // A new session's names are its own. The DNS log is what the device
+        // looked up, and carried over it would be the last session's browsing
+        // on a screen that says "while the tunnel is up".
+        if (next is TunnelState.Connecting) dnsLog.clear()
         // Anything that is not Connected has carried nothing *yet*, and last
         // session's figures are not this session's. Cleared here rather than at
         // each call site, and cleared for Connecting as well as for the two
@@ -133,6 +140,10 @@ object TunnelController {
     }
 
     internal fun reportTraffic(sample: TrafficSample) {
+        // The sampler is stopped cooperatively, so its last reading can land
+        // after the tunnel has gone; republishing then would bring back the
+        // list and history the stop just cleared.
+        if (state.value !is TunnelState.Connected) return
         mutableTraffic.value = sample
         if (sample.measured) mutableHistory.value = mutableHistory.value.plus(sample)
         mutableConnections.value = tracker.snapshot()

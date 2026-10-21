@@ -25,6 +25,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -177,10 +178,17 @@ fun SomewhereApp(
                     val entries by TunnelController.connectionLog.recent.collectAsState()
                     val live by TunnelController.connections.collectAsState()
                     val dns by TunnelController.dnsLog.recent.collectAsState()
-                    // Ages tick with the traffic reading, which republishes the
-                    // list once a second; reading the clock on each of those
-                    // keeps the two in step.
-                    val now = remember(live) { android.os.SystemClock.elapsedRealtime() }
+                    // Its own clock. Keyed on the list it froze: an idle
+                    // connection makes an equal snapshot, a StateFlow does not
+                    // emit an equal value, and the age of exactly the
+                    // connections whose age matters stopped.
+                    var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            now = android.os.SystemClock.elapsedRealtime()
+                            kotlinx.coroutines.delay(1_000)
+                        }
+                    }
                     val context = LocalContext.current
                     val baseline = stringResource(R.string.protocol_baseline)
                     DiagnosticsScreen(

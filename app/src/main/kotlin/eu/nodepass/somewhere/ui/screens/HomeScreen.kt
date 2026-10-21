@@ -412,8 +412,10 @@ private fun SessionFacts(
         )
         Fact(
             Modifier.weight(1f),
-            session.handshakeMillis?.takeIf { session.connected }?.toString() ?: unmeasured,
-            "ms".takeIf { session.connected && session.handshakeMillis != null },
+            // With the other figures or not at all: a row where one figure is
+            // set and the rest are dashes reads as a half-working tunnel.
+            session.handshakeMillis?.takeIf { session.measured }?.toString() ?: unmeasured,
+            "ms".takeIf { session.measured && session.handshakeMillis != null },
             stringResource(R.string.home_stat_handshake),
         )
     }

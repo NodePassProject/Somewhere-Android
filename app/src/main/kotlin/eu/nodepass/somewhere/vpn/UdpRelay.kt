@@ -16,6 +16,7 @@ import eu.nodepass.somewhere.protocol.target.Target
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -151,20 +152,19 @@ class UdpRelay(
         isIpv6: Boolean,
         data: ByteArray,
         dialAddress: ByteArray = destination,
-    ) {
+    ): Boolean {
         val key = Key(source.toList(), sourcePort, destination.toList(), destinationPort)
         val existing = relays[key]
         if (existing != null) {
             existing.lastUsed = now()
-            existing.outbound.trySend(data)
-            return
+            return existing.outbound.trySend(data).isSuccess
         }
 
         if (relays.size >= MAX_FLOWS) {
             // Said rather than silently dropped: over TLS every relay is a
             // connection of its own, and a full table is worth knowing about.
             Log.w(TAG, "$MAX_FLOWS relays already open; dropping a datagram to port $destinationPort")
-            return
+            return false
         }
 
         // A datagram to a synthetic address carries a name too: QUIC and
@@ -176,7 +176,7 @@ class UdpRelay(
                 is DecodeResult.Ok -> decoded.value
                 is DecodeResult.Invalid -> {
                     Log.w(TAG, "not a target: ${decoded.reason.detail}")
-                    return
+                    return false
                 }
             }
 
@@ -186,15 +186,17 @@ class UdpRelay(
         if (relays.putIfAbsent(key, relay) != null) {
             // Another datagram for the same tuple raced us here. Theirs won;
             // hand ours over rather than opening a second flow for it.
-            relays[key]?.outbound?.trySend(data)
-            return
+            return relays[key]?.outbound?.trySend(data)?.isSuccess == true
         }
         relay.tracked =
             tracker?.open(ConnectionProtocol.Udp, TargetText.describe(target), ConnectionRoute.Portal) {
-                close(relay)
+                // Asked from the main thread; closing a flow can write to the
+                // network, so it happens on the relay's own scope.
                 relay.job?.cancel()
+                scope.launch(Dispatchers.IO) { close(relay) }
             }
         relay.job = scope.launch { serve(relay, target) }
+        return true
     }
 
     private suspend fun serve(
@@ -232,8 +234,11 @@ class UdpRelay(
                 }
             }
 
+        // Not cancellable, for the reason the TCP dial is not: a cancelled
+        // openFlow returns a flow nobody holds. A relay closed meanwhile closes
+        // what it got below.
         val opened =
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO + NonCancellable) {
                 runCatching { session.openFlow(target, FlowKind.Udp, framed) }
             }.getOrElse { error ->
                 Log.w(TAG, "dial failed for $target: ${error.message}")
@@ -252,6 +257,10 @@ class UdpRelay(
             }
 
         relay.flow = flow
+        if (relay.outbound.isClosedForSend) {
+            close(relay)
+            return
+        }
         // The dial carried this one; the pump never sees it.
         meter.recordUpstream(framed.size)
         relay.up(first.size)
@@ -358,8 +367,12 @@ class UdpRelay(
     ) {
         try {
             while (true) {
+                // Nothing within the wait is not the end of the relay: a reply
+                // can take longer than a second. The reaper ends an idle relay
+                // by closing its channel, which is what this checks for.
                 val payload =
-                    withContext(Dispatchers.IO) { flow.receivePacket(PACKET_WAIT_MILLIS) } ?: break
+                    withContext(Dispatchers.IO) { flow.receivePacket(PACKET_WAIT_MILLIS) }
+                        ?: if (relay.outbound.isClosedForSend) break else continue
                 meter.recordDownstream(payload.size)
                 relay.down(payload.size)
                 relay.lastUsed = now()
@@ -407,6 +420,11 @@ class UdpRelay(
         while (true) {
             kotlinx.coroutines.delay(IDLE_MILLIS / 2)
             if (now() - relay.lastUsed >= IDLE_MILLIS) {
+                // The channel as well as the flow: the upstream pump waits on
+                // the channel, and with only the flow closed it waited forever,
+                // leaving the relay in the table until 128 such zombies refused
+                // every new datagram.
+                relay.outbound.close()
                 runCatching { relay.flow?.close() }
                 return
             }

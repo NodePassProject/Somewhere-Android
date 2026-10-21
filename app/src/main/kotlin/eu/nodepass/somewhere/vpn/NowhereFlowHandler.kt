@@ -24,9 +24,11 @@ import eu.nodepass.somewhere.routing.RoutingRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -148,6 +150,9 @@ class NowhereFlowHandler(
          * unstable connection rather than as a stable measurement.
          */
         const val SAMPLE_INTERVAL_MILLIS = 1_000L
+
+        /** How long a DNS-over-TCP client may say nothing before it is closed. */
+        const val DOT_IDLE_MILLIS = 30_000L
     }
 
     /**
@@ -166,6 +171,14 @@ class NowhereFlowHandler(
     ) {
         /** One release per hold, however the flow ends. */
         val released = AtomicBoolean(false)
+
+        /**
+         * Set by the one teardown that wins. A connection can be ended by the
+         * device (onTcpClosed), by the flow finishing, by a failed dial, or by
+         * the user from the connections list — often two of those at once —
+         * and only the first may touch the pcb.
+         */
+        val ended = AtomicBoolean(false)
 
         /** Bytes from the device, awaiting a flow to write them to. */
         val outbound = Channel<ByteArray>(capacity = Channel.UNLIMITED)
@@ -303,14 +316,12 @@ class NowhereFlowHandler(
         id: Long,
         error: Int,
     ) {
-        val connection = connections.remove(id) ?: return
-        // The pcb is already freed. Nothing below may touch it.
+        val connection = connections[id] ?: return
+        // The pcb is already freed. Nothing below may touch it — and this runs
+        // on the lwIP thread, so every stack-thread check after it sees this.
         connection.gone = true
-        connection.tracked?.let(tracker::finished)
-        releaseFakeIp(connection)
-        connection.outbound.close()
         connection.job?.cancel()
-        runCatching { connection.flow?.close() }
+        end(connection, reset = false)
     }
 
     override fun onUdpDatagram(
@@ -366,8 +377,7 @@ class NowhereFlowHandler(
             answerLocally(source, sourcePort, destination, destinationPort, isIpv6, serverFailure(data))
             return false
         }
-        udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data, dialAddress = resolver)
-        return true
+        return udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data, dialAddress = resolver)
     }
 
     /** SERVFAIL for a query that can be neither answered nor forwarded. */
@@ -471,29 +481,45 @@ class NowhereFlowHandler(
             return
         }
         connection.direct = action == RouteAction.Direct
-        connection.tracked =
+        val handle =
             tracker.open(
                 ConnectionProtocol.Tcp,
                 TargetText.describe(connection.target),
                 if (connection.direct) ConnectionRoute.Direct else ConnectionRoute.Portal,
             ) { close(connection) }
-        // Before the dial, so the list can name the app while a slow Portal
-        // is still answering. Already off the lwIP thread: serve runs on IO.
-        connection.tracked?.owner(
-            ownerOf(
-                OwnerQuery(
-                    ConnectionProtocol.Tcp,
-                    connection.source,
-                    connection.sourcePort,
-                    connection.destination,
-                    connection.target.port,
+        connection.tracked = handle
+        // The device may have reset the connection between serve starting and
+        // the line above; its teardown found nothing to finish, so this does.
+        // Written then read here, and set then read in [end]: one of the two
+        // always sees the other.
+        if (connection.ended.get()) {
+            tracker.finished(handle)
+            return
+        }
+        // Beside the dial rather than before it: the lookup is a binder call
+        // and, the first time an app is seen, a label from the package
+        // manager, and a dial should not wait on either.
+        scope.launch {
+            handle.owner(
+                ownerOf(
+                    OwnerQuery(
+                        ConnectionProtocol.Tcp,
+                        connection.source,
+                        connection.sourcePort,
+                        connection.destination,
+                        connection.target.port,
+                    ),
                 ),
-            ),
-        )
+            )
+        }
 
         val dialStarted = android.os.SystemClock.elapsedRealtime()
+        // Not cancellable: openFlow blocks, and a dial cancelled half-way would
+        // return a flow nobody holds — a Portal connection, or a QUIC stream
+        // counted as live, left open until the tunnel stops. It finishes, and
+        // a connection ended meanwhile closes what it got below.
         val opened =
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO + NonCancellable) {
                 runCatching {
                     if (connection.direct) {
                         direct.connect(connection.target)
@@ -513,6 +539,11 @@ class NowhereFlowHandler(
                 abort(connection)
                 return
             }
+
+        if (connection.ended.get()) {
+            (opened as? DecodeResult.Ok)?.value?.let { runCatching { it.close() } }
+            return
+        }
 
         val flow =
             when (opened) {
@@ -554,10 +585,13 @@ class NowhereFlowHandler(
             credit(connection, first.size)
         }
 
-        val upstream = scope.launch { pumpUpstream(connection, flow) }
-        val downstream = scope.launch { pumpDownstream(connection, flow) }
-        upstream.join()
-        downstream.join()
+        // Children of this coroutine, not of the handler's scope, so that
+        // ending the connection ends them too. As siblings they outlived a
+        // user's close and kept writing to a pcb the close had freed.
+        coroutineScope {
+            launch { pumpUpstream(connection, flow) }
+            launch { pumpDownstream(connection, flow) }
+        }
         finish(connection)
     }
 
@@ -576,6 +610,9 @@ class NowhereFlowHandler(
 
         suspend fun answer(chunk: ByteArray) {
             for (query in framer.feed(chunk)) {
+                // An empty frame is not a query, and logging each would let
+                // any app flood the real entries out of the DNS log.
+                if (query.isEmpty()) continue
                 val reply =
                     when (val outcome = dns.handle(query)) {
                         is DnsInterceptor.Outcome.Answer -> {
@@ -594,7 +631,14 @@ class NowhereFlowHandler(
         }
         try {
             if (first.isNotEmpty()) answer(first)
-            for (chunk in connection.outbound) answer(chunk)
+            // A client that goes quiet is let go after a while, as a resolver
+            // would: otherwise it holds a pcb for the life of the tunnel.
+            while (true) {
+                val chunk =
+                    withTimeoutOrNull(DOT_IDLE_MILLIS) { connection.outbound.receiveCatching().getOrNull() }
+                        ?: break
+                answer(chunk)
+            }
         } catch (error: Exception) {
             Log.w(TAG, "a DNS-over-TCP connection ended: ${error.message}")
         }
@@ -716,33 +760,46 @@ class NowhereFlowHandler(
      *
      * A reset rather than a close: the app on the device should see its
      * connection end now, not wait out a FIN exchange through a Portal that
-     * may be the reason it was closed. The serving coroutine is cancelled, so
-     * nothing writes to the pcb after the abort.
+     * may be the reason it was closed. Called from the main thread, so nothing
+     * here blocks: the serving coroutine and its pumps are cancelled, and the
+     * flow is closed on an IO thread by [end].
      */
     private fun close(connection: Connection) {
         connection.job?.cancel()
-        runCatching { connection.flow?.close() }
-        abort(connection)
+        end(connection, reset = true)
     }
 
     /** The connection was accepted and then could not be served. */
-    private fun abort(connection: Connection) {
-        connection.tracked?.let(tracker::finished)
-        connections.remove(connection.id)
-        releaseFakeIp(connection)
-        pump()?.writeToDevice {
-            if (!connection.gone) NativeBridge.nativeTcpAbort(connection.pcb)
-        }
-    }
+    private fun abort(connection: Connection) = end(connection, reset = true)
 
     /** Both directions finished. */
-    private fun finish(connection: Connection) {
+    private fun finish(connection: Connection) = end(connection, reset = false)
+
+    /**
+     * The one way a connection ends, whoever ends it.
+     *
+     * Once: the first caller wins and everything after is a no-op, so a close
+     * racing a finish cannot hand lwIP the same pcb twice. The pcb is touched
+     * only on the stack thread and only if the device has not already freed
+     * it; [Connection.gone] is set there in the same step, so a pump's next
+     * stack-thread check sees it and stops. The channel is closed so an
+     * upstream pump waiting on it ends rather than waiting forever.
+     */
+    private fun end(
+        connection: Connection,
+        reset: Boolean,
+    ) {
+        if (!connection.ended.compareAndSet(false, true)) return
         connection.tracked?.let(tracker::finished)
         connections.remove(connection.id)
         releaseFakeIp(connection)
-        runCatching { connection.flow?.close() }
+        connection.outbound.close()
+        connection.flow?.let { flow -> scope.launch(Dispatchers.IO) { runCatching { flow.close() } } }
         pump()?.writeToDevice {
-            if (!connection.gone) NativeBridge.nativeTcpClose(connection.pcb)
+            if (!connection.gone) {
+                connection.gone = true
+                if (reset) NativeBridge.nativeTcpAbort(connection.pcb) else NativeBridge.nativeTcpClose(connection.pcb)
+            }
         }
     }
 

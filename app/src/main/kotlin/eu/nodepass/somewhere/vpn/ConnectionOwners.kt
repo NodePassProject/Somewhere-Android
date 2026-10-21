@@ -54,12 +54,14 @@ class ConnectionOwners(
                 return null
             }
         if (uid < 0) return null
-        return labels.getOrPut(uid) { label(uid) }
+        return labels.getOrPut(uid) { label(uid) }.ifEmpty { null }
     }
 
     private fun label(uid: Int): String {
         val packages = context.packageManager.getPackagesForUid(uid).orEmpty()
-        val first = packages.firstOrNull() ?: return "uid $uid"
+        // Empty for a uid with no package — a system component. The screen
+        // says "unknown app" in the reader's language rather than "uid 1073".
+        val first = packages.firstOrNull() ?: return ""
         // A shared uid is several packages; the first is named and the count
         // says the rest exist rather than pretending there is one.
         val name =
