@@ -55,15 +55,18 @@ fun SettingsScreen(
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
+    // The header stays put and the form scrolls under it. Scrolled with the
+    // form, the header slid up beneath the status bar, whose icons then sat
+    // on top of the title.
+    Column(Modifier.fillMaxSize()) {
         ScreenHeader(stringResource(R.string.settings_title), onBack)
 
         Column(
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
