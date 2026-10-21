@@ -35,7 +35,7 @@ class FailoverOnDeviceTest {
     private val application get() = TunnelHarness.context.applicationContext as SomewhereApplication
 
     private fun url(host: String): NowhereUrl =
-        when (val parsed = NowhereUrl.parse("nowhere://key@$host:443?up=tcp&down=tcp")) {
+        when (val parsed = NowhereUrl.parse("nowhere://0123456789abcdef0123456789abcdef@$host:443")) {
             is DecodeResult.Ok -> parsed.value
             is DecodeResult.Invalid -> throw AssertionError("test URL does not parse: ${parsed.reason.detail}")
         }

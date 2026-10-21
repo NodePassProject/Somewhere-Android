@@ -149,32 +149,32 @@ class QuicHandshakeTest {
         assertEquals("connections were left open", before, QuicConnection.liveConnections())
     }
 
-    private fun connect(portal: String): QuicConnection {
-        val host = portal.substringBeforeLast(':')
-        val port = portal.substringAfterLast(':').toInt()
-        return QuicConnection.open(
-            remote = InetSocketAddress(host, port),
-            alpn = ALPN,
-            serverName = null,
-            // No tunnel is up in this test, so there is nothing to protect
-            // against. Stated as a lambda that says so rather than as a
-            // default, because a default would hide the rule at every call
-            // site that does need it.
-            protect = { true },
-        )
-    }
+    /**
+     * The run's Portal over QUIC, pinned and masked as it is configured; or,
+     * for an address with nothing behind it, a connection that will never
+     * complete, pinned to nothing in particular because no handshake reaches
+     * the check.
+     */
+    private fun connect(portal: String): QuicConnection =
+        if (portal == E2eEnvironment.portal) {
+            E2eEnvironment.openQuic()
+        } else {
+            QuicConnection.open(
+                remote = InetSocketAddress(portal.substringBeforeLast(':'), portal.substringAfterLast(':').toInt()),
+                serverName = null,
+                pinSha256 = ByteArray(QuicConnection.PIN_LENGTH),
+                // No tunnel is up in this test, so there is nothing to protect
+                // against. Stated as a lambda that says so rather than as a
+                // default, because a default would hide the rule at every call
+                // site that does need it.
+                protect = { true },
+            )
+        }
 
     private companion object {
-        const val NOWHERE_LABEL = "EXPORTER-Nowhere-Auth"
+        const val NOWHERE_LABEL = "EXPORTER-Nowhere-nw3-Auth"
 
         /** Enough to be a burst rather than a sequence. */
         const val THREADS = 16
-
-        /**
-         * The protocol's default ALPN. Passed rather than compiled in
-         * anywhere below this test: a client that embedded it would be
-         * shipping one deployment's choice to every installation.
-         */
-        const val ALPN = "now/1"
     }
 }

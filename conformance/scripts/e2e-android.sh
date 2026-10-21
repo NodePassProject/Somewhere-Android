@@ -24,7 +24,7 @@ APP_ID="${2:-}"
 # side-by-side checkout next to the client repository.
 NOWHERE_CLONE="${NOWHERE_CLONE:-$ROOT/../../Nowhere}"
 BIN="${NOWHERE_BIN:-$NOWHERE_CLONE/target/release/nowhere}"
-KEY="e2e-key"
+KEY="0123456789abcdef0123456789abcdef"
 PORTAL_PORT="${PORTAL_PORT:-22077}"
 TARGET_PORT="${TARGET_PORT:-28000}"
 RUNDIR="$(mktemp -d)"
@@ -54,8 +54,10 @@ printf 'nowhere-e2e-ok' > "$RUNDIR/probe.txt"
 PIDS+=($!); wait_for_port "$TARGET_PORT" "target service"
 
 # Bind 0.0.0.0 so the device can reach it through 10.0.2.2
-"$BIN" "portal://${KEY}@0.0.0.0:${PORTAL_PORT}?log=event" > "$RUNDIR/portal.log" 2>&1 &
+"$BIN" "portal://${KEY}@0.0.0.0:${PORTAL_PORT}" > "$RUNDIR/portal.log" 2>&1 &
 PIDS+=($!); wait_for_port "$PORTAL_PORT" "Portal"
+PIN="$(sed -n 's/.*tls certificate fingerprint: \([0-9a-f]\{64\}\).*/\1/p' "$RUNDIR/portal.log" | head -1)"
+[ -n "$PIN" ] || fail "the Portal did not log its certificate fingerprint"
 echo "OK  host: Portal :$PORTAL_PORT, target service :$TARGET_PORT"
 
 # --- Device ----------------------------------------------------------------
@@ -68,9 +70,6 @@ echo "OK  device: $DEVICE  API $SDK_LEVEL  $DEV_ABI"
 
 # android.net.ssl.SSLSockets.exportKeyingMaterial() is public API only from API 31.
 # Below 31 the platform TLS exporter path cannot run (see decision D-03).
-if [ "${SDK_LEVEL:-0}" -lt 31 ]; then
-    echo "NOTE: API $SDK_LEVEL < 31 - platform exporter unavailable, related cases will be skipped"
-fi
 
 # Pass the host-side Portal address to the test code. 10.0.2.2 is the host as seen
 # from QEMU-based emulators, including the AOSP emulator. Override for a physical
@@ -98,11 +97,12 @@ echo "Running connectedAndroidTest ..."
 ( cd "$PROJECT" && ./gradlew --no-daemon connectedAndroidTest \
     -PnowhereE2ePortal="$NOWHERE_E2E_PORTAL" \
     -PnowhereE2eKey="$NOWHERE_E2E_KEY" \
+    -PnowhereE2ePin="$PIN" \
     -PnowhereE2eTarget="$NOWHERE_E2E_TARGET" ) 2>&1 | tail -40
 STATUS=${PIPESTATUS[0]}
 
 echo
-echo "--- Portal EVENT log (reference for comparing client behaviour) ---"
+echo "--- Portal log ---"
 tail -30 "$RUNDIR/portal.log" || true
 cp "$RUNDIR/portal.log" "$ROOT/last-portal-e2e.log" 2>/dev/null || true
 

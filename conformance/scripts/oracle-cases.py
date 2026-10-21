@@ -16,18 +16,17 @@ suite that needs a package index is one that stops running.
 
 ## Two carriers, one case list
 
-Each case runs twice: once through a vector configured `mux=0` and once
-through one configured `mux=1`. The second set is prefixed `mux_`. Nothing
-about a case changes between the two — that *is* the claim being tested, since
-upstream's Mux carrier is a way of moving the same frames and not a different
-protocol.
+Each case runs over every carrier the two implementations share: TLS and QUIC,
+each against a Portal with Morph on and one with Morph off, prefixed "",
+"quic_", "nomorph_" and "nomorph_quic_". Nothing about a case changes between
+them — that *is* the claim being tested.
 
-The `burst` cases are the exception, and they are the reason this file grew a
-thread pool: how many TLS connections a carrier uses is only observable when
-several flows are open **at the same moment**, and a sequence of fetches that
-happen to be fast is not that. The origin holds every request until all of
-them have arrived, so the overlap is a property of the harness rather than of
-how quickly this machine happens to run.
+The `burst` cases are the reason this file has a thread pool: how many
+connections a carrier uses is only observable when several flows are open
+**at the same moment**, and a sequence of fetches that happen to be fast is not
+that. The origin holds every request until all of them have arrived, so the
+overlap is a property of the harness rather than of how quickly this machine
+happens to run.
 """
 
 import argparse
@@ -220,41 +219,30 @@ def main():
     # Named rather than positional: there are twelve endpoints now, and a
     # twelve-deep positional list is a defect waiting for somebody to insert an
     # argument in the middle of it.
-    parser.add_argument("--socks", required=True, help="oracle SOCKS listener, mux=0")
-    parser.add_argument("--socks-wrong-key", required=True)
-    parser.add_argument("--socks-mux", required=True, help="oracle SOCKS listener, mux=1")
-    parser.add_argument("--socks-mux-wrong-key", required=True)
-    # The QUIC combinations are optional: a run without a host QUIC bridge on
-    # this side would have nothing to compare them with, and half a comparison
-    # is worse than none -- it reports a divergence that is only an absence.
-    parser.add_argument("--socks-quic", help="oracle SOCKS listener, up=udp&down=udp")
-    parser.add_argument("--socks-quic-wrong-key")
-    parser.add_argument("--socks-split-up", help="oracle SOCKS listener, up=udp&down=tcp")
-    parser.add_argument("--socks-split-up-wrong-key")
-    parser.add_argument("--socks-split-down", help="oracle SOCKS listener, up=tcp&down=udp")
-    parser.add_argument("--socks-split-down-wrong-key")
+    # One listener per (carrier, Morph, key): a vector's carrier and mask are
+    # chosen by its URL, and one process cannot be two. The QUIC listeners are
+    # optional — a run without a host QUIC bridge on this side would have
+    # nothing to compare them with, and half a comparison is worse than none.
+    for prefix in ("", "quic-", "nomorph-", "nomorph-quic-"):
+        required = not prefix.startswith("quic") and "quic" not in prefix
+        parser.add_argument("--socks-%sright" % prefix, required=required)
+        parser.add_argument("--socks-%swrong" % prefix, required=required)
     parser.add_argument("--target", required=True, help="blob origin, as an address")
     parser.add_argument("--target-name", required=True, help="the same origin, as a name")
     parser.add_argument("--udp", required=True)
     parser.add_argument("--closed", required=True, help="a port with nothing behind it")
-    parser.add_argument("--hold-dedicated", required=True, help="burst origin for mux=0")
-    parser.add_argument("--hold-mux", required=True, help="burst origin for mux=1")
+    parser.add_argument("--hold-tls", required=True, help="burst origin for the TLS carrier")
+    parser.add_argument("--hold-quic", required=True, help="burst origin for the QUIC carrier")
     parser.add_argument("--width", type=int, default=16, help="flows opened at once")
     parser.add_argument("--out", required=True)
-    options = parser.parse_args()
+    options = vars(parser.parse_args())
 
-    socks = endpoint(options.socks)
-    wrong_key_socks = endpoint(options.socks_wrong_key)
-    mux_socks = endpoint(options.socks_mux)
-    mux_wrong_key_socks = endpoint(options.socks_mux_wrong_key)
-    target_host, target_port = endpoint(options.target)
-    name_host, name_port = endpoint(options.target_name)
-    udp_host, udp_port = endpoint(options.udp)
-    closed_host, closed_port = endpoint(options.closed)
-    hold_dedicated_host, hold_dedicated_port = endpoint(options.hold_dedicated)
-    hold_mux_host, hold_mux_port = endpoint(options.hold_mux)
+    target_host, target_port = endpoint(options["target"])
+    name_host, name_port = endpoint(options["target_name"])
+    udp_host, udp_port = endpoint(options["udp"])
+    closed_host, closed_port = endpoint(options["closed"])
 
-    # Longer than the oracle's own five-second setup deadline, so a silent
+    # Longer than the Portal's own twenty-second flow-setup limit, so a silent
     # Portal is observed as the oracle's answer rather than as our impatience.
     timeout = 30
 
@@ -264,58 +252,32 @@ def main():
             (prefix + "tcp_domain_payload", http_case(listener, name_host, name_port, True, timeout)),
             (prefix + "dial_failed", http_case(listener, closed_host, closed_port, False, timeout)),
             (prefix + "wrong_key", http_case(wrong_key_listener, target_host, target_port, False, timeout)),
-            (prefix + "uot_round_trip", udp_case(listener, udp_host, udp_port, timeout)),
+            (prefix + "udp_round_trip", udp_case(listener, udp_host, udp_port, timeout)),
         ]
 
-    verdicts = case_set(socks, wrong_key_socks, "")
-    verdicts += case_set(mux_socks, mux_wrong_key_socks, "mux_")
+    verdicts = []
+    for flag, prefix in (("", ""), ("quic_", "quic_"), ("nomorph_", "nomorph_"), ("nomorph_quic_", "nomorph_quic_")):
+        right, wrong = options["socks_%sright" % flag], options["socks_%swrong" % flag]
+        if right and wrong:
+            verdicts += case_set(endpoint(right), endpoint(wrong), prefix)
 
-    # One case list over every carrier the two implementations share. L2's only
-    # finding was a protocol fact that had grown a second shape the moment a
-    # second carrier landed, and it was invisible to every test that asserted
-    # on one carrier's own types.
-    for flag, wrong_flag, prefix in (
-        (options.socks_quic, options.socks_quic_wrong_key, "quic_"),
-        (options.socks_split_up, options.socks_split_up_wrong_key, "split_quic_up_"),
-        (options.socks_split_down, options.socks_split_down_wrong_key, "split_quic_down_"),
-    ):
-        if flag and wrong_flag:
-            verdicts += case_set(endpoint(flag), endpoint(wrong_flag), prefix)
-
-    # Each burst has an origin of its own, and the port is what labels it. The
-    # Portal logs the address a flow was dialled to, so counting connections
-    # per origin port attributes every one of them to a carrier and a client
-    # without the harness having to reason about when each phase ran.
+    # Each burst has an origin of its own, so the count `oracle-diff.sh` takes
+    # when the origin releases the flows is attributable to one carrier.
     verdicts.append(
-        (
-            "dedicated_burst",
-            burst_case(socks, hold_dedicated_host, hold_dedicated_port, options.width, timeout),
-        )
+        ("tls_burst", burst_case(endpoint(options["socks_right"]), *endpoint(options["hold_tls"]), options["width"], timeout))
     )
-    verdicts.append(
-        (
-            "mux_burst",
-            burst_case(mux_socks, hold_mux_host, hold_mux_port, options.width, timeout),
-        )
-    )
-    if options.socks_quic:
+    if options["socks_quic_right"]:
         verdicts.append(
             (
                 "quic_burst",
-                burst_case(
-                    endpoint(options.socks_quic),
-                    hold_dedicated_host,
-                    hold_dedicated_port,
-                    options.width,
-                    timeout,
-                ),
+                burst_case(endpoint(options["socks_quic_right"]), *endpoint(options["hold_quic"]), options["width"], timeout),
             )
         )
 
     # "-" rather than an empty column. `read` with a whitespace IFS collapses
     # consecutive tabs, so an empty field shifts every column after it and the
     # comparison silently reads a note as a digest.
-    with open(options.out, "w") as handle:
+    with open(options["out"], "w") as handle:
         for case, (code, digest, note) in verdicts:
             handle.write("%s\t%d\t%s\t%s\n" % (case, code, digest or "-", note or "-"))
     return 0

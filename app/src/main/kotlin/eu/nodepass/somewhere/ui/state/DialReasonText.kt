@@ -8,6 +8,7 @@ import androidx.compose.ui.res.stringResource
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.net.DialReason
 import eu.nodepass.somewhere.protocol.DecodeReason
+import eu.nodepass.somewhere.protocol.Nw3
 import eu.nodepass.somewhere.subscription.SubscriptionReason
 
 /**
@@ -19,7 +20,7 @@ import eu.nodepass.somewhere.subscription.SubscriptionReason
  * English developer string to a Chinese user and quietly makes every failure
  * message untranslatable.
  *
- * So the reason is mapped here, and the ALPN is passed as an argument rather
+ * So the reason is mapped here, and identifiers are passed as arguments rather
  * than embedded, keeping `docs/i18n.md`'s rule intact: the sentence translates,
  * the identifier does not.
  */
@@ -27,10 +28,9 @@ import eu.nodepass.somewhere.subscription.SubscriptionReason
 fun DecodeReason.asMessage(): String =
     when (this) {
         is DialReason.Unreachable -> stringResource(R.string.dial_unreachable)
-        is DialReason.HandshakeFailed -> stringResource(R.string.dial_handshake_failed, requestedAlpn)
-        is DialReason.AlpnRejected -> stringResource(R.string.dial_alpn_rejected, requested)
-        is DialReason.PinMismatch -> stringResource(R.string.dial_pin_mismatch)
-        is DialReason.NoCertificate -> stringResource(R.string.dial_no_certificate)
+        is DialReason.HandshakeFailed -> stringResource(R.string.dial_handshake_failed, Nw3.ALPN)
+        is DialReason.AlpnRejected -> stringResource(R.string.dial_alpn_rejected, Nw3.ALPN)
+        is DialReason.Untrusted -> stringResource(R.string.tunnel_certificate_refused)
         is DialReason.Unprotected -> stringResource(R.string.dial_unprotected)
 
         // A subscription failure is not a node failure, and rendering it as one

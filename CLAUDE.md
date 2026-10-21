@@ -14,16 +14,15 @@ comments, everything. Do not emit Chinese in project files.
 - **Engine hand-written in Kotlin.** The upstream Rust implementation is built
   only on a development host as a conformance oracle; it does not ship and is not
   cross-compiled for Android.
-- **Delivered in layers**: L1 TLS/TCP → L2 Mux → L3 QUIC. Each layer ships to
-  internal testing and leaves a fix-back window. No big-bang release.
-- **All three layers are delivered** (L1 and L2 on 2026-08-27, L3 on 2026-08-29),
-  together with the release tail and L4 — IPv6 end to end, `pin` on the QUIC
-  carrier, node failover, a scheduled subscription refresh and a tile. A bare `nowhere://key@host:port` — a QUIC node,
-  because the specification defaults both directions to `udp` — connects and
-  carries traffic, and the oracle differential agrees on every case over every
-  carrier combination. What has *not* happened is a physical device: every device
-  result in this repository is from an emulator. The README's roadmap carries the
-  stage view and the conformance row counts behind it.
+- **Nowhere v3 (`nw3`) only**, since 2026-10-21 (D-21). v1 was delivered in
+  layers — L1 TLS/TCP, L2 Mux, L3 QUIC, then L4 — and v3 removed Mux and split
+  carriers, so the protocol layer now has two carriers: TLS, one connection per
+  flow, and QUIC, one connection for all of them, each with Morph on or off.
+  A bare `nowhere://key@host:port` is a TLS node with Morph on; `?net=udp` is
+  QUIC. The oracle differential agrees with v3.0.1 on every case over both
+  carriers and both Morph settings. What has *not* happened is a physical
+  device: every device result in this repository is from an emulator. The
+  README's roadmap carries the stage view and the conformance row counts.
 
 ## Layout
 
@@ -34,7 +33,7 @@ comments, everything. Do not emit Chinese in project files.
 | `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
 | `app/src/main/assets/rules/` | The bundled rule set (D-14), network-structural tier only, both address families, carrying a provenance header |
-| `docs/` | Architecture, the design system, i18n, brand, privacy, store policy, and the TLS exporter ADR |
+| `docs/` | Architecture, the design system, i18n, brand, privacy, store policy, and the ADRs: TLS exporter, QUIC certificate verification, Morph |
 
 The lwIP layer is inherited from `NodePassProject/Anywhere-Android` (GPL-3.0) at
 **e9a9274, 2026-04-28** — recorded because the donor is under active development
@@ -58,10 +57,12 @@ it goes wrong.
   snapshot it corresponds to. A scheduled CI job diffs upstream and opens an issue
   on normative change.
 - Run `conformance/scripts/drift-check.sh` before touching protocol code.
-- **Never hardcode deployment-specific protocol parameters** — ALPN values,
-  padding curves, jitter parameters, key derivation labels or salts. The client
-  implements mechanisms and embeds no values; parameters are delivered by the
-  server at runtime.
+- **Never hardcode deployment-specific protocol parameters** — padding curves,
+  jitter parameters, or anything a deployment chooses. The client implements
+  mechanisms and embeds no deployment's values; those are delivered by the
+  server at runtime. What the *specification* fixes is transcribed, with its
+  section: v3 fixed the ALPN (`nw3`, `protocol/Nw3.kt`) and publishes its
+  derivation labels, and a client that did not embed them could not speak it.
 
 ## Quality gates
 
@@ -81,11 +82,11 @@ python3 conformance/scripts/verify-vectors.py
 | `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`, `.subscription.*`, `.dns.*`, `.apps.*` and `.routing.*`** — the last three joined the protocol layer's gate because they are the same kind of code: a wrong answer is wrong silently, and in `routing` it is wrong in the worst direction, with traffic leaving the device somewhere the user did not ask it to. Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
 | `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
-| `verify-vectors.py` | 45 known-answer checks, recomputed from the spec prose. References no upstream code and needs no clone |
+| `verify-vectors.py` | 86 known-answer checks, recomputed from the spec prose with a stdlib-only ChaCha20 checked against RFC 8439 first. References no upstream code and needs no clone |
 | `checkNativeLibraries` | **What the shipped `.so` files export, how they are aligned, and what they need.** Reads the APK rather than a build intermediate. Verified to fail: removing the version script reports 1,684 non-JNI exports on arm64-v8a, starting with `AES_CMAC` |
 | `checkNativeBridge` | **That the QUIC bridge cannot open a socket.** A source rule over `app/src/main/jni/quic/`: no `socket`, `bind`, `connect`, `sendto` or `recvfrom`. Addresses and packets cross the JNI boundary as bytes, so there is no path by which a datagram escapes `VpnService.protect()`, and no way for one to grow later without the gate saying so |
 | `checkReleaseArtifact` | **What R8 left in the APK that ships.** R8 renames the JNI callbacks C resolves by name, and the failure is not a crash but a tunnel that comes up and answers nothing. The gate reads the artifact rather than running instrumentation against a second R8 output — two R8 runs produce two name sets, so that test would be checking a build nobody ships |
-| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired for the first time on 2026-08-26 and the pin moved to v1.8.2 |
+| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired on 2026-08-26 (pin to v1.8.2) and on 2026-10-21 for v3, the first change to reach the wire (pin to v3.0.1, D-21) |
 
 Both gates that can silently pass were verified to actually fail. The coverage
 gate: a protocol class with no tests produces `lines covered percentage is
@@ -99,18 +100,20 @@ New protocol code lands with a matching known-answer or behavioural case.
 ## Settled positions that shape the code
 
 - **Shared key, no per-user identity** (D-07). Per-user identity is a *Portal*
-  decision, not a client one: the Portal holds one `auth_key`, and the 32-byte
-  authentication frame is full — 16 bytes of session id, 16 of tag, no room for a
-  user identifier. When it is eventually wanted, the cheap implementation gives
-  each user a distinct shared key and has the Portal hold a key set; that changes
-  nothing on the wire and nothing in this client.
+  decision, not a client one: the v3 AuthFrame is a 16-byte tag and nothing
+  else, with no room for a user identifier. When it is eventually wanted, the
+  cheap implementation gives each user a distinct shared key and has the Portal
+  hold a key set; that changes nothing on the wire and nothing in this client.
 - **Faithful downstream** (D-08). This client follows upstream and stays
   byte-compatible with it. The L1 acceptance criterion is "byte-identical to the
   oracle". Following does not mean tracking automatically: the baseline is pinned
   and drift is flagged for a human.
-- **No obfuscation layer.** It requires controlling both ends, and this project
-  does not run Portals. Nowhere does not claim to resist censorship either, so the
-  client must not imply that it does.
+- **No obfuscation layer of our own.** It requires controlling both ends, and
+  this project does not run Portals. **Morph is not that**: it is upstream's,
+  in the v3 specification and on by default, and implementing it is faithful
+  downstream (D-21, ADR-0003). Upstream calls it "wire masking, not
+  authentication or integrity" and makes no anti-censorship claim; the client
+  must not imply one either.
 - **Capability negotiation is sent from day one** (`type`, `ver`, `caps` on the
   subscription request). It cannot be retrofitted onto installed clients, costs
   nothing today because dashboards ignore unknown parameters, and is the intended
@@ -133,9 +136,9 @@ crashes when they are violated:
 
 Two rules from those documents that reach into protocol code:
 
-- **Machine identifiers stay English; sentences translate.** The seven
-  `SetupResult` names, the configuration parameters (`up`, `down`, `mux`, `alpn`,
-  `sni`, `pin`) and carrier names are values, not prose. A user pasting
+- **Machine identifiers stay English; sentences translate.** The five
+  `SetupResult` names, the configuration parameters (`net`, `morph`, `sni`,
+  `pin`) and carrier names are values, not prose. A user pasting
   `DIAL_FAILED` into an issue must match the specification, the source, and
   someone else's log from another locale.
 - **Direction colour is not decoration.** Upstream and downstream are never the
@@ -146,19 +149,19 @@ Two rules from those documents that reach into protocol code:
 ## Facts that are easy to get wrong (all verified on the ground)
 
 1. **The client import scheme is `nowhere://`, not `vector://`.**
-   Form: `nowhere://<pct-encoded shared key>@<host>:<port>?up=..&down=..[&mux=1][&alpn=..]#<name>`
+   Form: `nowhere://<32 lowercase hex>@<host>:<port>[?net=tcp|udp][&morph=0|1][&sni=..][&pin=..]#<name>`
    `vector://` is the command URL used to start the upstream Rust process — a
-   different thing.
-2. **The `pool` parameter was removed in 1.8**, replaced by `mux=0|1` (default 0).
-   NowhereDash still emits 1.7-era URLs and appends `pool=5` for `tcp/tcp`. The
-   client must ignore unknown and deprecated parameters.
-3. **The TLS exporter has two sources, and `minSdk` is 26.**
-   `android.net.ssl.SSLSockets.exportKeyingMaterial()` is **public API from API 31**
-   (verified by `javap`: absent at 28, class-without-method at 29). Below 31,
-   Conscrypt provides the same call. Both sit behind `KeyingMaterialExporter`;
-   see `docs/adr-0001-tls-exporter.md`. The class `SSLSessions` does not exist.
-   **Neither helps for QUIC** — ngtcp2 needs a C-level TLS backend supplying
-   crypto callbacks.
+   different thing. The key is text bytes, not hex-decoded.
+2. **NowhereDash at `c753043` targets Nowhere 2.1.1**, not v3: it emits
+   `up=..&down=..[&mux=1]&morph=..`, and `host/tcp:P/udp:Q` when a Portal's ports
+   differ. Agreeing `up`/`down` are read as `net`; `mux`, `alpn`, `pool` are
+   ignored; a carrier path is refused with a reason.
+3. **The TLS exporter is Conscrypt's on every API level, and `minSdk` is 26.**
+   Morph sits under TLS (fact 41), so the TLS socket is layered over a masking
+   socket, and only Conscrypt's engine-socket mode goes through the wrapper's
+   streams. The platform exporter (API 31+) was retired with v3; see the
+   amendment to `docs/adr-0001-tls-exporter.md`. QUIC's exporter is aws-lc's,
+   through the bridge.
 4. **The donor's hand-written TLS has no exporter.** Its
    `vpn/protocol/tls/` package is 4,159 lines across 7 files and was written for
    custom ClientHello construction; searching it for `exporter` /
@@ -171,29 +174,32 @@ Two rules from those documents that reach into protocol code:
    `TlsClient.finishHandshake()`, before `clearHandshakeState()`. That method
    nulls `handshakeTranscript`, `handshakeSecret` and `keyDerivation`, and
    `deriveApplicationKeys` discards the master secret as soon as it is computed.
-7. **Authentication and FlowHeader are bit-identical between 1.7 and 1.8.**
-   The fixed vector `derive_auth_key("secret")` →
-   `1076221669fa28bcf70aa8545bddd6f760dcefbe279c3f38a5ff5d925708f867` holds, and
-   is transcribed into the conformance suite.
-8. **Neither `sni` nor `pin` means upstream skips certificate verification
-   entirely.** With `pin` alone, fingerprint verification still happens and takes
-   priority over the sni chain path. NowhereDash currently emits neither.
+7. **v3 authentication is not v1's, and the vectors are upstream's own.** For
+   the key `0123456789abcdef0123456789abcdef` and exporter `00..1f`, the Vector
+   role key is `1b5bddc7…7e5c95fb` and its TLS AuthFrame `1a26d8eb…f04f8e32`
+   (`src/tests/protocol/vectors.json`, transcribed). v1's
+   `derive_auth_key("secret")` vector no longer describes anything.
+8. **There is no unverified mode in v3.** A link with neither `sni` nor `pin` is
+   verified by system trust against its own host; `pin` takes priority and skips
+   the chain. A Portal on its generated certificate (`tls=1`) therefore needs a
+   pin, and logs its fingerprint at startup.
 9. **NowhereDash meters at Portal granularity, not per user.** It observes the
    Portal's total traffic counter and attributes the delta to every subscription
    linked to that Portal. The protocol has no user identity.
 10. **Nowhere is not an anti-censorship protocol, and does not claim to be.** The
-   words obfuscation, censorship, active probing and DPI appear zero times in the
-   upstream `docs/security.md` and `docs/protocol.md`.
+   words obfuscation, censorship and DPI appear zero times in the v3
+   `docs/security.md` and `docs/protocol.md`; Morph is described as "wire
+   masking, not authentication or integrity".
 11. **`no_application_protocol` is not a string you can match on.** A Portal
     refusing an ALPN aborts the handshake, and Conscrypt surfaces that as
     `SSLProtocolException: Read error: ... Failure in SSL library, usually a
     protocol error` — no alert code, no mention of ALPN. The phrase `TLS alert,
     no application protocol` is what **`openssl s_client`** prints for the same
     event. A client that matched on it would name the failure correctly at a
-    shell prompt and never on a device. `NowhereDialer` therefore attaches the
-    requested ALPN to the generic handshake failure rather than claiming to
-    have identified it, and reserves `AlpnRejected` for the case that *is*
-    observable: a handshake that completed carrying the wrong protocol.
+    shell prompt and never on a device. `NowhereDialer` therefore names the ALPN
+    and Morph as things to check on a generic handshake failure rather than
+    claiming to have identified either, and reserves `AlpnRejected` for the case
+    that *is* observable: a handshake that completed carrying the wrong protocol.
 12. **lwIP does not call the accept callback on a SYN.** `tcp_listen_input`
     answers the SYN with a SYN-ACK and leaves the new pcb in `SYN_RCVD`;
     `TCP_EVENT_ACCEPT` fires from `tcp_process` only when the final ACK
@@ -231,9 +237,9 @@ Two rules from those documents that reach into protocol code:
     The symptom was a device that ignored our SYN-ACK and retransmitted its SYN
     forever, on and off, with correct checksums and a correct IP length field.
 17. **The setup deadline must come off once a flow is open.** Before READY the
-    read timeout is the only thing between a wrong shared key and a hang,
-    because a Portal answers a rejected AuthFrame with silence rather than a
-    close (fact above). Afterwards the same deadline closes any connection that
+    read timeout is what bounds a Portal that is slow or gone; v1 answered a
+    rejected AuthFrame with silence, which made it the only thing between a
+    wrong key and a hang (v3 closes instead — fact 42). Afterwards the same deadline closes any connection that
     goes quiet — which an idle SSH session, a websocket and a long poll all do
     by design. Verified both ways on a device: with the deadline left in place
     a target that says nothing for 25 seconds returns `HTTP=000` after 60 and
@@ -282,8 +288,7 @@ Two rules from those documents that reach into protocol code:
     declares it. This cost a whole debugging round: the fix was right, the
     tests failed the same way, and the library on the device predated the edit.
 
-25. **Exactly one bidirectional stream is credited before authentication**
-    (NW-P-19). Sixteen concurrent opens meet `ERR_STREAM_ID_BLOCKED`, which is
+25. **Exactly one bidirectional stream is credited before authentication**. Sixteen concurrent opens meet `ERR_STREAM_ID_BLOCKED`, which is
     the protocol working rather than a failure. The wait for credit has to
     happen **outside** the connection's owner thread: the owner is what pumps,
     and the peer's extension cannot arrive while it is blocked waiting for it.
@@ -321,29 +326,12 @@ Two rules from those documents that reach into protocol code:
     five seconds in. A keep-alive test that never opens a flow therefore measures
     nothing: the connection was going to close on its own regardless of whether
     a PING was ever sent.
-32. **UDP framing belongs to a direction, not to a flow.** A split flow has two
-    carriers, and section 9 carriage has to be applied per direction — the
-    oracle differential caught split-UDP diverging when the framing was attached
-    to the flow instead. `DatagramLane` is the shared piece both directions use.
-
-33. **A poll interval is not a protocol deadline.** `MuxCarrier.readStream`
-    answers three things with three values, and **0 means "nothing in the last
-    250 ms"** rather than a verdict. `open` read it as one, so a Portal that
-    answered a SYN slower than a quarter of a second was reported as
-    "authentication most likely failed" — the most misleading sentence
-    available. A dedicated lane gives the same protocol step fifteen seconds;
-    the carrier now gives it the same, because how long a Portal takes to dial
-    a target belongs to the target rather than to the carrier.
-34. **A rejected flow must not be reset.** The rejection *is* the teardown — the
-    Portal answers and forgets the stream in the same breath — and section 3
-    says STREAM data for an unknown flow is a **carrier** error. So a RST after
-    a rejection closes the whole connection and fails every other flow on it.
-    The trigger is ordinary and permanent: Android's Private DNS probes port 853
-    the moment a tunnel comes up, the Portal answers `DIAL_FAILED`, and whichever
-    shard the probe landed on lost its other flows half a second later. One to
-    four of sixteen concurrent fetches came back empty, intermittently. This
-    client now sends no RST at all; reading one stays implemented, because the
-    Portal may send one.
+32. *(v1 only: UDP framing per direction of a split flow. Split flows were
+    removed in v3.)*
+33. *(v1 only: a Mux poll interval mistaken for a protocol deadline. Mux was
+    removed in v3.)*
+34. *(v1 only: a RST after a rejection killed a Mux carrier. Mux was removed in
+    v3.)*
 35. **The TUN was one route away from carrying IPv6.** `LWIP_IPV6` was on, the
     netif had a valid v6 address, the bridge threaded `is_ipv6` through every
     callback, `FakeIpPool` minted `fc00::/96`, `RoutingRules` had a v6 trie, and
@@ -379,24 +367,59 @@ Two rules from those documents that reach into protocol code:
     therefore calls `startActivity` below API 34 and opens the app with the
     shade still over it, which is recorded rather than left to be rediscovered.
 
+41. **Morph under TLS decides which TLS stack is possible.** The TLS socket is
+    layered over `MorphSocket`, and Conscrypt's default layered socket, given a
+    socket with a file descriptor, does its I/O on the descriptor and never
+    calls the wrapper — the handshake leaves unmasked and the Portal reads
+    noise. `Conscrypt.setUseEngineSocket(factory, true)` is the mode that goes
+    through the streams. The platform provider cannot be told to. ADR-0003.
+42. **A v3 Portal closes the connection on a refused AuthFrame.** v1 left it
+    silent. Over TLS that reads as end of stream; over QUIC the native
+    connection error used to escape `read` as a `QuicException`, which the
+    oracle differential caught — it reads the same event as "no setup result".
+    `QuicStreamTransport` now presents it as an `IOException`. With Morph on, a
+    wrong key fails even earlier: it is also a wrong mask, and the handshake
+    never completes.
+43. **Target payload waits for READY, and a v3 Portal enforces it.** While it
+    dials it watches the stream, and a byte that arrives early ends the flow
+    ("target payload arrived before READY"). v1 allowed the first payload in
+    the opening write, and this client did it on purpose. Found by
+    `SessionAgainstPortalTest.theFirstPayloadReachesTheTarget`; every flow that
+    had its first bytes in hand when it opened would have been torn down.
+44. **The QUIC AuthFrame goes on client Stream 0, by stream id, not by memory.**
+    A rebuilt connection starts again at Stream 0 and has never authenticated;
+    keying on the id makes that automatic, where v1's "generation" counter had to
+    be kept in step by hand.
+45. **The harness can agree with itself on a failure.** A Portal started inside
+    `$(…)` keeps the port after the run, the next run's Portal fails to bind
+    after logging a fingerprint, and both implementations then agree on every
+    case — that the certificate is wrong. `oracle-diff.sh` refuses to start on
+    an occupied port for that reason.
+46. **A v3 Portal logs neither its dials nor per-flow counters.** v1's harness
+    read both from the log. The evidence moved to `nowhere status` (relay
+    totals), an origin that logs who connected, and the socket table sampled
+    while flows are held open together.
+47. **The device's own traffic goes through the tunnel too.** A burst of
+    sixteen held TLS flows was counted as twenty connections on an API 35
+    Google APIs image; four were the device's. Exact counts belong on a host
+    (`oracle-diff.sh`); on a device the assertion is "at least one per flow".
+
 ## Already verified — do not redo
 
 - The donor project `Anywhere-Android` **builds clean** on this toolchain
   (JDK 21 / android-36 / NDK 28.2 / CMake 3.22.1), 1m50s cold, one harmless lwIP
   macro warning. Inheriting its shell is not a risk.
-- `cargo build --release --locked` succeeds on macOS/aarch64 at Nowhere v1.8.2.
-- **End-to-end works**: SOCKS5 → Vector → Nowhere (tcp/tcp) → Portal → target,
-  payload returned intact. Re-run `conformance/scripts/smoke-local.sh`.
-- **Authentication derivation agrees three ways** — spec prose, an independent
-  implementation, and upstream Rust fixed vectors, byte for byte.
-  Re-run `python3 conformance/scripts/verify-vectors.py` (45 checks).
-- Sending a TLS handshake to a Portal that ends at `TLS alert, no application
-  protocol` is **correct** — the Portal rejecting an ALPN other than `now/1` —
-  and is usable as a connectivity check. That wording is `openssl s_client`'s;
-  see fact 11 for what the same event looks like from Android, which is not the
-  same thing at all.
-- **The dialer's certificate handling is verified against a live Portal**, pins
-  included: `NowhereDialerAgainstPortalTest` reads the Portal's real leaf
-  fingerprint over an independent connection and hands it back as `pin=`, so a
-  passing pin test cannot be the dialer agreeing with itself. Re-run with a
-  Portal from `conformance/scripts/portal-for-tests.sh`.
+- `cargo build --release --locked` succeeds on Linux x86_64 at Nowhere v3.0.1
+  (and did on macOS/aarch64 at v1.8.2).
+- **End-to-end works** over TLS and QUIC, Morph on: SOCKS5 → the oracle's
+  Vector → Portal → target. Re-run `conformance/scripts/smoke-local.sh`.
+- **Authentication and Morph derivations agree three ways** — spec prose, an
+  independent implementation, and upstream's fixed vectors, byte for byte.
+  Re-run `python3 conformance/scripts/verify-vectors.py` (86 checks).
+- **The dialer's certificate handling is verified against a live Portal**: the
+  pin is the fingerprint the Portal itself logged, exported by
+  `conformance/scripts/portal-for-tests.sh`, so a passing pin test cannot be the
+  dialer agreeing with itself.
+- **The oracle differential passes against v3.0.1** on every case over TLS and
+  QUIC, Morph on and off. Re-run `conformance/scripts/oracle-diff.sh`; it needs
+  a host QUIC bridge (`conformance/scripts/build-host-quic.sh`, which needs Go).

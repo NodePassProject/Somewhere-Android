@@ -6,15 +6,69 @@
 
 UPSTREAM_REPO=NodePassProject/Nowhere
 UPSTREAM_BRANCH=main
-UPSTREAM_TAG=v1.8.2
-UPSTREAM_COMMIT=05366539
-UPSTREAM_COMMIT_DATE=2026-08-29
-BINARY_VERSION_STRING=nowhere-v1.8.2
+UPSTREAM_TAG=v3.0.1
+UPSTREAM_COMMIT=00000e0
+UPSTREAM_COMMIT_DATE=2026-10-16
+BINARY_VERSION_STRING=nowhere-v3.0.1
+ALPN=nw3
 
-# Normative files watched for change
-SPEC_FILES=docs/protocol.md docs/configuration.md docs/compatibility.md docs/security.md
+# Normative files watched for change. compatibility.md was deleted in v3;
+# interoperability.md is new and states what a compatible peer must do.
+SPEC_FILES=docs/protocol.md docs/configuration.md docs/security.md docs/interoperability.md
 
 # Known state
+# - Advanced from v1.8.2 (05366539) to v3.0.1 (00000e0) on 2026-10-21. The first
+#   drift to reach the wire, and it reached nearly all of it. Unlike the two
+#   advances below this is not a transcription fix: it is a different protocol
+#   under the same name, and this client was rewritten to it. Decided as D-21
+#   (internal); the reasoning in brief:
+#
+#     * ALPN `now/1` -> `nw3`, fixed; exporter label EXPORTER-Nowhere-nw3-Auth.
+#     * AuthFrame: session_id[16] || tag[16] -> tag[16] alone, over
+#       transport || exporter, with separate Vector and Egress role keys from
+#       salt SHA256("nowhere/nw3/auth-root").
+#     * FlowHeader (5 bytes) -> FlowStart (1 byte, bit 0 = UDP).
+#     * SetupResult renumbered and shrunk to five values.
+#     * TLS Mux, split carriers and session pairing removed. TLS is one
+#       connection per flow; QUIC is one connection for all of them.
+#     * QUIC UDP flow ids derived from the stream id, (id >> 2) + 1, and the
+#       DATAGRAM header became a 4-byte base word with a 2-bit type.
+#     * Morph, new and on by default: ChaCha20 masking below TLS (64-byte
+#       prelude + 12-byte nonce) and below QUIC (12-byte nonce per datagram).
+#     * No unverified mode: system trust and hostname, or a pin.
+#     * Share links: `net=tcp|udp` (default tcp) and `morph=0|1`; keys are 32
+#       lowercase hex characters.
+#     * Target encoding, UoT and fragment reassembly unchanged.
+#
+#   Between the v3.0.1 tag and main at eee7965c the SPEC_FILES are identical
+#   (the later commits reorganise source only), so the pin is the tag.
+#
+#   Verified at v3.0.1, on Linux x86_64, with the oracle built by
+#   `cargo build --release --locked`:
+#     * verify-vectors.py: 86 checks, including upstream's own vectors.json,
+#       its Morph key fixture and RFC 8439's ChaCha20 vector;
+#     * smoke-local.sh: SOCKS5 through the oracle's Vector over TLS and QUIC;
+#     * oracle-diff.sh: this client and the oracle agree on every case over
+#       TLS and QUIC, each with Morph on and off, and on connection counts;
+#     * portal-lifecycle.sh: reclaim at the handshake deadline (5.0 s, answered
+#       INVALID_REQUEST) and recovery across a Portal restart;
+#     * quic-probe.sh: ngtcp2 + aws-lc export keying material a v3 Portal
+#       accepts;
+#     * on an API 35 emulator: the instrumentation suite, e2e-tunnel-fetch.sh
+#       and e2e-fakeip.sh over both carriers.
+#
+#   Two behaviours only the live suite found, recorded because both look like
+#   the client's fault and neither is a matter of reading the spec harder:
+#     * "Target payload waits for READY" is enforced: a Portal watching the
+#       stream while it dials ends the flow if a byte arrives early. v1 allowed
+#       the first payload in the opening write, and this client used to send it
+#       there.
+#     * A refused AuthFrame closes the connection rather than leaving it
+#       silent. Over QUIC that arrived as a connection error rather than an end
+#       of stream, and the oracle reads it as "no setup result".
+#
+# Earlier history, for the record of how the tracking policy came to be.
+#
 # - Advanced from 8807960c to 05366539 on 2026-08-29. One commit, "Correct
 #   documented runtime defaults", changing two lines of docs/security.md: the
 #   TLS Mux shard density 12 -> 4, in prose and in an ASCII diagram.
@@ -70,7 +124,7 @@ SPEC_FILES=docs/protocol.md docs/configuration.md docs/compatibility.md docs/sec
 # host-side oracle and a one-line transcription fix. Had it reached the wire, the
 # answer would have been to hold the pin and schedule the work.
 #
-# Revisit again at the L1 exit, or immediately on the next normative change.
+# Revisit on the next normative change.
 #
 # When advancing the baseline: run scripts/drift-check.sh first, then update this
 # file, then re-run scripts/verify-vectors.py and scripts/smoke-local.sh.

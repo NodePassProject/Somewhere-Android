@@ -16,7 +16,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayOutputStream
-import java.net.InetSocketAddress
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -147,13 +146,9 @@ class QuicPayloadTest {
     private fun withQuicSession(body: (NowhereSession, QuicConnection) -> Unit) {
         val portal = E2eEnvironment.requirePortal()
         val url = quicNode(portal)
-        QuicConnection
-            .open(
-                remote = InetSocketAddress(portal.substringBeforeLast(':'), portal.substringAfterLast(':').toInt()),
-                alpn = url.alpn,
-                serverName = null,
-                protect = { true },
-            ).use { connection ->
+        E2eEnvironment
+            .openQuic(url)
+            .use { connection ->
                 connection.completeHandshake()
                 NowhereSession(
                     sharedKey = url.sharedKey,
@@ -238,13 +233,7 @@ class QuicPayloadTest {
     private fun node(
         portal: String,
         carrier: String,
-    ): NowhereUrl {
-        val url = "nowhere://${E2eEnvironment.sharedKey}@$portal?up=$carrier&down=$carrier"
-        return when (val parsed = NowhereUrl.parse(url)) {
-            is DecodeResult.Ok -> parsed.value
-            is DecodeResult.Invalid -> throw AssertionError("the test node URL does not parse: ${parsed.reason.detail}")
-        }
-    }
+    ): NowhereUrl = E2eEnvironment.node(portal, net = carrier)
 
     private companion object {
         const val ORIGIN_PORT = 28091

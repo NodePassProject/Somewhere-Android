@@ -25,6 +25,19 @@ sealed interface AuthReason : DecodeReason {
         override val detail: String = "URL userinfo carries a password component; the shared key must stand alone"
     }
 
+    /**
+     * The key is not in the form every v3 role requires.
+     *
+     * Exactly 32 lowercase hexadecimal characters, used as text bytes. A key of
+     * any other shape cannot match a v3 Portal's, because the Portal refuses to
+     * start with one, so accepting it here would only move the failure to the
+     * first connection, where it is silence rather than a sentence.
+     */
+    data object NotServiceFormat : AuthReason {
+        override val detail: String =
+            "shared key must be exactly 32 lowercase hexadecimal characters; generate one with `nowhere generate-key`"
+    }
+
     data object MalformedPercentEncoding : AuthReason {
         override val detail: String = "URL userinfo contains a malformed percent escape"
     }
@@ -32,7 +45,7 @@ sealed interface AuthReason : DecodeReason {
     data class FrameTruncated(
         val actual: Int,
     ) : AuthReason {
-        override val detail: String = "authentication frame is $actual bytes; exactly 32 are required"
+        override val detail: String = "authentication frame is $actual bytes; exactly 16 are required"
     }
 
     /**

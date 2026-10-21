@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.ImportLink
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
@@ -55,7 +56,6 @@ import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
-import eu.nodepass.somewhere.ui.theme.direction
 
 /**
  * Adding nodes: scan, subscribe, or paste.
@@ -72,7 +72,6 @@ fun ImportScreen(
     onClose: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
-    var acknowledged by remember { mutableStateOf(false) }
     var typed by remember(link) { mutableStateOf(link.orEmpty()) }
 
     // One field, two outcomes, and the parser decides which. A person holding a
@@ -93,7 +92,6 @@ fun ImportScreen(
     val node = (parsed as? DecodeResult.Ok)?.value
     val subscriptionUrl = remember(effective) { effective.takeIf { it.looksLikeSubscription() } }
     val plaintext = subscriptionUrl?.startsWith("http://", ignoreCase = true) == true
-    val verified = node?.certificateVerification?.isVerified ?: true
 
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(
@@ -242,66 +240,28 @@ fun ImportScreen(
                         PanelRow(Modifier.padding(vertical = 11.dp)) {
                             RowLabel(stringResource(R.string.field_carriers), Modifier.weight(1f))
                             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                CarrierChipFor("UP", node.up.token)
-                                CarrierChipFor("DOWN", node.down.token)
+                                MonoChip(carrierLabel(node.net), colors.muted, colors.surfaceAlt, fontSize = 10.sp)
+                                if (node.morph) MonoChip("MORPH", colors.muted, colors.surfaceAlt, fontSize = 10.sp)
                             }
                         }
                         PanelDivider()
                         PanelRow(Modifier.padding(vertical = 11.dp)) {
                             RowLabel(stringResource(R.string.field_certificate), Modifier.weight(1f))
+                            // Always a statement, never a warning: v3 verifies
+                            // every node one way or the other, so what the
+                            // reader needs is which way.
                             Text(
                                 text =
-                                    stringResource(
-                                        if (verified) R.string.setup_ready else R.string.cert_not_verified,
-                                    ),
+                                    when (val policy = node.certificateVerification) {
+                                        is CertificateVerification.Pin -> stringResource(R.string.cert_pinned)
+                                        is CertificateVerification.Sni -> stringResource(R.string.cert_trusted_as, policy.host)
+                                    },
                                 fontFamily = SomewhereType.Body,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 12.sp,
-                                color = if (verified) colors.good else colors.critical,
+                                color = colors.good,
                             )
                         }
-                    }
-                }
-
-                if (!verified) {
-                    // D-11's third appearance. A tick at the moment of import,
-                    // not a dialog: the person is choosing to accept this, and
-                    // the choice should be on the same screen as the fact.
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(colors.criticalTint)
-                                .clickable { acknowledged = !acknowledged }
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Box(
-                            Modifier
-                                .padding(top = 1.dp)
-                                .size(19.dp)
-                                .clip(RoundedCornerShape(5.dp))
-                                .background(if (acknowledged) colors.critical else colors.criticalTint)
-                                .border(1.5.dp, colors.critical, RoundedCornerShape(5.dp)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (acknowledged) {
-                                Icon(
-                                    SomewhereIcons.Check,
-                                    null,
-                                    Modifier.size(13.dp),
-                                    tint = colors.onCriticalAction,
-                                )
-                            }
-                        }
-                        Text(
-                            text = stringResource(R.string.cert_unverified_confirm),
-                            fontFamily = SomewhereType.Body,
-                            fontSize = 12.5.sp,
-                            lineHeight = 18.sp,
-                            color = colors.inkMuted,
-                        )
                     }
                 }
             }
@@ -309,10 +269,9 @@ fun ImportScreen(
             Spacer(Modifier.weight(1f))
         }
 
-        // Disabled until the certificate statement has been acknowledged. The
-        // affordance stays visible rather than hidden, so the reason the button
-        // does nothing is on the screen next to it.
-        val enabled = (node != null && (verified || acknowledged)) || (subscriptionUrl != null && !plaintext)
+        // The affordance stays visible when disabled rather than hidden, so the
+        // reason the button does nothing is on the screen next to it.
+        val enabled = node != null || (subscriptionUrl != null && !plaintext)
         Box(
             Modifier
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
@@ -378,21 +337,6 @@ private fun RowLabel(
 }
 
 @Composable
-private fun CarrierChipFor(
-    prefix: String,
-    token: String,
-) {
-    val colors = SomewhereTheme.colors
-    val upstreamHue = token == "tcp"
-    MonoChip(
-        text = "$prefix ${token.uppercase()}",
-        foreground = colors.direction(upstreamHue).figure,
-        background = colors.direction(upstreamHue).tint,
-        fontSize = 10.sp,
-    )
-}
-
-@Composable
 private fun SourceCard(
     icon: ImageVector,
     title: String,
@@ -437,16 +381,13 @@ private fun SourceCard(
 @Composable
 private fun maskedUrl(url: NowhereUrl): AnnotatedString {
     val colors = SomewhereTheme.colors
-    val query =
-        buildString {
-            append("?up=${url.up.token}&down=${url.down.token}")
-            if (url.mux) append("&mux=1")
-        }
-    val name = url.displayName?.let { "#$it" }.orEmpty()
+    // Everything after the key exactly as the node would be shared, so what is
+    // shown is what was understood rather than a second rendering of it.
+    val rest = url.toUrl().substringAfter('@')
     return buildAnnotatedString {
         append("nowhere://")
         withMasked(colors.faint)
-        append("@${url.host}:${url.port}$query$name")
+        append("@$rest")
     }
 }
 

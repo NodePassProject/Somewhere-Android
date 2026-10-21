@@ -2,9 +2,13 @@
 """Independently recompute every fixed vector in protocol-vectors.json.
 
 This script references no Nowhere code. It re-implements the encodings from the
-prose in docs/protocol.md and compares against the values transcribed into the
-JSON. A pass means three sources agree: the spec document, this script, and the
-upstream Rust tests.
+prose in docs/protocol.md (nw3) and compares against the values transcribed into
+the JSON. A pass means three sources agree: the spec document, this script, and
+the upstream Rust tests the values were transcribed from.
+
+It uses the standard library only, ChaCha20 included, so that it runs anywhere
+Python does and so that its ChaCha20 is a third implementation rather than a
+dependency shared with whatever produced the fixture.
 
 Purpose:
   - CI gate: fails immediately if the fixtures are edited by mistake or the
@@ -18,6 +22,7 @@ import hashlib
 import hmac
 import json
 import pathlib
+import struct
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -38,66 +43,75 @@ def hmac256(key: bytes, msg: bytes) -> bytes:
     return hmac.new(key, msg, hashlib.sha256).digest()
 
 
-# --- Section 2: connection authentication ----------------------------------
+# --- Authentication -----------------------------------------------------------
 
-def derive_auth_key(shared_key: bytes) -> bytes:
-    salt = hashlib.sha256(b"nowhere/now/1/auth-root").digest()
-    auth_root = hmac256(salt, shared_key)              # HKDF-Extract(salt, IKM)
-    return hmac256(auth_root, b"authentication" + b"\x01")  # HKDF-Expand, 1 block
+ROLE_INFO = {"vector": b"vector-authentication", "egress": b"egress-authentication"}
+TRANSPORT = {"tlsTcp": 0x01, "quic": 0x02}
 
 
-def auth_frame(shared_key: bytes, transport: int, exporter: bytes, session_id: bytes) -> bytes:
-    tag = hmac256(derive_auth_key(shared_key), bytes([transport]) + exporter + session_id)[:16]
-    return session_id + tag
+def role_key(shared_key: bytes, role: str) -> bytes:
+    salt = hashlib.sha256(b"nowhere/nw3/auth-root").digest()
+    root = hmac256(salt, shared_key)                 # HKDF-Extract(salt, IKM)
+    return hmac256(root, ROLE_INFO[role] + b"\x01")  # HKDF-Expand, one block
+
+
+def auth_frame(key: bytes, transport: int, exporter: bytes) -> bytes:
+    # The whole AuthFrame is the tag: no session id, no role byte.
+    return hmac256(key, bytes([transport]) + exporter)[:16]
+
+
+def is_service_key(text: str) -> bool:
+    return len(text) == 32 and all(c in "0123456789abcdef" for c in text)
 
 
 def verify_auth(section: dict) -> None:
-    transports = {"tlsTcp": 0x01, "quic": 0x02}
+    key = section["sharedKeyUtf8"].encode()
+    exporter = bytes.fromhex(section["exporterHex"])
+    check("auth / exporter label", section["derivation"]["exporterLabel"], "EXPORTER-Nowhere-nw3-Auth")
+    check("auth / salt", hashlib.sha256(b"nowhere/nw3/auth-root").hexdigest(), section["saltHex"])
+    check("auth / root", hmac256(hashlib.sha256(b"nowhere/nw3/auth-root").digest(), key).hex(), section["rootHex"])
+    check("auth / the vectors' key is in service form", is_service_key(section["sharedKeyUtf8"]), True)
     for case in section["cases"]:
-        key = case["sharedKeyUtf8"].encode()
-        if "expectedAuthKeyHex" in case:
-            check(f"auth / {case['name']}", derive_auth_key(key).hex(), case["expectedAuthKeyHex"])
-        if "expectedFrameHex" in case:
-            frame = auth_frame(
-                key,
-                transports[case["transport"]],
-                bytes.fromhex(case["exporterHex"]),
-                bytes.fromhex(case["sessionIdHex"]),
-            )
-            check(f"auth / {case['name']}", frame.hex(), case["expectedFrameHex"])
+        rk = role_key(key, case["role"])
+        check(f"auth / {case['name']} role key", rk.hex(), case["expectedRoleKeyHex"])
+        frame = auth_frame(rk, TRANSPORT[case["transport"]], exporter)
+        check(f"auth / {case['name']}", frame.hex(), case["expectedFrameHex"])
+        check(f"auth / {case['name']} length", len(frame), 16)
+    for reject in section["rejects"]:
+        if "sharedKeyUtf8" in reject:
+            check(f"auth reject / {reject['name']}", is_service_key(reject["sharedKeyUtf8"]), False)
 
 
-# --- Section 4: FlowHeader --------------------------------------------------
+# --- FlowStart -----------------------------------------------------------------
 
-ROLES = {"DUPLEX": 0, "OPEN": 1, "ATTACH": 2}
 KINDS = {"TCP": 0, "UDP": 1}
-CARRIERS = {"tls": 0, "quic": 1}
 
 
-def flow_header(role: str, kind: str, up: str, down: str, hops: int, flow_id: int) -> bytes:
-    flags = ROLES[role] | (KINDS[kind] << 2) | (CARRIERS[up] << 3) | (CARRIERS[down] << 4) | (hops << 5)
-    return bytes([flags]) + flow_id.to_bytes(4, "big")
-
-
-def verify_flow_header(section: dict) -> None:
-    for case in section["cases"]:
-        got = flow_header(case["role"], case["kind"], case["up"], case["down"], case["hops"], case["flowId"])
-        check(f"flowHeader / {case['name']}", got.hex(), case["expectedHex"])
-    # Spec constraint: the role bits of 0xff must land on the reserved value 0b11,
-    # which is what keeps the Mux marker from colliding with a FlowHeader.
-    check("flowHeader / 0xff role bits are reserved", 0xFF & 0b11, 0b11)
-
-
-# --- Section 5: Target -----------------------------------------------------
-
-def verify_target(section: dict) -> None:
+def ip_target(addr: str, port: int) -> bytes:
     import ipaddress
 
-    def ip_target(addr: str, port: int) -> bytes:
-        ip = ipaddress.ip_address(addr)
-        atyp = 0x01 if ip.version == 4 else 0x04
-        return bytes([atyp]) + ip.packed + port.to_bytes(2, "big")
+    ip = ipaddress.ip_address(addr)
+    return bytes([0x01 if ip.version == 4 else 0x04]) + ip.packed + port.to_bytes(2, "big")
 
+
+def verify_flow_start(section: dict) -> None:
+    for case in section["cases"]:
+        name = case["name"]
+        if "decodeHex" in case:
+            # Bits 7..1 are reserved: sent as zero, ignored on receipt.
+            kind = bytes.fromhex(case["decodeHex"])[0] & 0x01
+            check(f"flowStart / {name}", kind, KINDS[case["expectedKind"]])
+            continue
+        encoded = bytes([KINDS[case["kind"]]])
+        if "target" in case:
+            host, port = case["target"].rsplit(":", 1)
+            encoded += ip_target(host, int(port))
+        check(f"flowStart / {name}", encoded.hex(), case["expectedHex"])
+
+
+# --- Target (unchanged since v1) ----------------------------------------------
+
+def verify_target(section: dict) -> None:
     def domain_target(name: str, port: int) -> bytes:
         raw = name.encode("ascii")
         return bytes([0x03, len(raw)]) + raw + port.to_bytes(2, "big")
@@ -113,17 +127,19 @@ def verify_target(section: dict) -> None:
         check(f"target / {case['name']} length", len(encoded), case["totalLen"])
 
 
-# --- Section 6: SetupResult ------------------------------------------------
+# --- SetupResult ---------------------------------------------------------------
 
 def verify_setup_result(section: dict) -> None:
-    expected = ["READY", "INVALID_REQUEST", "METADATA_CONFLICT", "PAIR_TIMEOUT",
-                "FLOW_LIMIT", "DIAL_FAILED", "SESSION_REPLACED", "INTERNAL_ERROR"]
-    check("setupResult / number of values", len(section["cases"]), 8)
+    expected = ["READY", "INVALID_REQUEST", "FLOW_LIMIT", "DIAL_FAILED", "INTERNAL_ERROR"]
+    check("setupResult / number of values", len(section["cases"]), 5)
     for case in section["cases"]:
         check(f"setupResult / byte {case['byte']}", case["name"], expected[case["byte"]])
+    for reject in section["rejects"]:
+        for value in reject["bytes"]:
+            check(f"setupResult / {value} is outside the table", value < len(expected), False)
 
 
-# --- Section 8: UDP over stream (UoT) --------------------------------------
+# --- UDP over TLS (UoT, unchanged since v1) ------------------------------------
 
 def verify_uot(section: dict) -> None:
     for case in section["cases"]:
@@ -137,73 +153,175 @@ def verify_uot(section: dict) -> None:
             check(f"uot / {case['name']}", got.hex(), case["expectedHeaderHex"])
 
 
-# --- Section 9: QUIC DATAGRAM ----------------------------------------------
+# --- QUIC datagrams ------------------------------------------------------------
+
+MAX_FLOW_ID = (1 << 30) - 1
+
+
+def base_word(frame_type: int, flow_id: int) -> bytes:
+    assert 1 <= flow_id <= MAX_FLOW_ID
+    return ((frame_type << 30) | flow_id).to_bytes(4, "big")
+
+
+def decode_base(raw: bytes):
+    """(type, flow_id) or None for anything the specification says to drop."""
+    if len(raw) < 4:
+        return None
+    word = int.from_bytes(raw[:4], "big")
+    frame_type, flow_id = word >> 30, word & MAX_FLOW_ID
+    if frame_type == 3 or flow_id == 0:
+        return None
+    if frame_type == 2 and len(raw) != 4:
+        return None
+    return frame_type, flow_id
+
 
 def verify_datagram(section: dict) -> None:
     for case in section["cases"]:
         name = case["name"]
         if "fragIndex" in case:
-            got = (bytes([0x01])
-                   + case["flowId"].to_bytes(4, "big")
+            got = (base_word(1, case["flowId"])
                    + case["packetId"].to_bytes(4, "big")
                    + bytes([case["fragIndex"], case["fragCount"]])
                    + case["totalLen"].to_bytes(2, "big"))
             check(f"datagram / {name}", got.hex(), case["expectedHeaderHex"])
             check(f"datagram / {name} header length", len(got), case["headerLen"])
-            # Fragment planning: fragmentPayloadMax = maxDatagram - 13
-            max_datagram = 1200
-            per = max_datagram - 13
+            per = case["maxDatagram"] - 12
             count = -(-case["totalLen"] // per)
             check(f"datagram / {name} fragment count", count, case["fragCount"])
         elif name.startswith("CLOSE"):
-            got = bytes([0x02]) + case["flowId"].to_bytes(4, "big")
+            got = base_word(2, case["flowId"])
             check(f"datagram / {name}", got.hex(), case["expectedHex"])
             check(f"datagram / {name} header length", len(got), case["headerLen"])
         elif "payloadHex" in case:
-            payload = bytes.fromhex(case["payloadHex"])
-            got = bytes([0x00]) + case["flowId"].to_bytes(4, "big") + payload
+            got = base_word(0, case["flowId"]) + bytes.fromhex(case["payloadHex"])
             check(f"datagram / {name}", got.hex(), case["expectedHex"])
         elif "payloadLens" in case:
-            # Never fragment when the whole packet fits
             for length in case["payloadLens"]:
-                frames = 1 if 5 + length <= case["maxDatagram"] else 2
+                frames = 1 if 4 + length <= case["maxDatagram"] else 2
                 check(f"datagram / {name} len={length}", frames, case["expectedFrames"])
+    for reject in section["rejects"]:
+        if "hex" in reject:
+            check(f"datagram reject / {reject['name']}", decode_base(bytes.fromhex(reject["hex"])), None)
 
 
-# --- Section 3: TLS Mux ----------------------------------------------------
+# --- Stream-derived UDP flow ids ------------------------------------------------
 
-def verify_mux(section: dict) -> None:
-    check("mux / mode marker", section["marker"], "ff")
-    check("mux / MuxHeader length", section["muxHeader"]["headerLen"], 8)
-    flags = section["muxHeader"]["streamFlags"]
-    check("mux / SYN", flags["01"], "SYN")
-    check("mux / FIN", flags["02"], "FIN")
-    check("mux / RST", flags["04"], "RST")
-    bounds = section["bounds"]
-    check("mux / max 32 KiB per STREAM frame", bounds["maxPayloadPerStreamFrame"], 32 * 1024)
-    check("mux / 512 KiB per-stream credit", bounds["perStreamReceiveCredit"], 512 * 1024)
-    check("mux / 512 KiB connection credit", bounds["connectionReceiveCredit"], 512 * 1024)
-    # Shard density is the one number in this file upstream has actually moved
-    # (12 -> 4 at v1.8.2). It is runtime placement rather than wire format, so
-    # no vector catches a stale transcription - this literal does.
-    check("mux / 4-flow shard density", bounds["shardFlowThreshold"], 4)
-    check("mux / 30 s idle shard retirement", bounds["shardIdleCloseSeconds"], 30)
+def derive_flow_id(stream_id: int, initiator: str):
+    if stream_id & 0x2:  # unidirectional
+        return None
+    if (stream_id & 0x1) != (1 if initiator == "server" else 0):
+        return None
+    flow_id = (stream_id >> 2) + 1
+    return flow_id if 1 <= flow_id <= MAX_FLOW_ID else None
+
+
+def verify_flow_ids(section: dict) -> None:
+    for case in section["cases"]:
+        got = derive_flow_id(case["streamId"], case["initiator"])
+        check(f"udpFlowId / {case['initiator']} stream {case['streamId']}", got, case["flowId"])
+    for reject in section["rejects"]:
+        stream_id = reject["streamId"]
+        check(f"udpFlowId reject / stream {stream_id}",
+              (derive_flow_id(stream_id, "client"), derive_flow_id(stream_id, "server")), (None, None))
+
+
+# --- Morph -----------------------------------------------------------------------
+
+def _rotl(value: int, bits: int) -> int:
+    return ((value << bits) & 0xFFFFFFFF) | (value >> (32 - bits))
+
+
+def chacha20_block(key: bytes, counter: int, nonce: bytes) -> bytes:
+    """RFC 8439 section 2.3."""
+    state = list(struct.unpack("<4I", b"expand 32-byte k")) + list(struct.unpack("<8I", key)) \
+        + [counter] + list(struct.unpack("<3I", nonce))
+    x = state[:]
+
+    def quarter(a, b, c, d):
+        x[a] = (x[a] + x[b]) & 0xFFFFFFFF; x[d] = _rotl(x[d] ^ x[a], 16)
+        x[c] = (x[c] + x[d]) & 0xFFFFFFFF; x[b] = _rotl(x[b] ^ x[c], 12)
+        x[a] = (x[a] + x[b]) & 0xFFFFFFFF; x[d] = _rotl(x[d] ^ x[a], 8)
+        x[c] = (x[c] + x[d]) & 0xFFFFFFFF; x[b] = _rotl(x[b] ^ x[c], 7)
+
+    for _ in range(10):
+        quarter(0, 4, 8, 12); quarter(1, 5, 9, 13); quarter(2, 6, 10, 14); quarter(3, 7, 11, 15)
+        quarter(0, 5, 10, 15); quarter(1, 6, 11, 12); quarter(2, 7, 8, 13); quarter(3, 4, 9, 14)
+    return struct.pack("<16I", *((x[i] + state[i]) & 0xFFFFFFFF for i in range(16)))
+
+
+def chacha20_xor(key: bytes, nonce: bytes, data: bytes) -> bytes:
+    out = bytearray()
+    for block in range(0, len(data), 64):
+        stream = chacha20_block(key, block // 64, nonce)
+        out += bytes(a ^ b for a, b in zip(data[block:block + 64], stream))
+    return bytes(out)
+
+
+def morph_keys(shared_key: bytes) -> dict:
+    root = hmac256(b"nowhere/nw3/morph", shared_key)  # the label is the key itself
+    return {name: hmac256(root, name.encode() + b"\x01")
+            for name in ("tcp c2s", "tcp s2c", "udp c2s", "udp s2c")}
+
+
+def verify_morph(section: dict) -> None:
+    # RFC 8439 section 2.4.2, so that this ChaCha20 is checked against the RFC
+    # and not only against the fixture it is about to judge.
+    rfc_key = bytes(range(32))
+    rfc_nonce = bytes.fromhex("000000000000004a00000000")
+    rfc_plain = (b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for "
+                 b"the future, sunscreen would be it.")
+    rfc_first = bytes(a ^ b for a, b in zip(rfc_plain[:64], chacha20_block(rfc_key, 1, rfc_nonce)))
+    check("morph / ChaCha20 RFC 8439 2.4.2 first block", rfc_first[:16].hex(), "6e2e359a2568f98041ba0728dd0d6981")
+
+    for case in section["chacha20"]:
+        got = chacha20_block(bytes.fromhex(case["keyHex"]), 0, bytes.fromhex(case["nonceHex"]))
+        check(f"morph / {case['name']}", got.hex(), case["keystreamHex"])
+
+    for case in section["cases"]:
+        keys = morph_keys(case["sharedKeyUtf8"].encode())
+        for field, name in (("tcpC2sHex", "tcp c2s"), ("tcpS2cHex", "tcp s2c"),
+                            ("udpC2sHex", "udp c2s"), ("udpS2cHex", "udp s2c")):
+            check(f"morph / key {name}", keys[name].hex(), case[field])
+
+    tcp = section["tcp"]
+    keys = morph_keys(tcp["sharedKeyUtf8"].encode())
+    prelude, nonce = bytes.fromhex(tcp["preludeHex"]), bytes.fromhex(tcp["nonceHex"])
+    check("morph / tcp prelude length", len(prelude), 64)
+    check("morph / tcp nonce length", len(nonce), 12)
+    wire = prelude + nonce + chacha20_xor(keys["tcp c2s"], nonce, tcp["clientPlainUtf8"].encode())
+    check("morph / tcp client wire", wire.hex(), tcp["expectedClientWireHex"])
+    down = chacha20_xor(keys["tcp s2c"], nonce, tcp["serverPlainUtf8"].encode())
+    check("morph / tcp server wire (no bootstrap, same nonce)", down.hex(), tcp["expectedServerWireHex"])
+    bounds = tcp["fadeBoundaries"]
+    check("morph / fade A range", bounds["a"], [8, 12])
+    check("morph / fade B range", bounds["b"], [16, 32])
+    check("morph / fade printable range", bounds["printable"], [0x20, 0x7E])
+
+    udp = section["udp"]
+    keys = morph_keys(udp["sharedKeyUtf8"].encode())
+    nonce = bytes.fromhex(udp["nonceHex"])
+    wire = nonce + chacha20_xor(keys["udp " + udp["direction"]], nonce, bytes.fromhex(udp["plainHex"]))
+    check("morph / udp wire", wire.hex(), udp["expectedWireHex"])
+    check("morph / udp overhead", udp["overhead"], 12)
 
 
 def main() -> int:
     path = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
     data = json.loads(path.read_text(encoding="utf-8"))
 
+    check("baseline / ALPN", data["baseline"]["alpn"], "nw3")
     verify_auth(data["auth"])
-    verify_flow_header(data["flowHeader"])
+    verify_flow_start(data["flowStart"])
     verify_target(data["target"])
     verify_setup_result(data["setupResult"])
     verify_uot(data["uot"])
     verify_datagram(data["quicDatagram"])
-    verify_mux(data["tlsMux"])
+    verify_flow_ids(data["udpFlowId"])
+    verify_morph(data["morph"])
 
     base = data["baseline"]
-    print(f"Baseline {base['upstreamRepo']} @ {base['branch']} {base['commit'][:8]}")
+    print(f"Baseline {base['upstreamRepo']} @ {base['tag']} {base['commit'][:8]}")
     if failures:
         print(f"\n{len(failures)} of {checks} checks FAILED:\n")
         for failure in failures:

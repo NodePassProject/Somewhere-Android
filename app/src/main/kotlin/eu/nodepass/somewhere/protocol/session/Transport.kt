@@ -61,6 +61,16 @@ interface Transport : Closeable {
     fun setReadTimeout(millis: Int) = Unit
 }
 
+/**
+ * A transport that is one QUIC stream, and knows which.
+ *
+ * The stream id is protocol, not plumbing: a UDP flow's id is derived from it
+ * (`docs/protocol.md` § UDP flows), so the carrier has to be able to ask.
+ */
+interface StreamTransport : Transport {
+    val streamId: Long
+}
+
 enum class TransportKind {
     TlsTcp,
     Quic,

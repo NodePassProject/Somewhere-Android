@@ -8,11 +8,9 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.AuthTransport
 import eu.nodepass.somewhere.protocol.auth.Authentication
 import eu.nodepass.somewhere.protocol.auth.SharedKey
-import eu.nodepass.somewhere.protocol.frame.FlowCarrier
-import eu.nodepass.somewhere.protocol.frame.FlowHeader
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
-import eu.nodepass.somewhere.protocol.frame.FlowRole
+import eu.nodepass.somewhere.protocol.frame.FlowStart
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.invalid
 import eu.nodepass.somewhere.protocol.ok
@@ -42,25 +40,31 @@ sealed interface LaneReason : DecodeReason {
     data class HeaderInvalid(
         val cause: DecodeReason,
     ) : LaneReason {
-        override val detail: String = "could not build the flow header: ${cause.detail}"
+        override val detail: String = "the Portal's answer did not parse: ${cause.detail}"
     }
 }
 
 /**
- * One TLS connection carrying exactly one logical flow. NW-P-10, NW-P-11.
+ * One TLS connection carrying exactly one flow. `docs/protocol.md` §
+ * Connection establishment: "Vector TLS | AuthFrame + FlowStart + Target |
+ * SetupResult".
  *
- * The simplest carrier and the one L1 ships. A lane is used once and closed;
- * there is no reuse and no warm pool — the 1.7 `pool` parameter was **removed in
- * 1.8**, and implementing one would be implementing a protocol feature that no
- * longer exists.
+ * A lane is used once and closed; there is no reuse and no warm pool — the 1.7
+ * `pool` parameter was **removed in 1.8**, and v3 says outright that TLS is one
+ * connection per flow.
  *
- * ## The single write
+ * ## One opening write, and the payload after READY
  *
- * A cold connection may write `AuthFrame ‖ FlowHeader ‖ Target ‖ first payload`
- * in one go, and this does, because the alternative is worse than merely slower:
- * four separate writes produce four distinguishable packets with client-side
- * timing between them, every time, on every connection. One write is one packet
- * shaped like any other TLS record.
+ * `AuthFrame ‖ FlowStart ‖ Target` go out in one write, because three separate
+ * writes would produce three distinguishable records with client-side timing
+ * between them, every time, on every connection.
+ *
+ * **The caller's first payload does not join them.** v1 allowed it, and this
+ * class used to append it; v3 says "target payload waits for READY", and a
+ * Portal enforces it — while it dials, it watches the stream, and a byte that
+ * arrives early ends the flow ("target payload arrived before READY"). Found by
+ * running the live suite against v3.0.1: every flow that had its first bytes
+ * in hand when it opened, which is most of them, was being torn down.
  *
  * ## Why failure is quiet
  *
@@ -74,7 +78,6 @@ sealed interface LaneReason : DecodeReason {
 class DedicatedTlsLane(
     private val transport: Transport,
     private val sharedKey: SharedKey,
-    private val sessionId: SessionId,
 ) : AutoCloseable {
     private var used = false
     private var flow: LaneFlow? = null
@@ -82,36 +85,26 @@ class DedicatedTlsLane(
     /** A lane carries one flow. Once opened, it cannot open another. */
     val hasCapacity: Boolean get() = !used && transport.isOpen
 
+    /** Whether [candidate] is the flow this lane opened. */
+    internal fun carries(candidate: Flow): Boolean = flow === candidate
+
     /**
      * Authenticates, opens the flow, and reads the Portal's answer.
      *
-     * @param firstPayload bytes to append to the opening write. Passing the
-     *   caller's first payload here is what makes the single write possible; it
-     *   is optional because a caller may not have any yet.
+     * @param logId the number this flow goes by in logs; the protocol has no
+     *   flow id over TLS.
+     * @param firstPayload bytes to send once the Portal has answered READY, and
+     *   never before. Optional, because a caller may not have any yet.
      */
     fun open(
         target: Target,
         kind: FlowKind,
-        flowId: UInt,
+        logId: UInt,
         firstPayload: ByteArray = ByteArray(0),
     ): DecodeResult<Flow> {
         if (used) return invalid(LaneReason.AlreadyUsed)
         if (!transport.isOpen) return invalid(LaneReason.TransportClosed)
         used = true
-
-        val carrier =
-            when (transport.transportKind) {
-                TransportKind.TlsTcp -> FlowCarrier.TlsTcp
-                TransportKind.Quic -> FlowCarrier.Quic
-            }
-        val header =
-            when (
-                val built =
-                    FlowHeader.forClient(FlowRole.Duplex, kind, carrier, carrier, flowId)
-            ) {
-                is DecodeResult.Invalid -> return invalid(LaneReason.HeaderInvalid(built.reason))
-                is DecodeResult.Ok -> built.value
-            }
 
         val authTransport =
             when (transport.transportKind) {
@@ -123,11 +116,10 @@ class DedicatedTlsLane(
                 sharedKey = sharedKey,
                 transport = authTransport,
                 exporter = transport.exporter,
-                sessionId = sessionId.toByteArray(),
             )
 
-        // One write. See the class comment.
-        val opening = authFrame + header.encode() + target.encode() + firstPayload
+        // One write, and no payload in it. See the class comment.
+        val opening = authFrame + byteArrayOf(FlowStart(kind).encode()) + target.encode()
         transport.write(opening)
         transport.flush()
 
@@ -151,7 +143,11 @@ class DedicatedTlsLane(
         // that were perfectly healthy.
         transport.setReadTimeout(0)
 
-        return LaneFlow(flowId, target, kind, result, transport).also { flow = it }.ok()
+        if (firstPayload.isNotEmpty()) {
+            transport.write(firstPayload)
+            transport.flush()
+        }
+        return LaneFlow(logId, target, kind, result, transport).also { flow = it }.ok()
     }
 
     /**
@@ -209,13 +205,13 @@ class DedicatedTlsLane(
 
     companion object {
         /**
-         * The Portal reclaims a connection whose first FlowHeader byte does not
-         * arrive within this long after authentication (NW-P-11).
+         * How long a Portal waits for the AuthFrame once the transport is up
+         * (`NOW_HANDSHAKE_TIMEOUT`, default five seconds).
          *
-         * Not enforced here — [open] writes the header in the same call — but
-         * recorded so that anything which ever separates the two knows the
-         * budget it is spending.
+         * Not enforced here — [open] writes the AuthFrame and FlowStart in the
+         * same call — but recorded so that anything which ever separates the
+         * handshake from the first write knows the budget it is spending.
          */
-        const val BOOTSTRAP_DEADLINE_SECONDS: Int = 40
+        const val HANDSHAKE_DEADLINE_SECONDS: Int = 5
     }
 }

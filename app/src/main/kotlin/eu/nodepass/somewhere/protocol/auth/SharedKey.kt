@@ -52,6 +52,21 @@ class SharedKey private constructor(
 
         fun of(text: String): DecodeResult<SharedKey> = of(text.encodeToByteArray())
 
+        /** The length every v3 role requires, in characters and therefore in bytes. */
+        const val SERVICE_LENGTH: Int = 32
+
+        /**
+         * Whether [bytes] is a key a v3 Portal can hold: 32 lowercase hex characters.
+         *
+         * The KDF accepts any 1-255 bytes and so does [of]; this is the narrower
+         * rule configuration applies on top. Uppercase is refused rather than
+         * folded, because the text bytes enter the KDF directly and `A` and `a`
+         * derive different keys.
+         */
+        fun isServiceFormat(bytes: ByteArray): Boolean =
+            bytes.size == SERVICE_LENGTH &&
+                bytes.all { it in '0'.code.toByte()..'9'.code.toByte() || it in 'a'.code.toByte()..'f'.code.toByte() }
+
         /**
          * Extracts the key from a URL userinfo component.
          *

@@ -8,14 +8,16 @@ this system, not the system itself.
 
 **Upstream and downstream are never the same colour, anywhere in the app.**
 
-Nowhere's distinguishing property is that the two directions can ride different
-transports — `up=tcp&down=udp` is a normal configuration, not an edge case. Every
-other proxy client shows one throughput number, because for every other protocol
-there is only one path. Showing a single number here would discard the one thing
-this protocol does that the others do not.
+The two directions are two channels with two rates, and the home screen exists
+to show both. v1 let them ride different transports — `up=tcp&down=udp` — and
+that was where this rule came from; v3 carries both on the carrier `net` names,
+but the channels are still two, and a single throughput figure would still be an
+average of two measurements with no common denominator.
 
-The split is structural, not decorative. It holds on the home screen, in the node
-editor, on node cards and in logs.
+The split is structural, not decorative. It holds on the home screen and in
+logs. Where the app names the one carrier a node uses — the node card, the
+editor, import — it uses a neutral chip rather than either direction's hue,
+because a carrier belongs to neither direction.
 
 ## Colour
 
@@ -144,27 +146,29 @@ layout under the reader's eyes. Prose is never monospaced.
 
 Nothing crashes when these are violated, which is why they are written down.
 
-### 1. The unverified marker is persistent
+### 1. Say how the certificate is checked
 
-A node with neither `sni` nor `pin` gets no certificate verification at all, and
-every URL NowhereDash currently generates is exactly that. The marker appears on
-the **home screen**, on the **node card**, and as a **confirmation at import**. It
-is never a dialog that can be dismissed, because the condition persists for as
-long as the node does.
+v3 verifies every node — by a pin, or by this device's trust store and a name —
+so there is no "unverified" state to warn about, and the persistent red marker
+that v1 needed is gone. What the reader needs instead is *which way*: the editor
+and the import panel state **Pinned** with the fingerprint, or **Trusted as**
+the name, so it can be compared with the Portal. Stated, in ordinary ink; not a
+warning, because nothing is wrong.
 
-### 2. Seven rejections, seven messages
+### 2. Four rejections, four messages
 
-`SetupResult` carries seven distinct rejections (NW-P-06). Each reaches the user
-as a different message. Never "connection failed" — that hides the difference
-between a Portal at its flow limit and a session taken over on another device,
-which is exactly what someone needs in order to act.
+`SetupResult` carries four distinct rejections. Each reaches the user as a
+different message. Never "connection failed" — that hides the difference
+between a Portal at its flow limit and a target it could not reach, which is
+exactly what someone needs in order to act.
 
 ### 3. Never rewrite a pasted node
 
-Upstream defaults both directions to `udp`, so a default configuration needs QUIC
-(NW-P-25). A node in that state says so and offers **Switch to TCP** / **Keep as
-is**. Two buttons, because rewriting on the user's behalf is what the requirement
-forbids.
+A pasted link is stored as the parser understood it and changed only when the
+user edits it. The one translation is a 2.x dashboard's `up`/`down`, read as
+`net` when they agree — and the node shows the v3 form it was read as, so the
+translation is visible rather than silent. Morph is a switch in the editor with
+the instruction that it must match the Portal, because it cannot be detected.
 
 ### 4. Nothing is shown as a measurement that is not one
 

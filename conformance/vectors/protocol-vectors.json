@@ -1,222 +1,450 @@
 {
-  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol, language-agnostic. Source: NodePassProject/Nowhere src/tests/protocol/*.rs (v1.8.2 @ 8807960c). The authentication section has additionally been recomputed by an independent implementation following docs/protocol.md section 2. All hex is lowercase and unseparated.",
+  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol (nw3), language-agnostic. Authentication, FlowStart, stream-derived flow ids and SetupResult are transcribed from upstream src/tests/protocol/vectors.json; datagram layouts from src/tests/protocol/datagram.rs; Morph keys and the ChaCha20 block from src/tests/transport/morph*.rs. The two Morph ciphertext vectors are computed with an independent ChaCha20 (Python `cryptography`). All hex is lowercase and unseparated.",
   "baseline": {
     "upstreamRepo": "NodePassProject/Nowhere",
     "branch": "main",
-    "tag": "v1.8.2",
-    "commit": "8807960c",
+    "tag": "v3.0.1",
+    "commit": "00000e0",
     "specPath": "docs/protocol.md",
-    "binaryVersionString": "nowhere-v1.8.2",
-    "note": "v1.8.2 released 2026-08-26. Advanced from v1.8.0 on the first normative change the drift check has reported: TLS Mux shard density 12 -> 4 flows, and a Portal-side QUIC memory-profile default. Both are runtime tuning; no wire field, layout, length, ordering or derivation moved, so every byte-level vector below carries across unchanged. Authentication and FlowHeader are additionally unchanged since 1.7. See conformance/PROTOCOL_BASELINE for the assessment."
+    "binaryVersionString": "nowhere-v3.0.1",
+    "alpn": "nw3",
+    "note": "v3.0.1 is wire-incompatible with v1.8.2: new ALPN and exporter label, a 16-byte AuthFrame with role keys, a 1-byte FlowStart, renumbered SetupResult, a 4-byte datagram base word, stream-derived flow ids, and Morph. Target and UoT are unchanged. See conformance/PROTOCOL_BASELINE."
   },
-
   "auth": {
     "derivation": {
-      "saltInput": "nowhere/now/1/auth-root",
+      "saltInput": "nowhere/nw3/auth-root",
       "salt": "sha256(saltInput)",
-      "authRoot": "hmac-sha256(key=salt, msg=sharedKey)",
-      "authKey": "hmac-sha256(key=authRoot, msg=\"authentication\" || 0x01)",
-      "tag": "hmac-sha256(key=authKey, msg=transportByte || exporter[32] || sessionId[16])[0..16]",
-      "exporterLabel": "EXPORTER-Nowhere-Auth",
+      "root": "hmac-sha256(key=salt, msg=sharedKey)",
+      "roleKey": "hmac-sha256(key=root, msg=\"<role>-authentication\" || 0x01)",
+      "authFrame": "hmac-sha256(key=roleKey, msg=transportByte || exporter[32])[0..16]",
+      "exporterLabel": "EXPORTER-Nowhere-nw3-Auth",
       "exporterContext": "present but empty",
       "exporterLength": 32,
-      "transportByte": { "tlsTcp": "01", "quic": "02" }
+      "transportByte": {
+        "tlsTcp": "01",
+        "quic": "02"
+      }
     },
+    "sharedKeyUtf8": "0123456789abcdef0123456789abcdef",
+    "saltHex": "ac19b63a0ed76832917590b43802fe8ca5b13a7e09dbb78d3a6194b5b78223e5",
+    "rootHex": "ec0a6b441f3cf02652e0e7d0c11806607bd1f74b69f83c6d3d329752c4995ff2",
+    "exporterHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
     "cases": [
       {
-        "name": "authKey from shared key \"secret\"",
-        "sharedKeyUtf8": "secret",
-        "expectedAuthKeyHex": "1076221669fa28bcf70aa8545bddd6f760dcefbe279c3f38a5ff5d925708f867"
-      },
-      {
-        "name": "AuthFrame over TLS/TCP",
-        "sharedKeyUtf8": "secret",
-        "exporterHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "sessionIdHex": "000102030405060708090a0b0c0d0e0f",
+        "name": "vector AuthFrame over TLS",
+        "role": "vector",
         "transport": "tlsTcp",
-        "expectedFrameHex": "000102030405060708090a0b0c0d0e0f24a4c0d5f8946b65bcf270ed6e1c3dec"
+        "expectedRoleKeyHex": "1b5bddc7018f44cece1942211f94e5302c86827fda2e29bb4676ab667e5c95fb",
+        "expectedFrameHex": "1a26d8eb72ead8a223b54fd1f04f8e32"
       },
       {
-        "name": "AuthFrame over QUIC",
-        "sharedKeyUtf8": "secret",
-        "exporterHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-        "sessionIdHex": "000102030405060708090a0b0c0d0e0f",
+        "name": "vector AuthFrame over QUIC",
+        "role": "vector",
         "transport": "quic",
-        "expectedFrameHex": "000102030405060708090a0b0c0d0e0f8176b984db64a1e2c811e751d955b635"
+        "expectedRoleKeyHex": "1b5bddc7018f44cece1942211f94e5302c86827fda2e29bb4676ab667e5c95fb",
+        "expectedFrameHex": "7cbb323bd019bb51370c92a50a36a08f"
+      },
+      {
+        "name": "egress AuthFrame over TLS",
+        "role": "egress",
+        "transport": "tlsTcp",
+        "expectedRoleKeyHex": "ed65a35aa30c34a39c0c64ec1e0fd6d2d29aab3b25e9b62076caf0227566b9ce",
+        "expectedFrameHex": "4c96702866b5d287ca58c7caffef0e0e"
+      },
+      {
+        "name": "egress AuthFrame over QUIC",
+        "role": "egress",
+        "transport": "quic",
+        "expectedRoleKeyHex": "ed65a35aa30c34a39c0c64ec1e0fd6d2d29aab3b25e9b62076caf0227566b9ce",
+        "expectedFrameHex": "6da768d4a7db51fde70970347401554c"
       }
     ],
     "rejects": [
-      { "name": "empty shared key", "sharedKeyLen": 0 },
-      { "name": "shared key longer than 255 bytes", "sharedKeyLen": 256 },
-      { "name": "URL carrying a password component", "url": "portal://secret:password@127.0.0.1:443" },
-      { "name": "URL without userinfo", "url": "portal://127.0.0.1:443" },
-      { "name": "malformed percent escapes", "urls": ["portal://bad%GG@127.0.0.1:443", "portal://bad%@127.0.0.1:443", "portal://bad%1@127.0.0.1:443"] }
-    ],
-    "notes": [
-      "The shared key is strictly percent-decoded; a literal + stays +, it is not decoded as a space.",
-      "Tag comparison must be constant time.",
-      "Authentication has no response frame; a failure must not produce a distinguishable response (no active-probing oracle)."
+      {
+        "name": "share-link key that is not 32 lowercase hex characters",
+        "sharedKeyUtf8": "secret"
+      },
+      {
+        "name": "uppercase hex is a different key, not the same key",
+        "sharedKeyUtf8": "0123456789ABCDEF0123456789ABCDEF"
+      },
+      {
+        "name": "AuthFrame that is not exactly 16 bytes",
+        "frameLen": 32
+      },
+      {
+        "name": "Egress tag over TLS (TLS admits a Vector only)"
+      }
     ]
   },
-
-  "flowHeader": {
-    "layout": "flags(u8) || flowId(u32 big-endian)",
-    "flagBits": {
-      "role": { "bits": "1..0", "values": { "0": "DUPLEX", "1": "OPEN", "2": "ATTACH", "3": "invalid" } },
-      "kind": { "bits": "2", "values": { "0": "TCP", "1": "UDP" } },
-      "up":   { "bits": "3", "values": { "0": "TLS/TCP", "1": "QUIC" } },
-      "down": { "bits": "4", "values": { "0": "TLS/TCP", "1": "QUIC" } },
-      "hops": { "bits": "7..5", "range": "0..7" }
-    },
+  "flowStart": {
+    "layout": "one byte: bit 0 is the kind (0 TCP, 1 UDP); bits 7..1 reserved, sent as zero and ignored on receipt",
     "cases": [
-      { "name": "DUPLEX TCP tls/tls", "role": "DUPLEX", "kind": "TCP", "up": "tls", "down": "tls", "hops": 0, "flowId": 16909060, "expectedHex": "0001020304" },
-      { "name": "OPEN UDP quic-up tls-down", "role": "OPEN", "kind": "UDP", "up": "quic", "down": "tls", "hops": 0, "flowId": 287454020, "expectedHex": "0d11223344" },
-      { "name": "ATTACH UDP tls-up quic-down", "role": "ATTACH", "kind": "UDP", "up": "tls", "down": "quic", "hops": 0, "flowId": 7, "expectedHex": "1600000007" }
-    ],
-    "rejects": [
-      { "name": "role bits 0b11 are reserved", "flagsHex": "03" },
-      { "name": "flowId zero", "flowId": 0 },
-      { "name": "client-originated flows must carry hops 0", "hops": 1, "origin": "client" }
-    ],
-    "notes": [
-      "0xff cannot be a valid first FlowHeader byte (its role bits are the reserved value 0b11), which is why it is used as the TLS Mux mode marker.",
-      "For DUPLEX, up must equal down; for OPEN and ATTACH they must differ."
+      {
+        "name": "TCP",
+        "kind": "TCP",
+        "expectedHex": "00"
+      },
+      {
+        "name": "UDP",
+        "kind": "UDP",
+        "expectedHex": "01"
+      },
+      {
+        "name": "TCP to 127.0.0.1:443, FlowStart + Target",
+        "kind": "TCP",
+        "target": "127.0.0.1:443",
+        "expectedHex": "00017f00000101bb"
+      },
+      {
+        "name": "reserved bits ignored: 0xfe decodes as TCP",
+        "decodeHex": "fe",
+        "expectedKind": "TCP"
+      },
+      {
+        "name": "reserved bits ignored: 0xff decodes as UDP",
+        "decodeHex": "ff",
+        "expectedKind": "UDP"
+      }
     ]
   },
-
   "target": {
     "layout": "atyp(u8) || address || port(u16 big-endian); ATYP values match SOCKS5",
     "cases": [
-      { "name": "IPv4 192.0.2.1:443", "atyp": 1, "expectedHex": "01c000020101bb", "totalLen": 7 },
-      { "name": "IPv6 [2001:db8::1]:53", "atyp": 4, "expectedHex": "0420010db80000000000000000000000010035", "totalLen": 19 },
-      { "name": "domain xn--bcher-kva.example:8080 (IDNA)", "atyp": 3, "nameLen": 21, "expectedHex": "0315786e2d2d62636865722d6b76612e6578616d706c651f90", "totalLen": 25 }
+      {
+        "name": "IPv4 192.0.2.1:443",
+        "atyp": 1,
+        "expectedHex": "01c000020101bb",
+        "totalLen": 7
+      },
+      {
+        "name": "IPv6 [2001:db8::1]:53",
+        "atyp": 4,
+        "expectedHex": "0420010db80000000000000000000000010035",
+        "totalLen": 19
+      },
+      {
+        "name": "domain xn--bcher-kva.example:8080 (IDNA)",
+        "atyp": 3,
+        "nameLen": 21,
+        "expectedHex": "0315786e2d2d62636865722d6b76612e6578616d706c651f90",
+        "totalLen": 25
+      }
     ],
     "rejects": [
-      { "name": "port 0", "reason": "port zero is invalid for every target form" },
-      { "name": "empty domain", "nameLen": 0 },
-      { "name": "domain longer than 253 bytes", "nameLen": 254 },
-      { "name": "non-ASCII domain bytes" },
-      { "name": "unknown ATYP" },
-      { "name": "truncated address" }
+      {
+        "name": "port 0",
+        "reason": "port zero is invalid for every target form"
+      },
+      {
+        "name": "empty domain",
+        "nameLen": 0
+      },
+      {
+        "name": "domain longer than 253 bytes",
+        "nameLen": 254
+      },
+      {
+        "name": "non-ASCII domain bytes"
+      },
+      {
+        "name": "unknown ATYP"
+      },
+      {
+        "name": "truncated address"
+      }
     ],
     "notes": [
       "The domain is an unresolved ASCII/IDNA hostname; it must not include a port or IPv6 brackets.",
       "Every rejection must happen before the target connection is attempted."
     ]
   },
-
   "setupResult": {
     "layout": "single byte",
     "cases": [
-      { "byte": 0, "name": "READY" },
-      { "byte": 1, "name": "INVALID_REQUEST" },
-      { "byte": 2, "name": "METADATA_CONFLICT" },
-      { "byte": 3, "name": "PAIR_TIMEOUT" },
-      { "byte": 4, "name": "FLOW_LIMIT" },
-      { "byte": 5, "name": "DIAL_FAILED" },
-      { "byte": 6, "name": "SESSION_REPLACED" },
-      { "byte": 7, "name": "INTERNAL_ERROR" }
+      {
+        "byte": 0,
+        "name": "READY"
+      },
+      {
+        "byte": 1,
+        "name": "INVALID_REQUEST"
+      },
+      {
+        "byte": 2,
+        "name": "FLOW_LIMIT"
+      },
+      {
+        "byte": 3,
+        "name": "DIAL_FAILED"
+      },
+      {
+        "byte": 4,
+        "name": "INTERNAL_ERROR"
+      }
     ],
     "rejects": [
-      { "name": "values outside 0..7 are protocol errors", "bytes": [8, 255] }
+      {
+        "name": "values above 4 are protocol errors",
+        "bytes": [
+          5,
+          7,
+          255
+        ]
+      }
     ],
     "notes": [
-      "For a split flow only the selected downlink receives the result, and that result is authoritative for the whole logical flow.",
-      "The client must map all seven rejection reasons to distinct user-facing messages and log lines; they must not collapse into a generic connection failure."
+      "Each Flow receives at most one SetupResult; after READY, close or reset ends it.",
+      "The four rejections must reach the user as distinct messages and log lines."
     ]
   },
-
   "uot": {
     "layout": "payloadLen(u16 big-endian) || payload",
     "cases": [
-      { "name": "empty packet is valid", "payloadHex": "", "expectedHex": "0000" },
-      { "name": "abc", "payloadUtf8": "abc", "expectedHex": "0003616263" },
-      { "name": "header only, declared length 0x1234", "declaredLen": 4660, "expectedHeaderHex": "1234" }
+      {
+        "name": "empty packet is valid",
+        "payloadHex": "",
+        "expectedHex": "0000"
+      },
+      {
+        "name": "abc",
+        "payloadUtf8": "abc",
+        "expectedHex": "0003616263"
+      },
+      {
+        "name": "header only, declared length 0x1234",
+        "declaredLen": 4660,
+        "expectedHeaderHex": "1234"
+      }
     ],
     "rejects": [
-      { "name": "length above UOT_PACKET_MAX" },
-      { "name": "EOF after one length byte" },
-      { "name": "EOF before the declared payload completes" }
+      {
+        "name": "length above UOT_PACKET_MAX"
+      },
+      {
+        "name": "EOF after one length byte"
+      },
+      {
+        "name": "EOF before the declared payload completes"
+      }
     ],
     "notes": [
       "Consecutive packets are encoded back to back with no additional type field.",
       "A clean EOF before the next length field closes that UoT half."
     ]
   },
-
   "quicDatagram": {
-    "typeBits": "low two bits of the first byte; the remaining bits are reserved and must be zero",
-    "types": { "0": "DATA", "1": "FRAGMENT", "2": "CLOSE", "3": "invalid" },
+    "baseWord": "u32 big-endian: type in bits 31..30 (0 DATA, 1 FRAGMENT, 2 CLOSE, 3 invalid), flow id in bits 29..0 (1..2^30-1)",
     "cases": [
-      { "name": "DATA with a 2-byte payload", "headerLen": 5, "flowId": 16909060, "payloadHex": "aabb", "expectedHex": "0001020304aabb" },
-      { "name": "DATA with an empty payload (valid)", "headerLen": 5, "flowId": 16909060, "payloadHex": "", "expectedHex": "0001020304" },
-      { "name": "CLOSE", "headerLen": 5, "flowId": 16909060, "expectedHex": "0201020304" },
+      {
+        "name": "DATA with a 2-byte payload",
+        "headerLen": 4,
+        "flowId": 16909060,
+        "payloadHex": "aabb",
+        "expectedHex": "01020304aabb"
+      },
+      {
+        "name": "DATA with an empty payload (valid)",
+        "headerLen": 4,
+        "flowId": 16909060,
+        "payloadHex": "",
+        "expectedHex": "01020304"
+      },
+      {
+        "name": "CLOSE",
+        "headerLen": 4,
+        "flowId": 16909060,
+        "expectedHex": "81020304"
+      },
+      {
+        "name": "DATA at the largest flow id",
+        "headerLen": 4,
+        "flowId": 1073741823,
+        "payloadHex": "",
+        "expectedHex": "3fffffff"
+      },
+      {
+        "name": "CLOSE at the largest flow id",
+        "headerLen": 4,
+        "flowId": 1073741823,
+        "expectedHex": "bfffffff"
+      },
       {
         "name": "FRAGMENT first fragment (2500-byte payload, maxDatagram 1200, 3 fragments)",
-        "headerLen": 13,
+        "headerLen": 12,
         "flowId": 16909060,
         "packetId": 287454020,
         "fragIndex": 0,
         "fragCount": 3,
         "totalLen": 2500,
-        "expectedHeaderHex": "010102030411223344000309c4"
+        "maxDatagram": 1200,
+        "expectedHeaderHex": "4102030411223344000309c4"
       },
-      { "name": "never fragment when the whole packet fits", "payloadLens": [0, 1, 95], "maxDatagram": 100, "expectedFrames": 1 }
+      {
+        "name": "FRAGMENT at the largest flow and packet ids",
+        "headerLen": 12,
+        "flowId": 1073741823,
+        "packetId": 4294967295,
+        "fragIndex": 0,
+        "fragCount": 2,
+        "totalLen": 2,
+        "maxDatagram": 13,
+        "expectedHeaderHex": "7fffffffffffffff00020002"
+      },
+      {
+        "name": "never fragment when the whole packet fits",
+        "payloadLens": [
+          0,
+          1,
+          96
+        ],
+        "maxDatagram": 100,
+        "expectedFrames": 1
+      }
     ],
     "rejects": [
-      { "name": "type 3" },
-      { "name": "reserved bits set" },
-      { "name": "flowId zero" },
-      { "name": "packetId zero" },
-      { "name": "fragIndex >= fragCount" },
-      { "name": "fragCount outside 2..255" },
-      { "name": "inconsistent fragment metadata for one packet (count / totalLen / flowId / packetId)" },
-      { "name": "duplicate fragment with different bytes discards the whole packet" },
-      { "name": "reassembled length not equal to totalLen discards the packet" },
-      { "name": "DATA received before READY is discarded" }
+      {
+        "name": "type 3",
+        "hex": "c0000001"
+      },
+      {
+        "name": "flow id zero",
+        "hex": "00000000"
+      },
+      {
+        "name": "CLOSE with trailing bytes",
+        "hex": "8000000100"
+      },
+      {
+        "name": "truncated base word",
+        "hex": "000000"
+      },
+      {
+        "name": "packet id zero"
+      },
+      {
+        "name": "fragIndex >= fragCount"
+      },
+      {
+        "name": "fragCount outside 2..255"
+      },
+      {
+        "name": "totalLen smaller than fragCount"
+      },
+      {
+        "name": "fragment payload that leaves no byte for some other fragment"
+      },
+      {
+        "name": "conflicting fragment metadata or bytes for one packet discards it"
+      },
+      {
+        "name": "DATA for an id that is not READY is dropped"
+      }
     ],
     "notes": [
-      "fragmentPayloadMax = maxDatagramSize - 13; fragmentCount = ceil(len / fragmentPayloadMax), and must fall in 2..255.",
-      "If the QUIC maximum datagram size shrinks and a packet must be replanned, the sender uses a new packetId; packetId allocation skips zero.",
-      "Reassembly is keyed by (flowId, packetId); upstream bounds it to 64 concurrent slots with a 10-second lifetime."
+      "fragmentPayloadMax = maxDatagramSize - 12; fragmentCount = ceil(len / fragmentPayloadMax), in 2..255.",
+      "Reassembly is keyed by (connection, flowId, packetId), bounded to 64 partial packets with a 10-second lifetime."
     ]
   },
-
-  "tlsMux": {
-    "marker": "ff",
-    "markerNote": "Written after the AuthFrame; Portal does not echo it. Both directions then use Mux frames. Mux never wraps QUIC.",
-    "muxHeader": {
-      "layout": "kind(u8) || flags(u8) || value(u16) || flowId(u32)",
-      "headerLen": 8,
-      "kinds": {
-        "01": "STREAM (value = payload length, flowId nonzero)",
-        "02": "WINDOW (value = returned byte credit, flowId 0 means connection-level)",
-        "03": "DATAGRAM (recognised but unsupported)"
+  "udpFlowId": {
+    "derivation": "flow_id = (quic_stream_id >> 2) + 1, after checking the stream is bidirectional and from the expected initiator; 1..2^30-1",
+    "cases": [
+      {
+        "initiator": "client",
+        "streamId": 0,
+        "flowId": 1
       },
-      "streamFlags": { "01": "SYN", "02": "FIN", "04": "RST" }
-    },
-    "bounds": {
-      "maxPayloadPerStreamFrame": 32768,
-      "perStreamReceiveCredit": 524288,
-      "connectionReceiveCredit": 524288,
-      "maxActiveStreams": 256,
-      "outboundQueueSlots": 512,
-      "shardFlowThreshold": 4,
-      "shardIdleCloseSeconds": 30
-    },
-    "rejects": [
-      { "name": "a DATAGRAM kind closes the Mux carrier as unsupported" },
-      { "name": "RST must be the only flag and value must be 0" },
-      { "name": "all other STREAM flag bits must be zero" },
-      { "name": "WINDOW must have flags=0, no payload, and nonzero credit" },
-      { "name": "credit exceeding the configured window closes the carrier" },
-      { "name": "STREAM data for an unknown flowId is a carrier error" }
+      {
+        "initiator": "client",
+        "streamId": 4,
+        "flowId": 2
+      },
+      {
+        "initiator": "server",
+        "streamId": 1,
+        "flowId": 1
+      },
+      {
+        "initiator": "client",
+        "streamId": 4294967288,
+        "flowId": 1073741823
+      },
+      {
+        "initiator": "server",
+        "streamId": 4294967289,
+        "flowId": 1073741823
+      }
     ],
-    "notes": [
-      "The Mux flowId must match the flowId inside the logical stream's FlowHeader.",
-      "Late FIN and RST processing must be idempotent; a late stream-local WINDOW for an already closed stream is ignored.",
-      "Payload must obtain both stream credit and connection credit before entering the outbound queue.",
-      "Sharding is runtime placement and adds no wire fields."
+    "rejects": [
+      {
+        "streamId": 2
+      },
+      {
+        "streamId": 3
+      },
+      {
+        "streamId": 4294967292
+      },
+      {
+        "streamId": 4294967293
+      }
     ]
+  },
+  "morph": {
+    "derivation": {
+      "root": "hmac-sha256(key=\"nowhere/nw3/morph\", msg=sharedKey)  -- the label is the key, not hashed first",
+      "directional": "hmac-sha256(key=root, msg=\"<tcp|udp> <c2s|s2c>\" || 0x01)"
+    },
+    "cases": [
+      {
+        "sharedKeyUtf8": "test portal key",
+        "tcpC2sHex": "f3d2fabc455a59c400d09d400b5a0b9b221e2b157589fc87674b902111ea1014",
+        "tcpS2cHex": "190cfc4c689b24d4bfc8431f46d9f2d1bcbf6222eed612a3ea12d04ff4e4af8c",
+        "udpC2sHex": "20221bde5d70b44211a22c7e62967945d7d85bcde0d17a3b28d1fa686f8e5c1f",
+        "udpS2cHex": "78938ee9245028e7de63ac27b0ab64c68df2961a2cf39da1394f0f242bf8b389"
+      }
+    ],
+    "chacha20": [
+      {
+        "name": "zero key, zero nonce, block 0 (upstream)",
+        "keyHex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nonceHex": "000000000000000000000000",
+        "keystreamHex": "76b8e0ada0f13d90405d6ae55386bd28bdd219b8a08ded1aa836efcc8b770dc7da41597c5157488d7724e03fb8d84a376a43b8f41518a11cc387b669b2ee6586"
+      }
+    ],
+    "tcp": {
+      "layout": "client -> server: prelude[64] || nonce[12] || ChaCha20(tcp_c2s, nonce, counter 0) XOR TLS bytes; server -> client: ChaCha20(tcp_s2c, same nonce) XOR TLS bytes, no bootstrap",
+      "sharedKeyUtf8": "shared",
+      "preludeHex": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+      "nonceHex": "232323232323232323232323",
+      "clientPlainUtf8": "hello",
+      "expectedClientWireHex": "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f2323232323232323232323239dba9563fa",
+      "serverPlainUtf8": "world",
+      "expectedServerWireHex": "5a43da31ae",
+      "fadeBoundaries": {
+        "a": [
+          8,
+          12
+        ],
+        "b": [
+          16,
+          32
+        ],
+        "printable": [
+          32,
+          126
+        ],
+        "low7Mask": 127
+      }
+    },
+    "udp": {
+      "layout": "nonce[12] || ChaCha20(udp_<dir>, nonce, counter 0) XOR one QUIC datagram; a datagram of 12 bytes or fewer is discarded",
+      "sharedKeyUtf8": "shared",
+      "direction": "c2s",
+      "nonceHex": "404142434445464748494a4b",
+      "plainHex": "c000000001",
+      "expectedWireHex": "404142434445464748494a4b40fde3549f",
+      "overhead": 12
+    }
   }
 }

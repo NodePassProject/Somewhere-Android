@@ -46,7 +46,7 @@ AWSLC_TAG=$(grep '^AWSLC_TAG=' "$PIN" | cut -d= -f2-)
 NOWHERE_CLONE="${NOWHERE_CLONE:-$PROJECT/../Nowhere}"
 BIN="${NOWHERE_BIN:-$NOWHERE_CLONE/target/release/nowhere}"
 
-KEY="${QUIC_PROBE_KEY:-c0-probe-key}"
+KEY="${QUIC_PROBE_KEY:-0123456789abcdef0123456789abcdef}"
 PORTAL_PORT="${QUIC_PROBE_PORTAL_PORT:-22091}"
 ORIGIN_PORT="${QUIC_PROBE_ORIGIN_PORT:-28090}"
 
@@ -103,12 +103,20 @@ HOST_PREFIX="$(QUIC_CMAKE="$CMAKE" prefix_for host)"
 [ -n "$HOST_PREFIX" ] && [ -f "$HOST_PREFIX/lib/libngtcp2.a" ] ||
     fail "ngtcp2 + aws-lc did not build for the host"
 
+# The compiler's own exit status, not grep's: under `set -o pipefail` the old
+# `cc ... | grep error && fail` took its status from the failed cc, skipped the
+# `fail`, and reported a probe that had not linked as built.
+case "$(uname -s)" in
+    Darwin) CXXLIB=-lc++ ;;
+    *) CXXLIB=-lstdc++ ;;
+esac
 cc -o "$WORK/probe" "$ROOT/quic-probe/probe.c" \
     -I"$HOST_PREFIX/include" \
     "$HOST_PREFIX/lib/libngtcp2_crypto_boringssl.a" \
     "$HOST_PREFIX/lib/libngtcp2.a" \
     "$HOST_PREFIX/lib/libssl.a" "$HOST_PREFIX/lib/libcrypto.a" \
-    -lpthread -lc++ 2>&1 | grep -E "error" && fail "the probe did not compile"
+    -lpthread "$CXXLIB" > "$WORK/probe-build.log" 2>&1 ||
+    { cat "$WORK/probe-build.log" >&2; fail "the probe did not compile"; }
 echo "OK  probe built"
 
 [ -x "$BIN" ] || fail "no nowhere binary at $BIN — run cargo build --release in the Nowhere clone"
@@ -116,12 +124,13 @@ echo "OK  probe built"
 step "one Portal, one target"
 python3 -m http.server "$ORIGIN_PORT" --bind 127.0.0.1 > "$WORK/origin.log" 2>&1 &
 PIDS+=($!)
-# net=mix is the default listener: TCP and QUIC on one port, which is why this
-# needs no server-side configuration at all.
-"$BIN" "portal://${KEY}@127.0.0.1:${PORTAL_PORT}?net=mix&log=debug" > "$WORK/portal.log" 2>&1 &
+# HOST:PORT is TLS and QUIC on one port, which is why this needs no
+# server-side configuration beyond turning Morph off.
+# morph=0: the probe measures the QUIC stack's exporter, not the mask below it.
+"$BIN" "portal://${KEY}@127.0.0.1:${PORTAL_PORT}?morph=0" > "$WORK/portal.log" 2>&1 &
 PIDS+=($!)
 sleep 2
-grep -q "STATE=READY" "$WORK/portal.log" || { tail -5 "$WORK/portal.log"; fail "the Portal did not come up"; }
+grep -q "portal starting" "$WORK/portal.log" || { tail -5 "$WORK/portal.log"; fail "the Portal did not come up"; }
 echo "OK  Portal on :$PORTAL_PORT, target on :$ORIGIN_PORT"
 
 step "the right key"
@@ -132,16 +141,17 @@ echo "$RIGHT" | grep -qE "^exporter=[0-9a-f]{64}$" || fail "no 32-byte exporter 
 echo "$RIGHT" | grep -q "setup_result=0x00 READY" || fail "the Portal did not accept the AuthFrame"
 
 step "the wrong key, which is what makes the right one mean something"
-WRONG="$("$WORK/probe" 127.0.0.1 "$PORTAL_PORT" not-the-shared-key 127.0.0.1 "$ORIGIN_PORT" 2>/dev/null)"
+WRONG="$("$WORK/probe" 127.0.0.1 "$PORTAL_PORT" ffffffffffffffffffffffffffffffff 127.0.0.1 "$ORIGIN_PORT" 2>/dev/null)"
 echo "$WRONG"
 echo "$WRONG" | grep -q "^handshake=complete" ||
     fail "the handshake should still complete: authentication is above TLS, not part of it"
 echo "$WRONG" | grep -q "setup_result" &&
     fail "a wrong key reached a setup result; the READY above proves nothing"
-echo "OK  silence, which is what upstream answers a bad tag with"
-
-grep -q "invalid authentication frame" "$WORK/portal.log" ||
-    fail "the Portal never reported a bad frame, so the wrong-key run never arrived"
+# v1 checked the Portal's log for the refusal. A v3 Portal does not log one, so
+# the evidence that this run reached the Portal is the handshake above: it was
+# the Portal's TLS that completed, and the same exporter path that answered
+# READY a moment ago now gets nothing, because the tag is wrong.
+echo "OK  no answer, which is what a v3 Portal gives a bad tag: it closes the connection"
 
 echo
 echo "PASS: ngtcp2 + aws-lc builds for both ABIs, exports keying material, and"

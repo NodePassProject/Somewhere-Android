@@ -4,6 +4,7 @@
 package eu.nodepass.somewhere.protocol.url
 
 import eu.nodepass.somewhere.protocol.DecodeResult
+import eu.nodepass.somewhere.protocol.auth.SharedKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -37,7 +38,7 @@ class ImportLinkTest {
 
     @Test
     fun `a wrapped node link parses as a node`() {
-        val inner = "nowhere://secret@portal.example:20001?up=tcp&down=tcp#Frankfurt"
+        val inner = "nowhere://0123456789abcdef0123456789abcdef@portal.example:20001#Frankfurt"
         val unwrapped = ImportLink.unwrap(wrapped(inner))
         val parsed = NowhereUrl.parse(unwrapped)
         assertTrue("expected a node, got $parsed", parsed is DecodeResult.Ok)
@@ -51,8 +52,11 @@ class ImportLinkTest {
         val inner = "nowhere://a%2Bb@portal.example:20001"
         val outer = "anywhere://add-proxy?link=nowhere%3A%2F%2Fa%252Bb%40portal.example%3A20001"
         assertEquals(inner, ImportLink.unwrap(outer))
-        val parsed = NowhereUrl.parse(ImportLink.unwrap(outer))
-        assertTrue(parsed is DecodeResult.Ok)
+        // The key is not a v3 key, so the node will not parse; what is checked
+        // is that the unwrap handed the parser the bytes the link carried.
+        val userInfo = ImportLink.unwrap(outer).substringAfter("://").substringBefore('@')
+        val key = (SharedKey.fromUserInfo(userInfo) as DecodeResult.Ok).value
+        assertEquals("a+b", String(key.toByteArray()))
     }
 
     @Test
@@ -82,7 +86,7 @@ class ImportLinkTest {
         // parsers looking as it did, so the reason the user sees is the
         // parser's reason about their link.
         listOf(
-            "nowhere://secret@portal.example:20001",
+            "nowhere://0123456789abcdef0123456789abcdef@portal.example:20001",
             "https://dash.example/sub/portal?token=abc",
             "anywhere://something-else?link=https%3A%2F%2Fx",
             "anywhere://add-proxy?other=https%3A%2F%2Fx",

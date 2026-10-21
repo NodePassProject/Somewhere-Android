@@ -1,8 +1,8 @@
 # ADR-0002 · Certificate verification on the QUIC carrier
 
 **Status:** `pin` **implemented and verified against a live Portal**, 2026-08-29.
-`sni` **assessed, not implemented** — a decision point, not an assumption ·
-**Decides:** D-20
+Verification **by name implemented as option A**, 2026-10-21, because Nowhere v3
+made it mandatory — see the end · **Decides:** D-20
 
 ## Context
 
@@ -125,3 +125,59 @@ that a pin works on both carriers rather than that verification is unsupported.
 
 **Decided by:** the requester, on this assessment. **By:** before any release a
 third party installs.
+
+## Update, 2026-10-21: v3 made the decision
+
+Nowhere v3 removed the third row of the table above. "Normal clients verify
+system CA trust and hostname, or an exact certificate SHA-256 pin", and `sni`
+defaults to the endpoint host — so a link with neither parameter is a link
+asking for verification by name, and the QUIC carrier's default node became
+exactly the case this ADR deferred. Refusing it was no longer a cautious
+position; it was a client that could not connect to a default `net=udp` node.
+
+**Option A is what was built**, in the shape assessed above with one change of
+mechanism, and the change is the safer one:
+
+- **No upcall from the verify callback.** Instead of calling into Kotlin from
+  inside BoringSSL's callback on the owner thread, the bridge completes the
+  handshake verifying nothing when there is no pin, and exposes the peer chain
+  as DER (`nativePeerCertificate`). `QuicConnection.completeHandshake` then
+  hands the chain to `PeerVerification` before returning, and closes the
+  connection if it is refused. The connection is not handed to anyone until it
+  returns, so no Nowhere byte — the AuthFrame least of all — can reach an
+  unverified Portal. That ordering is the same one the TLS carrier's pin check
+  has always relied on: "checked before a single Nowhere byte is written".
+- **One decision for both carriers.** The TLS carrier now does the same thing:
+  the handshake accepts any chain and `PeerVerification` decides afterwards,
+  with the platform's trust manager through `X509TrustManagerExtensions` and the
+  host, and hostname matching written once (`HostnameMatch`: subjectAltName
+  only, single-label wildcards, IP literals by their bytes, no common-name
+  fallback). Two verifiers that could disagree about what a match is became
+  one.
+- **Fails closed.** `QuicConnection.open` refuses to be built with neither a pin
+  nor a chain check, and the bridge's own comment says why there is no third
+  option.
+
+What is verified, and where:
+
+| | JVM | Live Portal | Device |
+|---|---|---|---|
+| Pin accepted / wrong pin refused | `PeerVerificationTest` | `NowhereDialerAgainstPortalTest` | `QuicPinTest` |
+| Trusted chain accepted by name | `PeerVerificationTest` (test anchor) | `PortalLifecycleTest` (supplied certificate as the anchor) | **not run** |
+| Untrusted chain refused by name | `PeerVerificationTest` | `NowhereDialerAgainstPortalTest.aGeneratedCertificateIsNotTrustedByName` | `ChainVerificationOnDeviceTest`, both carriers |
+| Hostname rules | `PeerVerificationTest` | — | — |
+
+The empty cell is the platform accepting a chain on Android. It needs a
+certificate this device trusts for a Portal a test controls, which means a CA
+key a test can sign with; putting one in a network security configuration for
+debug builds would make every debug build trust whoever reads this repository.
+The refusal half runs on the device, which shows the platform call is reached
+and answers with a trust failure rather than an exception from somewhere else.
+
+The failure modes listed above, and what became of them: a trust decision that
+fails open is prevented structurally (no connection without a check, and a check
+that throws is a refusal); the hostname is the user's `sni`, or the host they
+named — never the address dialled, because the service dials an address it
+resolved itself and keeps the name for verification; captive portals and clock
+skew still produce a trust failure, and the message says a generated certificate
+needs a pin, which is the case a self-hosted Portal is in.

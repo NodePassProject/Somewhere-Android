@@ -49,7 +49,7 @@ sealed interface TargetReason : DecodeReason {
 }
 
 /**
- * Where a flow is headed. NW-P-05, `docs/protocol.md` section 5.
+ * Where a flow is headed. NW-P-05, `docs/protocol.md` § FlowStart and Target.
  *
  * ```
  * IPv4   0x01 || 4 bytes  || port(u16)   =  7 bytes
@@ -147,8 +147,8 @@ sealed interface Target {
          * it used.
          *
          * A prefix decode rather than an exact-length one, because a cold
-         * connection may write `AuthFrame || FlowHeader || Target || payload` in
-         * a single write (NW-P-10) — so the bytes after the target are the
+         * connection may write `AuthFrame || FlowStart || Target || payload` in
+         * a single write — so the bytes after the target are the
          * caller's, not an error.
          */
         fun decode(
@@ -206,7 +206,7 @@ sealed interface Target {
         private fun validatePort(port: Int): DecodeResult<Nothing>? = if (port == 0) invalid(TargetReason.PortZero) else null
 
         /**
-         * Per `docs/protocol.md` section 5: 1–253 ASCII bytes; each DNS label is
+         * Per `docs/protocol.md` § FlowStart and Target: 1–253 ASCII bytes; each DNS label is
          * 1–63 bytes of letters, digits or `-`, and does not begin or end with
          * `-`. No trailing NUL on the wire.
          */

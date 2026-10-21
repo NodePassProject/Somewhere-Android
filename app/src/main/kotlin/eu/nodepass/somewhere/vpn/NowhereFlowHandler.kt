@@ -408,9 +408,9 @@ class NowhereFlowHandler(
 
     private suspend fun serve(connection: Connection) {
         // The device's first bytes usually arrive before the Portal answers.
-        // Sending them in the opening write costs one round trip less, which
-        // for a TLS ClientHello is the difference the protocol's firstPayload
-        // parameter exists for.
+        // The session sends them the moment READY arrives — not in the opening
+        // write, which v3 forbids — so they still leave before the pump has
+        // even started.
         val first = connection.outbound.tryReceive().getOrNull() ?: ByteArray(0)
 
         val action = router.decide(connection.target)
@@ -473,15 +473,15 @@ class NowhereFlowHandler(
         connection.flow = flow
         if (first.isNotEmpty()) {
             if (connection.direct) {
-                // A direct flow has no opening write to ride on, so the first
-                // bytes are sent here instead of being carried by the dial.
+                // A direct flow has no READY to wait for, so the first bytes
+                // are sent here instead of being carried by the dial.
                 withContext(Dispatchers.IO) {
                     flow.write(first)
                     flow.flush()
                 }
             }
-            // Carried in the opening write rather than by the pump, so the pump
-            // never sees it and it would otherwise go uncounted.
+            // Carried by the dial rather than by the pump, so the pump never
+            // sees it and it would otherwise go uncounted.
             record(connection, upstream = first.size)
             credit(connection, first.size)
         }

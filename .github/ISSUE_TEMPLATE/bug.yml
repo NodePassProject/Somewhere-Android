@@ -50,9 +50,9 @@ body:
     attributes:
       label: Configuration shape
       description: >
-        The transports, mux and TLS settings involved — with every key, token and
-        real host removed.
-      placeholder: "tcp/tcp, mux=1, no sni, no pin"
+        The carrier, Morph and certificate settings involved — with every key,
+        token and real host removed.
+      placeholder: "net=udp, morph=1, pin"
 
   - type: textarea
     id: logs

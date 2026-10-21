@@ -31,8 +31,10 @@ JAVA_HOME_DIR="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null)}"
 [ -n "$JAVA_HOME_DIR" ] && [ -d "$JAVA_HOME_DIR/include" ] || fail "no JDK headers; set JAVA_HOME"
 
 case "$(uname -s)" in
-    Darwin) SUFFIX=dylib; PLATFORM_INCLUDE="$JAVA_HOME_DIR/include/darwin"; SHARED="-dynamiclib" ;;
-    Linux)  SUFFIX=so;    PLATFORM_INCLUDE="$JAVA_HOME_DIR/include/linux";  SHARED="-shared -fPIC" ;;
+    # aws-lc's ssl/ is C++, so the bridge links a C++ runtime: libc++ on
+    # macOS, where it is the system one, and libstdc++ on Linux.
+    Darwin) SUFFIX=dylib; PLATFORM_INCLUDE="$JAVA_HOME_DIR/include/darwin"; SHARED="-dynamiclib"; CXXLIB=-lc++ ;;
+    Linux)  SUFFIX=so;    PLATFORM_INCLUDE="$JAVA_HOME_DIR/include/linux";  SHARED="-shared -fPIC"; CXXLIB=-lstdc++ ;;
     *) fail "unsupported host $(uname -s)" ;;
 esac
 
@@ -47,7 +49,12 @@ cc -O2 $SHARED -o "$LIB" \
     "$PREFIX/lib/libngtcp2_crypto_boringssl.a" \
     "$PREFIX/lib/libngtcp2.a" \
     "$PREFIX/lib/libssl.a" "$PREFIX/lib/libcrypto.a" \
-    -lpthread -lc++ 2>&1 | grep -E "error|warning: .*\[-W(unused|implicit)" && fail "the host bridge did not compile"
+    -lpthread "$CXXLIB" > "$OUT/build.log" 2>&1 ||
+    { cat "$OUT/build.log" >&2; fail "the host bridge did not compile"; }
+# Checked separately from the exit status, which a warning does not change.
+# Not piped into the compiler: under `set -o pipefail` a failing `cc | grep`
+# takes cc's status and skips the `&& fail` that was meant to catch it.
+grep -E "warning: .*\[-W(unused|implicit)" "$OUT/build.log" && fail "the host bridge compiled with a warning that names a defect"
 
 [ -f "$LIB" ] || fail "no library at $LIB"
 echo "LIBRARY=$LIB"

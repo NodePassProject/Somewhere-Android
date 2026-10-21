@@ -10,14 +10,12 @@ import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.PacketFlow
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
 import eu.nodepass.somewhere.protocol.target.Target
-import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.vpn.E2eEnvironment
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.net.InetSocketAddress
 import kotlin.random.Random
 
 /**
@@ -95,22 +93,11 @@ class QuicDatagramTest {
 
     private fun withUdpFlow(body: (PacketFlow, QuicConnection) -> Unit) {
         val portal = E2eEnvironment.requirePortal()
-        val url =
-            when (
-                val parsed =
-                    NowhereUrl.parse("nowhere://${E2eEnvironment.sharedKey}@$portal?up=udp&down=udp")
-            ) {
-                is DecodeResult.Ok -> parsed.value
-                is DecodeResult.Invalid -> throw AssertionError(parsed.reason.detail)
-            }
+        val url = E2eEnvironment.node(portal, net = "udp")
 
-        QuicConnection
-            .open(
-                remote = InetSocketAddress(portal.substringBeforeLast(':'), portal.substringAfterLast(':').toInt()),
-                alpn = url.alpn,
-                serverName = null,
-                protect = { true },
-            ).use { connection ->
+        E2eEnvironment
+            .openQuic(url)
+            .use { connection ->
                 connection.completeHandshake()
                 NowhereSession(
                     sharedKey = url.sharedKey,

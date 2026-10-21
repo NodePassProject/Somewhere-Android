@@ -14,7 +14,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Drives every vector in the `quicDatagram` family. NW-P-20, NW-P-21. */
+/** Drives every vector in the `quicDatagram` family, `docs/protocol.md` § QUIC datagrams. */
 class DatagramVectorTest {
     private val cases = VectorFixture.cases("quicDatagram")
     private val rejects = VectorFixture.rejects("quicDatagram")
@@ -25,7 +25,7 @@ class DatagramVectorTest {
 
     @Test
     fun everyPositiveVectorIsReproduced() {
-        assertEquals("fixture should carry 5 quicDatagram cases", 5, cases.size)
+        assertEquals("fixture should carry 8 quicDatagram cases", 8, cases.size)
         var checked = 0
         cases.forEach { case ->
             val name = case.str("name")
@@ -39,7 +39,7 @@ class DatagramVectorTest {
                     assertEquals(name, case.str("expectedHex"), frame.encode().toHex())
                     checked++
                 }
-                name == "CLOSE" -> {
+                name.startsWith("CLOSE") -> {
                     val frame = DatagramFrame.Close(case.str("flowId").toUInt())
                     assertEquals(name, case.str("expectedHex"), frame.encode().toHex())
                     checked++
@@ -78,7 +78,7 @@ class DatagramVectorTest {
     @Test
     fun anEmptyDatagramPayloadIsValid() {
         val frame = DatagramFrame.Data(16909060u, ByteArray(0))
-        assertEquals("0001020304", frame.encode().toHex())
+        assertEquals("01020304", frame.encode().toHex())
         val decoded = (DatagramFrame.decode(frame.encode()) as DecodeResult.Ok).value
         assertEquals(0, (decoded as DatagramFrame.Data).payload.size)
     }
@@ -98,45 +98,44 @@ class DatagramVectorTest {
 
     @Test
     fun everyRejectionVectorIsRefused() {
-        assertEquals("fixture should carry 10 quicDatagram rejects", 10, rejects.size)
+        assertEquals("fixture should carry 11 quicDatagram rejects", 11, rejects.size)
         var checked = 0
         rejects.forEach { reject ->
             val name = reject.str("name")
             when (name) {
                 "type 3" -> {
-                    val reason = DatagramFrame.decode(byteArrayOf(0x03, 0, 0, 0, 1)).reasonOrNull()
+                    val reason = DatagramFrame.decode(reject.str("hex").hexToByteArrayCompat()).reasonOrNull()
                     assertEquals(name, DatagramReason.InvalidType, reason)
                     checked++
                 }
-                "reserved bits set" -> {
-                    val reason = DatagramFrame.decode(byteArrayOf(0x04, 0, 0, 0, 1)).reasonOrNull()
-                    assertTrue(name, reason is DatagramReason.ReservedBitsSet)
+                "flow id zero" -> {
+                    val reason = DatagramFrame.decode(reject.str("hex").hexToByteArrayCompat()).reasonOrNull()
+                    assertEquals(name, DatagramReason.FlowIdZero, reason)
                     checked++
                 }
-                "flowId zero" -> {
-                    assertEquals(
-                        name,
-                        DatagramReason.FlowIdZero,
-                        DatagramFrame.decode(byteArrayOf(0x00, 0, 0, 0, 0)).reasonOrNull(),
-                    )
+                "CLOSE with trailing bytes" -> {
+                    val reason = DatagramFrame.decode(reject.str("hex").hexToByteArrayCompat()).reasonOrNull()
+                    assertEquals(name, DatagramReason.ClosePayload, reason)
                     checked++
                 }
-                "packetId zero" -> {
-                    val bytes = DatagramFrame.Fragment(1u, 0u, 0, 2, 10, ByteArray(0)).encode()
+                "truncated base word" -> {
+                    val reason = DatagramFrame.decode(reject.str("hex").hexToByteArrayCompat()).reasonOrNull()
+                    assertTrue(name, reason is DatagramReason.Truncated)
+                    checked++
+                }
+                "packet id zero" -> {
+                    val bytes = DatagramFrame.Fragment(1u, 0u, 0, 2, 10, ByteArray(1)).encode()
                     assertEquals(name, DatagramReason.PacketIdZero, DatagramFrame.decode(bytes).reasonOrNull())
                     checked++
                 }
                 "fragIndex >= fragCount" -> {
-                    val bytes = DatagramFrame.Fragment(1u, 1u, 2, 2, 10, ByteArray(0)).encode()
-                    assertTrue(
-                        name,
-                        DatagramFrame.decode(bytes).reasonOrNull() is DatagramReason.FragmentIndexOutOfRange,
-                    )
+                    val bytes = DatagramFrame.Fragment(1u, 1u, 2, 2, 10, ByteArray(1)).encode()
+                    assertTrue(name, DatagramFrame.decode(bytes).reasonOrNull() is DatagramReason.FragmentIndexOutOfRange)
                     checked++
                 }
                 "fragCount outside 2..255" -> {
                     listOf(0, 1).forEach { count ->
-                        val bytes = DatagramFrame.Fragment(1u, 1u, 0, count, 10, ByteArray(0)).encode()
+                        val bytes = DatagramFrame.Fragment(1u, 1u, 0, count, 10, ByteArray(1)).encode()
                         assertTrue(
                             "$name (count=$count)",
                             DatagramFrame.decode(bytes).reasonOrNull() is DatagramReason.FragmentCountOutOfRange,
@@ -144,29 +143,36 @@ class DatagramVectorTest {
                     }
                     checked++
                 }
-                "inconsistent fragment metadata for one packet (count / totalLen / flowId / packetId)" -> {
-                    val reassembler = readyReassembler()
-                    reassembler.offer(DatagramFrame.Fragment(1u, 1u, 0, 3, 30, ByteArray(10)), 0)
-                    val conflicting = reassembler.offer(DatagramFrame.Fragment(1u, 1u, 1, 4, 30, ByteArray(10)), 0)
+                "totalLen smaller than fragCount" -> {
+                    val bytes = DatagramFrame.Fragment(1u, 1u, 0, 3, 2, ByteArray(1)).encode()
+                    assertTrue(name, DatagramFrame.decode(bytes).reasonOrNull() is DatagramReason.TotalLengthTooSmall)
+                    checked++
+                }
+                "fragment payload that leaves no byte for some other fragment" -> {
+                    // Three fragments of a ten-byte packet: one fragment can
+                    // carry at most eight, leaving one for each of the others.
+                    val fits = DatagramFrame.Fragment(1u, 1u, 0, 3, 10, ByteArray(8)).encode()
+                    assertTrue("$name (8 fits)", DatagramFrame.decode(fits) is DecodeResult.Ok)
+                    val tooLong = DatagramFrame.Fragment(1u, 1u, 0, 3, 10, ByteArray(9)).encode()
+                    assertEquals(name, DatagramReason.FragmentPayloadLength, DatagramFrame.decode(tooLong).reasonOrNull())
+                    val empty = DatagramFrame.Fragment(1u, 1u, 0, 3, 10, ByteArray(0)).encode()
+                    assertEquals("$name (empty)", DatagramReason.FragmentPayloadLength, DatagramFrame.decode(empty).reasonOrNull())
+                    checked++
+                }
+                "conflicting fragment metadata or bytes for one packet discards it" -> {
+                    val metadata = readyReassembler()
+                    metadata.offer(DatagramFrame.Fragment(1u, 1u, 0, 3, 30, ByteArray(10)), 0)
+                    val conflicting = metadata.offer(DatagramFrame.Fragment(1u, 1u, 1, 4, 30, ByteArray(10)), 0)
                     assertEquals(name, DatagramReason.MetadataConflict, conflicting.reasonOrNull())
-                    checked++
-                }
-                "duplicate fragment with different bytes discards the whole packet" -> {
-                    val reassembler = readyReassembler()
-                    reassembler.offer(DatagramFrame.Fragment(1u, 1u, 0, 2, 20, ByteArray(10) { 1 }), 0)
-                    val differing = reassembler.offer(DatagramFrame.Fragment(1u, 1u, 0, 2, 20, ByteArray(10) { 2 }), 0)
+
+                    val bytes = readyReassembler()
+                    bytes.offer(DatagramFrame.Fragment(1u, 1u, 0, 2, 20, ByteArray(10) { 1 }), 0)
+                    val differing = bytes.offer(DatagramFrame.Fragment(1u, 1u, 0, 2, 20, ByteArray(10) { 2 }), 0)
                     assertEquals(name, DatagramReason.DuplicateFragmentDiffers, differing.reasonOrNull())
-                    assertEquals("the slot must be discarded", 0, reassembler.slotCount)
+                    assertEquals("the slot must be discarded", 0, bytes.slotCount)
                     checked++
                 }
-                "reassembled length not equal to totalLen discards the packet" -> {
-                    val reassembler = readyReassembler()
-                    reassembler.offer(DatagramFrame.Fragment(1u, 1u, 0, 2, 999, ByteArray(10)), 0)
-                    val completing = reassembler.offer(DatagramFrame.Fragment(1u, 1u, 1, 2, 999, ByteArray(10)), 0)
-                    assertTrue(name, completing.reasonOrNull() is DatagramReason.ReassembledLengthMismatch)
-                    checked++
-                }
-                "DATA received before READY is discarded" -> {
+                "DATA for an id that is not READY is dropped" -> {
                     val notReady = DatagramReassembler()
                     val refused = notReady.offer(DatagramFrame.Data(1u, byteArrayOf(1)), 0)
                     assertEquals(name, DatagramReason.NotReady, refused.reasonOrNull())
@@ -179,17 +185,28 @@ class DatagramVectorTest {
     }
 
     @Test
-    fun everyReservedBitIsRejectedIndividually() {
-        for (bit in listOf(0x04, 0x08, 0x10, 0x20, 0x40, 0x80)) {
-            val reason = DatagramFrame.decode(byteArrayOf(bit.toByte(), 0, 0, 0, 1)).reasonOrNull()
-            assertTrue("bit 0x%02x must be rejected".format(bit), reason is DatagramReason.ReservedBitsSet)
+    fun theTypeIsTheTopTwoBitsAndTheIdTheRest() {
+        // No reserved bits left to reject: every one of the 32 is either type or id.
+        for (type in DatagramType.entries) {
+            val word = (type.value.toUInt() shl 30) or 0x2A_0000u
+            val bytes = byteArrayOf((word shr 24).toByte(), (word shr 16).toByte(), (word shr 8).toByte(), word.toByte())
+            val decoded = DatagramFrame.decode(bytes).valueOrNull()
+            if (type == DatagramType.Fragment) continue // needs its header; covered by the vectors
+            assertEquals("type $type", 0x2A_0000u, decoded?.flowId)
         }
     }
 
-    // ── Fragmentation planning, NW-P-21 ─────────────────────────────────────
+    @Test
+    fun aFlowIdBeyondThirtyBitsCannotBeEncoded() {
+        // It would spill into the type and turn a DATA into a FRAGMENT.
+        val refused = runCatching { DatagramFrame.Data(QuicFlowId.MAX + 1u, ByteArray(0)).encode() }
+        assertTrue(refused.isFailure)
+    }
+
+    // ── Fragmentation planning ──────────────────────────────────────────────
 
     @Test
-    fun fragmentPayloadMaxIsDatagramSizeMinusThirteen() {
+    fun fragmentPayloadMaxIsDatagramSizeMinusTwelve() {
         val maxDatagram = 1200
         val planned =
             (DatagramFrame.plan(1u, 1u, ByteArray(2500), maxDatagram) as DecodeResult.Ok)

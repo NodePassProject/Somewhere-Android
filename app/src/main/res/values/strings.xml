@@ -8,40 +8,26 @@
     <!-- Protocol identifiers. Never translated: a user pasting one of these into
          an issue must match the specification, the source, and another user's
          log from a different locale. See docs/i18n.md. -->
-    <string name="alpn_default" translatable="false">now/1</string>
     <string name="scheme_client" translatable="false">nowhere</string>
-    <string name="label_alpn" translatable="false">ALPN</string>
-    <string name="protocol_baseline" translatable="false">Nowhere v1.8.0</string>
+    <string name="protocol_baseline" translatable="false">Nowhere v3.0.1</string>
 
     <!-- SetupResult explanations. The identifier sits beside these in the layout,
-         never inside them, so it cannot be localised by accident. NW-P-06
-         requires all seven to reach the user distinctly. -->
+         never inside them, so it cannot be localised by accident. Each of
+         the four rejections has to reach the user distinctly. -->
     <string name="setup_ready">Connected.</string>
     <string name="setup_invalid_request">The Portal rejected the request as malformed.</string>
-    <string name="setup_metadata_conflict">The two halves of this connection disagreed about how it was set up.</string>
-    <string name="setup_pair_timeout">The other half of this connection never arrived.</string>
     <string name="setup_flow_limit">This Portal is at its connection limit. Nothing is wrong with your setup — it is busy.</string>
     <string name="setup_dial_failed">The Portal could not reach %1$s.</string>
-    <string name="setup_session_replaced">Another device connected with this key and took over the session.</string>
     <string name="setup_internal_error">The Portal failed for a reason it did not explain.</string>
     <string name="log_handshake_complete">Handshake complete in %1$s · %2$s</string>
 
-    <!-- Certificate verification, D-11. Persistent, never dismissible. -->
-    <string name="cert_unverified_short">Certificate not verified</string>
-    <string name="cert_unverified_detail">This node carries neither a name to verify nor a fingerprint to pin, so the certificate is accepted without checking.</string>
-    <string name="cert_unverified_confirm">I understand this node\'s certificate will not be checked.</string>
-    <!-- The two parameter names are arguments, so a translator is never offered
-         the chance to localise `sni` or `pin`. -->
-    <string name="cert_unverified_reason">no %1$s or %2$s in this node</string>
-    <string name="cert_not_verified">Not verified</string>
-    <string name="cert_add_sni">Add SNI</string>
-    <string name="cert_pin_fingerprint">Pin fingerprint</string>
-    <string name="chip_unverified">Unverified</string>
-
-    <!-- NW-P-25: say so, offer the fix, never rewrite what was pasted. -->
-    <string name="node_needs_quic">This node asks for certificate verification (sni or pin), which the QUIC carrier does not implement yet.</string>
-    <string name="node_switch_to_tcp">Switch to TCP</string>
-    <string name="node_keep_as_is">Keep as is</string>
+    <!-- Certificate verification. v3 always verifies: by a pin, or by this
+         device's trust store and a name. The name is an argument, never
+         translated. -->
+    <string name="cert_pinned">Pinned</string>
+    <string name="cert_pinned_detail">Only the certificate with this fingerprint is accepted.</string>
+    <string name="cert_trusted_as">Trusted as %1$s</string>
+    <string name="cert_trusted_detail">The certificate must chain to an authority this device trusts and name %1$s. A Portal on a generated certificate needs a pin instead.</string>
 
     <!-- Quota. NW-D-02: upload is never shown, upstream does not meter it.
          NW-D-05: "counted", not "used" — metering is per Portal. -->
@@ -152,12 +138,10 @@
     <string name="field_name">Name</string>
     <string name="field_host">Host</string>
     <string name="field_port">Port</string>
-    <string name="field_carriers">Carriers</string>
+    <string name="field_carriers">Carrier</string>
     <string name="field_certificate">Certificate</string>
-    <string name="editor_multiplexing">Multiplexing</string>
-    <string name="editor_multiplexing_detail">Many flows over one TLS connection</string>
-    <!-- NW-P-08: a fixed ALPN is a ready-made fingerprint, so it is a field. -->
-    <string name="editor_alpn_hint">must match the Portal exactly</string>
+    <string name="editor_morph_detail">Masks the connection with the shared key. The Portal must match.</string>
+    <string name="editor_morph">Morph</string>
 
     <!-- Import -->
     <string name="import_title">Add nodes</string>
@@ -193,10 +177,8 @@
     <string name="probe_checking">Checking</string>
 
     <string name="dial_unreachable">This node did not answer.</string>
-    <string name="dial_handshake_failed">The secure connection could not be set up. This node asks for ALPN %1$s — check that the Portal uses the same one.</string>
-    <string name="dial_alpn_rejected">The Portal did not accept ALPN %1$s.</string>
-    <string name="dial_pin_mismatch">The certificate does not match this node’s pinned fingerprint.</string>
-    <string name="dial_no_certificate">The Portal presented no certificate to pin against.</string>
+    <string name="dial_handshake_failed">The secure connection could not be set up. Check that the Portal speaks Nowhere v3 (%1$s) and that both sides agree on morph.</string>
+    <string name="dial_alpn_rejected">The Portal does not speak Nowhere v3 (%1$s).</string>
     <string name="dial_unprotected">The connection to this node could not be kept outside the tunnel.</string>
     <string name="dial_unknown">This node could not be reached.</string>
 
@@ -232,6 +214,6 @@
     <string name="settings_refresh_auto_detail">Every %1$d hours, when the device has a network. Off by default: a refresh sends your subscription token to the dashboard.</string>
     <string name="tunnel_no_consent">Android did not grant permission to create a tunnel.</string>
     <string name="tunnel_no_apps">No installed application is selected, so the tunnel would carry nothing.</string>
-    <string name="tunnel_quic_verification_unsupported">This node verifies the certificate chain against an sni name, which the QUIC carrier does not implement yet. A pin works on both carriers; use pin instead, or a TCP node.</string>
+    <string name="tunnel_certificate_refused">This node\'s certificate was not accepted. A Portal on a generated certificate needs a pin; one with a certificate this device trusts needs neither.</string>
     <string name="home_connecting">Connecting…</string>
 </resources>

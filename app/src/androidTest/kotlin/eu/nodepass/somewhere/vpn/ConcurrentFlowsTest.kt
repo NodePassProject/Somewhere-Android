@@ -17,12 +17,9 @@ import java.util.concurrent.TimeUnit
  * Many flows at once, through a real tunnel.
  *
  * On its own this says the client survives concurrency. Its other half is on
- * the host: `e2e-fakeip.sh` counts the **distinct source ports** the Portal saw
- * while this ran, which is the number of TLS connections that were really
- * opened. That is the whole case for L2 stated as a measurement — the same
- * sixteen fetches cost sixteen connections without Mux and four with it — and
- * it is a figure neither side can fake, because the Portal is reporting the
- * addresses its own accept() returned.
+ * the host: `e2e-fakeip.sh` holds sixteen flows open together and samples the
+ * Portal's own socket table, which says how many TLS connections were really
+ * open — one per flow in v3 — and is a figure neither side can fake.
  */
 @RunWith(AndroidJUnit4::class)
 @Ignore(

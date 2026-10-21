@@ -52,6 +52,16 @@ class FakeTransport(
     /** Everything the client has written, in order. */
     fun writtenBytes(): ByteArray = written.toByteArray()
 
+    /**
+     * How much had been written when the client first read — that is, before
+     * it could have seen the Portal's answer. Null until a read happens.
+     *
+     * The ordering v3 cares about: target payload waits for READY, so none of
+     * it may be in this prefix.
+     */
+    var writtenBeforeFirstRead: Int? = null
+        private set
+
     override val isOpen: Boolean get() = open
 
     override fun write(bytes: ByteArray) {
@@ -69,6 +79,7 @@ class FakeTransport(
         offset: Int,
         length: Int,
     ): Int {
+        if (writtenBeforeFirstRead == null) writtenBeforeFirstRead = written.size()
         if (silentPeer) throw java.net.SocketTimeoutException("simulated silent Portal")
         if (!open) return -1
         val available = peer.size - peerOffset

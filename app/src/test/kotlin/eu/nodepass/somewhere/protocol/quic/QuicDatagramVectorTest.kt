@@ -26,7 +26,7 @@ class QuicDatagramVectorTest {
 
     @Test
     fun everyPositiveVectorEncodesToItsExpectedBytes() {
-        assertEquals("fixture should carry 5 datagram cases", 5, cases.size)
+        assertEquals("fixture should carry 8 datagram cases", 8, cases.size)
         var checked = 0
         cases.forEach { case ->
             val name = case.str("name")
@@ -80,7 +80,7 @@ class QuicDatagramVectorTest {
 
     @Test
     fun theFragmentPlanMatchesTheFixturesOwnArithmetic() {
-        // fragmentPayloadMax = maxDatagram - 13, and the 2500-byte case in the
+        // fragmentPayloadMax = maxDatagram - 12, and the 2500-byte case in the
         // fixture is three fragments at a 1200-byte datagram.
         val planned = QuicDatagram.plan(2500, 1200)
         assertEquals(3, (planned as DecodeResult.Ok).value)
@@ -102,7 +102,7 @@ class QuicDatagramVectorTest {
 
     @Test
     fun aPacketThatFitsIsOneDataFrameAndCarriesNoFragmentHeader() {
-        val payload = ByteArray(95)
+        val payload = ByteArray(96)
         val frames = (QuicDatagram.frames(1u, 99u, payload, 100) as DecodeResult.Ok).value
         assertEquals(1, frames.size)
         assertTrue(frames.single() is QuicDatagram.Data)
@@ -119,44 +119,43 @@ class QuicDatagramVectorTest {
     }
 
     @Test
-    fun everyRejectionInTheFixtureIsRefused() {
-        // The fixture names ten rejections. Four are decoder rules and are
-        // asserted here; the rest belong to reassembly and to the carrier, and
-        // are named in the coverage map beside the tests that hold them.
+    fun everyDecoderRejectionIsRefused() {
+        // The fixture's decoder rules. The rest belong to reassembly and to the
+        // carrier, and are held by DatagramVectorTest and QuicCarrierTest.
+        VectorFixture.rejects("quicDatagram").filter { "hex" in it }.forEach { reject ->
+            val bytes = reject.str("hex").hexToByteArrayCompat()
+            assertTrue(reject.str("name"), QuicDatagram.decode(bytes) is DecodeResult.Invalid)
+        }
+
         val flowId = 1u
-
-        assertTrue(
-            "type 3 does not exist",
-            QuicDatagram.decode(byteArrayOf(0x03, 0, 0, 0, 1)) is DecodeResult.Invalid,
-        )
-        assertTrue(
-            "the six reserved bits must be zero",
-            QuicDatagram.decode(byteArrayOf(0x04, 0, 0, 0, 1)) is DecodeResult.Invalid,
-        )
-        assertTrue(
-            "flow_id is nonzero",
-            QuicDatagram.decode(byteArrayOf(0x00, 0, 0, 0, 0)) is DecodeResult.Invalid,
-        )
-
         val zeroPacketId =
             QuicDatagram.Fragment(flowId, 1u, 0, 2, 8, byteArrayOf(1)).encode().also {
+                it[4] = 0
                 it[5] = 0
                 it[6] = 0
                 it[7] = 0
-                it[8] = 0
             }
         assertTrue("packet_id is nonzero", QuicDatagram.decode(zeroPacketId) is DecodeResult.Invalid)
 
-        val indexPastCount = QuicDatagram.Fragment(flowId, 1u, 0, 2, 8, byteArrayOf(1)).encode().also { it[9] = 2 }
+        val indexPastCount = QuicDatagram.Fragment(flowId, 1u, 0, 2, 8, byteArrayOf(1)).encode().also { it[8] = 2 }
         assertTrue("frag_ix is below frag_count", QuicDatagram.decode(indexPastCount) is DecodeResult.Invalid)
 
-        val countOfOne = QuicDatagram.Fragment(flowId, 1u, 0, 2, 8, byteArrayOf(1)).encode().also { it[10] = 1 }
+        val countOfOne = QuicDatagram.Fragment(flowId, 1u, 0, 2, 8, byteArrayOf(1)).encode().also { it[9] = 1 }
         assertTrue("frag_count is 2..255", QuicDatagram.decode(countOfOne) is DecodeResult.Invalid)
 
-        assertTrue(
-            "a CLOSE is exactly five bytes",
-            QuicDatagram.decode(byteArrayOf(0x02, 0, 0, 0, 1, 0x42)) is DecodeResult.Invalid,
-        )
+        val greedy = QuicDatagram.Fragment(flowId, 1u, 0, 3, 4, ByteArray(3)).encode()
+        assertTrue("a fragment leaves a byte for each other fragment", QuicDatagram.decode(greedy) is DecodeResult.Invalid)
+    }
+
+    @Test
+    fun bothCodecsProduceTheSameBytes() {
+        // Two codecs exist for the same frames — one the sender uses, one the
+        // reassembler reads — and a fixture they both pass is what keeps them
+        // one format.
+        val payload = ByteArray(2500) { it.toByte() }
+        val sent = (QuicDatagram.frames(7u, 42u, payload, 1200) as DecodeResult.Ok).value
+        val read = (DatagramFrame.plan(7u, 42u, payload, 1200) as DecodeResult.Ok).value
+        assertEquals(sent.map { it.encode().toHex() }, read.map { it.encode().toHex() })
     }
 
     @Test

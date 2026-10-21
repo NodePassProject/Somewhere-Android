@@ -24,14 +24,34 @@ enum class AuthTransport(
 }
 
 /**
- * Connection authentication, per `docs/protocol.md` section 2.
+ * The role a connection authenticates as.
+ *
+ * One shared key derives both role keys, and a Portal tells the roles apart
+ * only by which key the tag verifies under. This client is always a Vector;
+ * [Egress] exists because the derivation is the protocol's and a vector for it
+ * is the only proof that the label is transcribed correctly.
+ */
+enum class AuthRole(
+    internal val info: String,
+) {
+    Vector("vector-authentication"),
+    Egress("egress-authentication"),
+}
+
+/**
+ * Connection authentication, per `docs/protocol.md` § Authentication (nw3).
  *
  * ```
- * salt      = SHA256("nowhere/now/1/auth-root")
- * auth_root = HMAC-SHA256(salt, shared_key)
- * auth_key  = HMAC-SHA256(auth_root, "authentication" || 0x01)
- * tag       = HMAC-SHA256(auth_key, transport || exporter || session_id)[0..16]
+ * salt       = SHA256("nowhere/nw3/auth-root")
+ * root       = HMAC-SHA256(salt, shared_key)
+ * role_key   = HMAC-SHA256(root, "<role>-authentication" || 0x01)
+ * exporter   = TLS-Exporter("EXPORTER-Nowhere-nw3-Auth", empty, 32)
+ * AuthFrame  = HMAC-SHA256(role_key, transport || exporter)[0..16]
  * ```
+ *
+ * The AuthFrame is the tag and nothing else: no session id, no role byte. v1
+ * prefixed sixteen bytes of session id because a Portal paired split flows on
+ * it; v3 has no split flows, so it has no session.
  *
  * The exporter binds the tag to one specific TLS or QUIC connection, so a
  * captured frame cannot be replayed onto another. Authentication has no response
@@ -39,87 +59,74 @@ enum class AuthTransport(
  * active probing.
  */
 object Authentication {
-    const val SESSION_ID_LENGTH: Int = 16
-    const val TAG_LENGTH: Int = 16
-    const val FRAME_LENGTH: Int = SESSION_ID_LENGTH + TAG_LENGTH
+    const val FRAME_LENGTH: Int = 16
     const val EXPORTER_LENGTH: Int = 32
 
-    /** RFC 8446 exporter label. Fixed by the protocol and unchanged by a custom ALPN. */
-    const val EXPORTER_LABEL: String = "EXPORTER-Nowhere-Auth"
+    /** RFC 8446 exporter label. Lowercase `nw3`, exactly as the specification spells it. */
+    const val EXPORTER_LABEL: String = "EXPORTER-Nowhere-nw3-Auth"
 
-    private const val AUTH_ROOT_SALT_LABEL = "nowhere/now/1/auth-root"
-    private const val AUTH_KEY_INFO = "authentication"
+    private const val AUTH_ROOT_SALT_LABEL = "nowhere/nw3/auth-root"
     private const val HMAC_SHA256 = "HmacSHA256"
 
     /**
-     * Derives the connection-independent authentication key from a shared key.
+     * Derives a connection-independent role key from a shared key.
      *
-     * This is HKDF-SHA256 with the expansion loop unrolled: the requested output
-     * is exactly one SHA-256 block, so HKDF-Expand reduces to a single
+     * HKDF-SHA256 with the expansion loop unrolled: the requested output is
+     * exactly one SHA-256 block, so HKDF-Expand reduces to a single
      * `HMAC(prk, info || 0x01)`.
      */
-    fun deriveAuthKey(sharedKey: SharedKey): ByteArray {
+    fun deriveRoleKey(
+        sharedKey: SharedKey,
+        role: AuthRole = AuthRole.Vector,
+    ): ByteArray {
         val salt = MessageDigest.getInstance("SHA-256").digest(AUTH_ROOT_SALT_LABEL.encodeToByteArray())
-        val authRoot = hmac(salt, sharedKey.toByteArray())
-        return hmac(authRoot, AUTH_KEY_INFO.encodeToByteArray() + 0x01)
+        val root = hmac(salt, sharedKey.toByteArray())
+        return hmac(root, role.info.encodeToByteArray() + 0x01)
     }
 
     /**
-     * Computes the 16-byte tag binding this session to this connection.
+     * Computes the 16-byte AuthFrame binding this role to this connection.
      *
      * @param exporter the 32 bytes exported from the TLS or QUIC connection.
      */
     fun tag(
-        authKey: ByteArray,
+        roleKey: ByteArray,
         transport: AuthTransport,
         exporter: ByteArray,
-        sessionId: ByteArray,
     ): ByteArray {
         require(exporter.size == EXPORTER_LENGTH) {
             "exporter must be $EXPORTER_LENGTH bytes, got ${exporter.size}"
         }
-        require(sessionId.size == SESSION_ID_LENGTH) {
-            "session id must be $SESSION_ID_LENGTH bytes, got ${sessionId.size}"
-        }
-        val message = ByteArray(1 + EXPORTER_LENGTH + SESSION_ID_LENGTH)
-        message[0] = transport.byte
-        exporter.copyInto(message, 1)
-        sessionId.copyInto(message, 1 + EXPORTER_LENGTH)
-        return hmac(authKey, message).copyOf(TAG_LENGTH)
+        return hmac(roleKey, byteArrayOf(transport.byte) + exporter).copyOf(FRAME_LENGTH)
     }
 
-    /** Builds the 32-byte frame: `session_id[16] || tag[16]`. */
+    /** Builds this client's AuthFrame: the Vector tag for this connection. */
     fun encodeFrame(
         sharedKey: SharedKey,
         transport: AuthTransport,
         exporter: ByteArray,
-        sessionId: ByteArray,
-    ): ByteArray {
-        val tag = tag(deriveAuthKey(sharedKey), transport, exporter, sessionId)
-        return sessionId.copyOf(SESSION_ID_LENGTH) + tag
-    }
+    ): ByteArray = tag(deriveRoleKey(sharedKey, AuthRole.Vector), transport, exporter)
 
     /**
-     * Verifies a frame and returns the session id it carries.
+     * Verifies a frame and returns the role it authenticates as.
      *
-     * The tag comparison is constant-time. A short-circuiting comparison would
-     * leak how many leading bytes matched, which is enough to forge a tag one
-     * byte at a time.
+     * Both comparisons are constant-time and both always run, so the time taken
+     * does not say which role came closer. TLS admits a Vector only, matching a
+     * Portal's own rule.
      */
     fun verifyFrame(
         frame: ByteArray,
         sharedKey: SharedKey,
         transport: AuthTransport,
         exporter: ByteArray,
-    ): DecodeResult<ByteArray> {
+    ): DecodeResult<AuthRole> {
         if (frame.size != FRAME_LENGTH) return invalid(AuthReason.FrameTruncated(frame.size))
-        val sessionId = frame.copyOfRange(0, SESSION_ID_LENGTH)
-        val presented = frame.copyOfRange(SESSION_ID_LENGTH, FRAME_LENGTH)
-        val expected = tag(deriveAuthKey(sharedKey), transport, exporter, sessionId)
-        return if (MessageDigest.isEqual(expected, presented)) {
-            sessionId.ok()
-        } else {
-            invalid(AuthReason.TagMismatch)
+        val vector = MessageDigest.isEqual(tag(deriveRoleKey(sharedKey, AuthRole.Vector), transport, exporter), frame)
+        val egress = MessageDigest.isEqual(tag(deriveRoleKey(sharedKey, AuthRole.Egress), transport, exporter), frame)
+        return when {
+            vector && !egress -> AuthRole.Vector.ok()
+            egress && !vector && transport == AuthTransport.Quic -> AuthRole.Egress.ok()
+            else -> invalid(AuthReason.TagMismatch)
         }
     }
 

@@ -15,9 +15,9 @@ routing/       rules, the direct path, the reject path
 dns/           interception, the fake-IP pool, both families
 apps/          which applications the tunnel carries
   ↓
-net/           NowhereDialer — TLS, ALPN, certificate verification
+net/           NowhereDialer — TCP, Morph, TLS, certificate verification
   ↓
-protocol/      the wire. auth · frame · mux · quic · session · target · tls · url
+protocol/      the wire. auth · frame · morph · quic · session · target · tls · url
 subscription/  the dashboard's HTTP surface, and its scheduled refresh
 ```
 
@@ -47,10 +47,17 @@ Two conventions run through all of it:
   reason. Under fuzzing, "correctly rejected malformed input" and "crashed" are
   the same observation if failures are exceptions — and telling those apart is
   the entire value of fuzzing a parser.
-- **Each rejection is its own type.** `SetupResult`'s seven refusals are an
+- **Each rejection is its own type.** `SetupResult`'s four refusals are an
   enum with per-value meaning rather than an error carrying a number, so that
-  collapsing them is not the path of least resistance. NW-P-06 requires them to
-  stay distinguishable all the way to the screen.
+  collapsing them is not the path of least resistance. They have to stay
+  distinguishable all the way to the screen.
+
+Two carriers, chosen by the node's `net`: TLS, one connection per flow
+(`DedicatedTlsLane`), and QUIC, one connection for all of them (`QuicCarrier`).
+`NowhereSession` picks between them and owns nothing else — v1's session id and
+flow-id allocator went with the Mux and split carriers they existed for.
+`morph/` is the v3 wire mask (ADR-0003); `tls/PeerVerification` is the one
+certificate decision both carriers hand their chain to.
 
 ### `subscription/`
 
@@ -64,15 +71,16 @@ credential, and it is the only thing that knows how to mention one safely.
 
 ### `net/`
 
-`NowhereDialer` — the one place that opens a TLS connection. It exists to make
-a specific mistake impossible: `PlatformExporter` cannot read a Conscrypt
-socket's key schedule and `ConscryptExporter` cannot read a platform one, so the
-socket factory and the exporter are **one decision**. Choosing them at two call
-sites gives a client that authenticates on some API levels and not others.
+`NowhereDialer` — the one place that opens a TLS connection: bind, protect,
+connect, Morph, then TLS layered over the masked socket with Conscrypt in
+engine mode, which is the only layered mode that goes through the wrapper's
+streams (ADR-0003). The socket factory, the ALPN and the exporter all come from
+that one stack.
 
-It is also where the three certificate modes live, because verification is a
-property of how the connection is opened and cannot be retrofitted afterwards —
-a pin checked after the first byte is written is not a pin.
+It is also where verification happens for TLS, through `PeerVerification` and
+`PlatformServerTrust`, before the dialer returns — a check after the first
+Nowhere byte is written is a log entry, not a check. `quic/QuicDial` is the same
+decision for QUIC.
 
 ### `data/`
 

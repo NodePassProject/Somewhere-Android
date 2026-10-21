@@ -46,4 +46,4 @@ body:
     attributes:
       label: Baseline checked against
       description: The commit in `conformance/PROTOCOL_BASELINE` you compared with.
-      placeholder: v1.8.0 @ 7720311b
+      placeholder: v3.0.1 @ 00000e0

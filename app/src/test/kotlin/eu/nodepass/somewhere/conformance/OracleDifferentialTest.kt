@@ -3,37 +3,34 @@
 
 package eu.nodepass.somewhere.conformance
 
+import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.auth.SharedKey
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.FlowRejected
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.frame.UdpOverTcp
+import eu.nodepass.somewhere.protocol.morph.MorphDatagram
+import eu.nodepass.somewhere.protocol.morph.MorphKeys
 import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.LaneReason
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.PacketFlow
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
-import eu.nodepass.somewhere.protocol.session.SplitCarrier
-import eu.nodepass.somewhere.protocol.session.Transport
+import eu.nodepass.somewhere.protocol.session.QuicCarrierReason
+import eu.nodepass.somewhere.protocol.session.StreamTransport
 import eu.nodepass.somewhere.protocol.target.Target
-import eu.nodepass.somewhere.protocol.tls.ConscryptExporter
-import eu.nodepass.somewhere.protocol.tls.TlsTransport
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
+import eu.nodepass.somewhere.protocol.url.NextHopCarrier
+import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.quic.QuicConnection
 import eu.nodepass.somewhere.quic.QuicStreamTransport
-import org.conscrypt.Conscrypt
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.InetSocketAddress
-import java.net.Socket
 import java.security.MessageDigest
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 /**
@@ -64,23 +61,23 @@ import kotlin.concurrent.thread
  * detail of somebody else's front end. Here it is a translation dictionary for
  * a comparison, which is what it actually is.
  *
- * ## Both carriers, one case list
+ * ## Every carrier, one case list
  *
- * Every case runs twice, once with `mux=0` and once with `mux=1`, and the
- * second set is prefixed `mux_`. Nothing about a case is supposed to change
- * between the two: the Mux carrier moves the same frames over a shared
- * connection, so any case whose outcome differs is either a defect here or a
- * misreading of what Mux is for. Running them as one list rather than writing
- * separate Mux cases is what makes that assertion rather than an assumption.
+ * Every case runs over TLS and over QUIC, each against a Portal with Morph on
+ * and one with Morph off: four combinations, prefixed `""`, `quic_`,
+ * `nomorph_` and `nomorph_quic_`. Nothing about a case is supposed to change
+ * between them — the carriers move the same frames, and Morph masks the bytes
+ * underneath without touching them — so any case whose outcome differs is a
+ * defect here or a misreading of what the carrier or the mask is for.
  *
- * The `burst` cases are the ones Mux exists for, and the only ones that need
- * flows to be open **simultaneously**: how many connections a carrier used is
- * not observable from flows that merely happened quickly. The origin they
- * fetch from answers nobody until all [BURST_WIDTH] requests have arrived, so
- * the overlap is guaranteed by the origin rather than by this machine being
- * fast. The connections themselves are counted at the Portal, by the script —
- * neither implementation is asked how many it opened, because that is exactly
- * the number a broken one would get wrong in its own favour.
+ * The `burst` cases are the only ones that need flows open **at the same
+ * time**: how many connections a carrier used is not observable from flows
+ * that merely happened quickly. The origin answers nobody until all
+ * [BURST_WIDTH] requests have arrived, and at that instant the script counts
+ * the TCP connections to the Portal — sixteen over TLS, which is one per flow
+ * as v3 specifies, and none over QUIC. Neither implementation is asked how many
+ * it opened, because that is the number a broken one would get wrong in its
+ * own favour.
  */
 class OracleDifferentialTest {
     /**
@@ -98,26 +95,27 @@ class OracleDifferentialTest {
      */
     private enum class Carriers(
         val prefix: String,
-        val quicUplink: Boolean,
-        val quicDownlink: Boolean,
-        val mux: Boolean = false,
+        val quic: Boolean,
+        val morph: Boolean,
     ) {
-        Tls("", quicUplink = false, quicDownlink = false),
-        TlsMux("mux_", quicUplink = false, quicDownlink = false, mux = true),
-        Quic("quic_", quicUplink = true, quicDownlink = true),
-        SplitQuicUplink("split_quic_up_", quicUplink = true, quicDownlink = false),
-        SplitQuicDownlink("split_quic_down_", quicUplink = false, quicDownlink = true),
-        ;
-
-        val needsQuic: Boolean get() = quicUplink || quicDownlink
-        val isSplit: Boolean get() = quicUplink != quicDownlink
+        Tls("", quic = false, morph = true),
+        Quic("quic_", quic = true, morph = true),
+        TlsNoMorph("nomorph_", quic = false, morph = false),
+        QuicNoMorph("nomorph_quic_", quic = true, morph = false),
     }
 
     /** Set when a host QUIC bridge exists; absent means the QUIC rows are skipped. */
     private val hostQuic: String? = System.getProperty("somewhere.quic.library")
 
     private val portalEnv: String? = System.getenv("NOWHERE_E2E_PORTAL")
-    private val keyText: String = System.getenv("NOWHERE_E2E_KEY") ?: "conformance-smoke-key"
+    private val keyText: String = System.getenv("NOWHERE_E2E_KEY") ?: "0123456789abcdef0123456789abcdef"
+
+    /** Each Portal's own certificate, which both of its listeners serve. */
+    private val pin: String? = System.getenv("NOWHERE_E2E_PIN")
+    private val noMorphPin: String? = System.getenv("ORACLE_NOMORPH_PIN")
+
+    /** A second Portal, the same in every respect except `morph=0`. */
+    private val noMorphPortalEnv: String? = System.getenv("ORACLE_PORTAL_NOMORPH")
     private val output: String? = System.getenv("ORACLE_DIFF_OUT")
 
     /** Where each case points. Supplied by the script, never defaulted to something real. */
@@ -130,27 +128,26 @@ class OracleDifferentialTest {
     fun runEveryCaseAndReportWhatHappened() {
         assumeTrue(
             "NOWHERE_E2E_PORTAL is not set — run conformance/scripts/oracle-diff.sh",
-            portalEnv != null && output != null,
+            portalEnv != null && output != null && pin != null && noMorphPortalEnv != null && noMorphPin != null,
         )
-        val (host, port) = portalEnv!!.substringBeforeLast(':') to portalEnv.substringAfterLast(':').toInt()
         val (targetHost, targetPort) = endpoint("ORACLE_TARGET")
         val (nameHost, namePort) = endpoint("ORACLE_TARGET_NAME")
         val (udpHost, udpPort) = endpoint("ORACLE_UDP")
         val (closedHost, closedPort) = endpoint("ORACLE_CLOSED")
 
-        val (holdDedicatedHost, holdDedicatedPort) = endpoint("ORACLE_HOLD_DEDICATED")
-        val (holdMuxHost, holdMuxPort) = endpoint("ORACLE_HOLD_MUX")
+        val (holdTlsHost, holdTlsPort) = endpoint("ORACLE_HOLD_TLS")
+        val (holdQuicHost, holdQuicPort) = endpoint("ORACLE_HOLD_QUIC")
 
         val verdicts = LinkedHashMap<String, Verdict>()
 
-        val carriers = Carriers.entries.filter { !it.needsQuic || hostQuic != null }
-        if (carriers.none { it.needsQuic }) {
+        val carriers = Carriers.entries.filter { !it.quic || hostQuic != null }
+        if (carriers.none { it.quic }) {
             println("oracle-diff: no host QUIC bridge, so the QUIC combinations are not run")
         }
 
         for (combination in carriers) {
             val prefix = combination.prefix
-            val mux = combination.mux
+            val (host, port) = portalFor(combination)
             verdicts["${prefix}tcp_ip_payload"] =
                 fetch(host, port, keyText, combination, ipTarget(targetHost, targetPort), targetHost)
 
@@ -160,33 +157,28 @@ class OracleDifferentialTest {
             verdicts["${prefix}tcp_domain_payload"] =
                 fetch(host, port, keyText, combination, Target.ofDomain(nameHost, namePort), nameHost)
 
-            // A port with nothing behind it. The Portal answers DIAL_FAILED,
-            // which is the one rejection reachable without a second carrier.
+            // A port with nothing behind it. The Portal answers DIAL_FAILED.
             verdicts["${prefix}dial_failed"] =
                 fetch(host, port, keyText, combination, ipTarget(closedHost, closedPort), closedHost)
 
-            // Upstream answers a bad authentication tag with silence rather
-            // than a close, deliberately, so that failure is not an oracle for
-            // probing. Worth running over both carriers rather than once: at
-            // `mux=1` the AuthFrame and the 0xff marker leave in a single
-            // write, so a Portal that refuses the key is refusing a connection
-            // that has already declared what it intends to become.
+            // A wrong key fails in two different places depending on Morph.
+            // With it, the mask is keyed by the shared key, so the handshake
+            // itself is noise to the Portal and nothing is ever authenticated.
+            // Without it, TLS completes and the AuthFrame is what is refused.
+            // Both are worth comparing, because they are different failures.
             verdicts["${prefix}wrong_key"] =
-                fetch(host, port, "not-the-shared-key", combination, ipTarget(targetHost, targetPort), targetHost)
+                fetch(host, port, WRONG_KEY, combination, ipTarget(targetHost, targetPort), targetHost)
 
-            verdicts["${prefix}uot_round_trip"] = udpEcho(host, port, keyText, combination, udpHost, udpPort)
+            verdicts["${prefix}udp_round_trip"] = udpEcho(host, port, keyText, combination, udpHost, udpPort)
         }
 
-        // The arithmetic L2 exists for, stated as two measurements rather than
-        // one: without the dedicated half, "four connections" is a number with
-        // nothing to be smaller than, and a harness that had stopped counting
-        // would report it just as happily.
-        verdicts["dedicated_burst"] = burst(host, port, Carriers.Tls, holdDedicatedHost, holdDedicatedPort)
-        verdicts["mux_burst"] = burst(host, port, Carriers.TlsMux, holdMuxHost, holdMuxPort)
+        // How many connections carried sixteen simultaneous flows is counted
+        // by the script, at the instant the origin releases them. Here only
+        // that all sixteen completed with the same bytes.
+        val (host, port) = portalFor(Carriers.Tls)
+        verdicts["tls_burst"] = burst(host, port, Carriers.Tls, holdTlsHost, holdTlsPort)
         if (hostQuic != null) {
-            // QUIC multiplexes by construction: the same burst that costs
-            // sixteen connections without Mux and four with it costs one here.
-            verdicts["quic_burst"] = burst(host, port, Carriers.Quic, holdDedicatedHost, holdDedicatedPort)
+            verdicts["quic_burst"] = burst(host, port, Carriers.Quic, holdQuicHost, holdQuicPort)
         }
 
         File(output!!).writeText(
@@ -246,12 +238,17 @@ class OracleDifferentialTest {
         return Verdict(REPLY_SUCCEEDED, sha256(body), "READY, ${body.size} bytes")
     }
 
+    private fun portalFor(combination: Carriers): Pair<String, Int> {
+        val value = if (combination.morph) portalEnv!! else noMorphPortalEnv!!
+        return value.substringBeforeLast(':') to value.substringAfterLast(':').toInt()
+    }
+
     /**
      * [BURST_WIDTH] flows opened at once, on **one** session.
      *
      * One session because that is the whole question: a session is what owns
-     * the carriers, and flows spread across several sessions would each get
-     * their own no matter what `mux` said.
+     * the carrier, and flows spread across several sessions would each get
+     * their own connection whatever the carrier did.
      *
      * Every flow is opened from its own thread and none of them can finish
      * before the last one has opened, because the origin holds them all until
@@ -268,7 +265,12 @@ class OracleDifferentialTest {
         port: Int,
     ): Verdict {
         val target = (ipTarget(host, port) as DecodeResult.Ok).value
-        val held = session(portalHost, portalPort, keyText, combination)
+        val held =
+            try {
+                session(portalHost, portalPort, keyText, combination)
+            } catch (error: Exception) {
+                return Verdict(REPLY_NETWORK_UNREACHABLE, "", "transport: ${error.message ?: error.javaClass.simpleName}")
+            }
         val session = held.session
         val outcomes = arrayOfNulls<Verdict>(BURST_WIDTH)
         try {
@@ -351,18 +353,21 @@ class OracleDifferentialTest {
         kind: FlowKind,
         body: (Flow) -> Verdict,
     ): Verdict {
-        val held = session(portalHost, portalPort, key, combination)
-        val session = held.session
+        var held: Held? = null
         return try {
-            when (val opened = session.openFlow(target, kind)) {
+            // Inside the try: over QUIC the connection is the session's first
+            // act, and a handshake that never completes — a wrong key under
+            // Morph — is a transport failure like any other.
+            held = session(portalHost, portalPort, key, combination)
+            when (val opened = held.session.openFlow(target, kind)) {
                 is DecodeResult.Ok -> opened.value.use(body)
                 is DecodeResult.Invalid -> rejection(opened.reason)
             }
         } catch (error: Exception) {
             // A transport that failed before the protocol was reached.
-            Verdict(REPLY_NETWORK_UNREACHABLE, "", "transport: ${error.javaClass.simpleName}")
+            Verdict(REPLY_NETWORK_UNREACHABLE, "", "transport: ${error.message ?: error.javaClass.simpleName}")
         } finally {
-            held.close()
+            held?.close()
         }
     }
 
@@ -377,27 +382,24 @@ class OracleDifferentialTest {
         when (reason) {
             // `FlowRejected` rather than either carrier's own rejection type,
             // which is the whole reason that interface exists: this asks what
-            // the Portal said, and the Portal says the same thing over a lane
-            // and over a shard. Matching one carrier's shape is how the first
-            // run of the Mux half reported `mux_dial_failed` as a general
-            // failure while the oracle reported a host that could not be
-            // reached — a divergence in the reading, not on the wire.
+            // the Portal said, and the Portal says the same thing over a TLS
+            // connection and over a QUIC stream.
             is FlowRejected ->
                 when (reason.result) {
                     SetupResult.InvalidRequest, SetupResult.FlowLimit ->
                         Verdict(REPLY_CONNECTION_NOT_ALLOWED, "", reason.result.name)
 
                     SetupResult.DialFailed -> Verdict(REPLY_HOST_UNREACHABLE, "", reason.result.name)
-                    SetupResult.PairTimeout -> Verdict(REPLY_TTL_EXPIRED, "", reason.result.name)
                     else -> Verdict(REPLY_GENERAL_FAILURE, "", reason.result.name)
                 }
 
-            // No setup byte: the Portal accepted the connection and said
-            // nothing, which is what a rejected AuthFrame looks like on the
-            // wire. Upstream's own client reaches reply 1 here too, by way of
-            // its setup timeout — so the alphabets agree while the reasons
-            // stay visible in the note.
-            LaneReason.NoSetupByte -> Verdict(REPLY_GENERAL_FAILURE, "", "no setup byte (silence)")
+            // No setup byte: the Portal ended the stream or said nothing,
+            // which is what a refused AuthFrame looks like from here.
+            // Upstream's own client reads the same end of stream as a protocol
+            // failure, reply 1, so the alphabets agree while the reasons stay
+            // visible in the note.
+            LaneReason.NoSetupByte, QuicCarrierReason.NoSetupByte ->
+                Verdict(REPLY_GENERAL_FAILURE, "", "no setup byte")
             else -> Verdict(REPLY_GENERAL_FAILURE, "", reason.detail)
         }
 
@@ -437,20 +439,6 @@ class OracleDifferentialTest {
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private object TrustEverything : X509TrustManager {
-        override fun checkClientTrusted(
-            chain: Array<X509Certificate>,
-            authType: String,
-        ) = Unit
-
-        override fun checkServerTrusted(
-            chain: Array<X509Certificate>,
-            authType: String,
-        ) = Unit
-
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-    }
-
     /**
      * A session on whichever carriers the combination names, and whatever has
      * to be closed with it.
@@ -468,21 +456,21 @@ class OracleDifferentialTest {
         }
     }
 
-    private fun tlsTransport(
+    /** The node this case dials: the combination's Portal, pinned to its certificate. */
+    private fun node(
         host: String,
         port: Int,
-    ): Transport {
-        val context = SSLContext.getInstance("TLSv1.3", Conscrypt.newProvider())
-        context.init(null, arrayOf(TrustEverything), SecureRandom())
-        val raw = Socket().apply { connect(InetSocketAddress(host, port), 5_000) }
-        val socket =
-            (context.socketFactory.createSocket(raw, host, port, true) as SSLSocket).apply {
-                soTimeout = SETUP_TIMEOUT_MILLIS
-                Conscrypt.setApplicationProtocols(this, arrayOf("now/1"))
-                startHandshake()
-            }
-        return (TlsTransport.over(socket, ConscryptExporter()) as DecodeResult.Ok).value
-    }
+        key: String,
+        combination: Carriers,
+    ): NowhereUrl =
+        NowhereUrl(
+            sharedKey = (SharedKey.of(key) as DecodeResult.Ok).value,
+            host = host,
+            port = port,
+            net = if (combination.quic) NextHopCarrier.Udp else NextHopCarrier.Tcp,
+            morph = combination.morph,
+            certificateVerification = CertificateVerification.Pin(if (combination.morph) pin!! else noMorphPin!!),
+        )
 
     private fun session(
         host: String,
@@ -490,10 +478,16 @@ class OracleDifferentialTest {
         key: String,
         combination: Carriers,
     ): Held {
-        val shared = (SharedKey.of(key) as DecodeResult.Ok).value
-        if (!combination.needsQuic) {
+        val node = node(host, port, key, combination)
+        if (!combination.quic) {
+            val dialer = NowhereDialer(readTimeoutMillis = SETUP_TIMEOUT_MILLIS)
             return Held(
-                NowhereSession(shared, { tlsTransport(host, port) }, mux = combination.mux),
+                NowhereSession(node.sharedKey, {
+                    when (val transport = dialer.connect(node)) {
+                        is DecodeResult.Ok -> transport.value
+                        is DecodeResult.Invalid -> throw IllegalStateException(transport.reason.detail)
+                    }
+                }),
                 null,
             )
         }
@@ -501,41 +495,24 @@ class OracleDifferentialTest {
         val connection =
             QuicConnection.open(
                 remote = InetSocketAddress(host, port),
-                alpn = "now/1",
                 serverName = null,
+                pinSha256 = (node.certificateVerification as CertificateVerification.Pin).bytes,
+                morph = if (node.morph) MorphDatagram.forClient(MorphKeys.derive(node.sharedKey)) else null,
                 // Nothing to protect: this half of the differential runs on a
                 // build host, where there is no tunnel to route back into.
                 protect = { true },
             )
         connection.completeHandshake()
 
-        fun quicLane(): Transport = QuicStreamTransport(connection, connection.openStream())
+        fun quicLane(): StreamTransport = QuicStreamTransport(connection, connection.openStream())
 
         return Held(
-            if (combination.isSplit) {
-                NowhereSession(
-                    shared,
-                    { error("a split session dials through its lane factories") },
-                    splitUplink =
-                        SplitCarrier.LaneFactory {
-                            if (combination.quicUplink) quicLane() else tlsTransport(host, port)
-                        },
-                    splitDownlink =
-                        SplitCarrier.LaneFactory {
-                            if (combination.quicDownlink) quicLane() else tlsTransport(host, port)
-                        },
-                    quicDatagrams = connection,
-                )
-            } else {
-                NowhereSession(
-                    shared,
-                    { error("a QUIC session must not dial TLS") },
-                    // One connection for the life of a case, so the default
-                    // generation never moves.
-                    quicStreams = QuicCarrier.StreamFactory { quicLane() },
-                    quicDatagrams = connection,
-                )
-            },
+            NowhereSession(
+                node.sharedKey,
+                { error("a QUIC session must not dial TLS") },
+                quicStreams = QuicCarrier.StreamFactory { quicLane() },
+                quicDatagrams = connection,
+            ),
             connection,
         )
     }
@@ -547,21 +524,21 @@ class OracleDifferentialTest {
         const val HOLD_PATH = "/hold"
 
         /**
-         * Flows opened at once in the burst cases.
-         *
-         * Sixteen because upstream places four active flows per shard, so this
-         * is four shards' worth — enough that a carrier which quietly stopped
-         * multiplexing is off by twelve rather than by one, and small enough to
-         * stay a test rather than a load generator.
+         * Flows opened at once in the burst cases. Enough that a carrier which
+         * quietly shared or failed to share connections is off by a lot rather
+         * than by one, and small enough to stay a test rather than a load
+         * generator.
          */
         const val BURST_WIDTH = 16
 
+        /** In service form, so the failure is the key's and not its spelling. */
+        const val WRONG_KEY = "ffffffffffffffffffffffffffffffff"
+
         /**
-         * Long enough for a Portal to answer, short enough that a silent one is
-         * observed as silence rather than as a hung test. Upstream's own client
-         * gives up at five seconds, measured.
+         * The Portal's own flow-setup limit. Shorter, and a slow DIAL_FAILED
+         * would be read here as silence.
          */
-        const val SETUP_TIMEOUT_MILLIS = 8_000
+        const val SETUP_TIMEOUT_MILLIS = 20_000
 
         const val CR: Byte = 13
         const val LF: Byte = 10
@@ -572,6 +549,5 @@ class OracleDifferentialTest {
         const val REPLY_CONNECTION_NOT_ALLOWED = 2
         const val REPLY_NETWORK_UNREACHABLE = 3
         const val REPLY_HOST_UNREACHABLE = 4
-        const val REPLY_TTL_EXPIRED = 6
     }
 }

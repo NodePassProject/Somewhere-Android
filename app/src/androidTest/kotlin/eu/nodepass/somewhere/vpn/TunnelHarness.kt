@@ -5,8 +5,6 @@ package eu.nodepass.somewhere.vpn
 
 import android.content.Context
 import androidx.test.platform.app.InstrumentationRegistry
-import eu.nodepass.somewhere.protocol.DecodeResult
-import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import org.junit.Assert.assertEquals
 import java.io.DataInputStream
 import java.net.HttpURLConnection
@@ -45,25 +43,10 @@ object TunnelHarness {
     val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
     fun start() {
-        val portal = E2eEnvironment.requirePortal()
-        val host = portal.substringBeforeLast(':')
-        val port = portal.substringAfterLast(':').toInt()
-        // One case list, several carriers. That is where L2's only finding came
-        // from — a protocol fact that had grown a second shape the moment a
-        // second carrier landed — and QUIC is the third.
-        //
-        // `mux` is a TLS notion and is not sent with a QUIC node: QUIC
-        // multiplexes by construction, so `mux=1` there would be a parameter
-        // asking for something the carrier already is.
-        val carrier = E2eEnvironment.carrier
-        val mux = if (E2eEnvironment.mux && !E2eEnvironment.quic) "&mux=1" else ""
-        val url = "nowhere://${E2eEnvironment.sharedKey}@$host:$port?up=$carrier&down=$carrier$mux"
-        val node =
-            when (val parsed = NowhereUrl.parse(url)) {
-                is DecodeResult.Ok -> parsed.value
-                is DecodeResult.Invalid ->
-                    throw AssertionError("the test node URL does not parse: ${parsed.reason.detail}")
-            }
+        // One case list, both carriers: the run chooses which, and every case
+        // runs over it. The node is pinned to the certificate the Portal
+        // logged, because v3 has no unverified mode.
+        val node = E2eEnvironment.node()
 
         SomewhereVpnService.start(context, node)
         await("the tunnel to come up") { TunnelController.state.value is TunnelState.Connected }

@@ -43,10 +43,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * destination, destination port)` is the finest key that is also the coarsest
  * correct one.
  *
- * At L1 each flow is its own TLS connection, which makes a burst of DNS
- * expensive — that is what L2's mux is for. Until then the cost is bounded
- * here rather than left to grow: [MAX_FLOWS] concurrent relays, and anything
- * beyond is dropped with a word in the log rather than silently.
+ * Over TLS each flow is its own connection, which makes a burst of DNS
+ * expensive; over QUIC it is a stream and a few datagrams. Either way the cost
+ * is bounded here rather than left to grow: [MAX_FLOWS] concurrent relays, and
+ * anything beyond is dropped with a word in the log rather than silently.
  *
  * ## Reaping
  *
@@ -146,9 +146,8 @@ class UdpRelay(
         }
 
         if (relays.size >= MAX_FLOWS) {
-            // Said rather than silently dropped: at L1 every relay is a TLS
-            // connection, and the shape of this limit is exactly what makes
-            // the case for mux at L2.
+            // Said rather than silently dropped: over TLS every relay is a
+            // connection of its own, and a full table is worth knowing about.
             Log.w(TAG, "$MAX_FLOWS relays already open; dropping a datagram to port $destinationPort")
             return
         }
@@ -184,11 +183,10 @@ class UdpRelay(
     ) {
         val first = relay.outbound.tryReceive().getOrNull() ?: ByteArray(0)
 
-        // Over QUIC the first packet is not framed and does not ride the
-        // opening write at all: section 9 sends it as a DATAGRAM once the
-        // Portal has answered. The session knows which carrier it is on, so the
-        // opening payload is handed over raw and the carrier decides. Over TLS
-        // it is length-prefixed here, as it always was.
+        // Over QUIC the first packet is not framed: it goes as a DATAGRAM once
+        // the Portal has answered. The session knows which carrier it is on, so
+        // the packet is handed over raw and the carrier decides. Over TLS it is
+        // length-prefixed here and follows READY on the stream.
         val framed =
             if (session.carriesPackets) {
                 first
@@ -223,7 +221,7 @@ class UdpRelay(
             }
 
         relay.flow = flow
-        // The opening write carried this one; the pump never sees it.
+        // The dial carried this one; the pump never sees it.
         meter.recordUpstream(framed.size)
         val up = scope.launch { pumpUp(relay, flow) }
         val down = scope.launch { pumpDown(relay, flow) }

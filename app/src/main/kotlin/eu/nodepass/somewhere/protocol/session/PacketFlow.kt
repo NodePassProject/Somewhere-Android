@@ -10,7 +10,7 @@ package eu.nodepass.somewhere.protocol.session
  *
  * UDP over a TLS carrier is length-prefixed inside a byte stream — `UdpOverTcp`
  * frames each packet and the caller writes the framing. UDP over QUIC is not:
- * section 9 puts each packet in its own DATAGRAM, unreliable and unordered,
+ * the specification puts each packet in its own DATAGRAM, unreliable and unordered,
  * which is what UDP is. A packet boundary is real there, and expressing it as
  * "some bytes" would mean framing it twice: once for a stream that is not being
  * used, and once for the datagram that is.
@@ -34,7 +34,7 @@ interface PacketFlow : Flow {
      * Waits up to [timeoutMillis] for one packet.
      *
      * @return the packet, or null when none arrived. A zero-length packet is a
-     *   real packet — section 9 says an empty DATA is valid — so an empty array
+     *   real packet — the specification says an empty DATA is valid — so an empty array
      *   cannot mean "nothing".
      */
     fun receivePacket(timeoutMillis: Long): ByteArray?

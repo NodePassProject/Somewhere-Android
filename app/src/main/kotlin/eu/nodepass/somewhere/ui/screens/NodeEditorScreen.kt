@@ -13,12 +13,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,8 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -38,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.protocol.url.CertificateVerification
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
@@ -45,20 +42,17 @@ import eu.nodepass.somewhere.ui.components.FieldBox
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.Segmented
-import eu.nodepass.somewhere.ui.components.SmallButton
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
-import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
-import eu.nodepass.somewhere.ui.theme.direction
 
 /**
  * Editing one node.
  *
- * The two carriers are side-by-side controls of equal weight, each in its own
- * direction's colour, because that is what the protocol actually offers: `up`
- * and `down` are independent, and a single "transport" dropdown would make the
- * split unreachable.
+ * One carrier control and one Morph switch, because that is what the protocol
+ * offers a client: v3 carries both directions on the carrier `net` names, and
+ * Morph has to match the Portal, so a user who changes either is choosing to
+ * make this node agree with one.
  */
 @Composable
 fun NodeEditorScreen(
@@ -97,9 +91,8 @@ internal fun NodeEditor(
     onRemove: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
-    var up by remember { mutableStateOf(node.up) }
-    var down by remember { mutableStateOf(node.down) }
-    var mux by remember { mutableStateOf(node.mux) }
+    var net by remember { mutableStateOf(node.net) }
+    var morph by remember { mutableStateOf(node.morph) }
 
     Column(
         Modifier
@@ -118,11 +111,11 @@ internal fun NodeEditor(
                     color = colors.brand,
                     modifier =
                         Modifier.clickable {
-                            // Only the carriers and mux are editable here. The
+                            // Only the carrier and Morph are editable here. The
                             // rest of the node is what the parser produced, and
                             // rebuilding it field by field would be a second
                             // place for a node's shape to be defined.
-                            onSave(node.copy(up = up, down = down, mux = mux))
+                            onSave(node.copy(net = net, morph = morph))
                         },
                 )
             },
@@ -153,26 +146,14 @@ internal fun NodeEditor(
             }
 
             Labelled(stringResource(R.string.field_carriers)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CarrierPicker(
-                        modifier = Modifier.weight(1f),
-                        label = stringResource(R.string.direction_upstream),
-                        icon = SomewhereIcons.ArrowUp,
-                        color = colors.direction(upstream = true).figure,
-                        selectedFill = colors.direction(upstream = true).line,
-                        carrier = up,
-                        onSelect = { up = it },
-                    )
-                    CarrierPicker(
-                        modifier = Modifier.weight(1f),
-                        label = stringResource(R.string.direction_downstream),
-                        icon = SomewhereIcons.ArrowDown,
-                        color = colors.direction(upstream = false).figure,
-                        selectedFill = colors.direction(upstream = false).line,
-                        carrier = down,
-                        onSelect = { down = it },
-                    )
-                }
+                // One carrier for the whole node: v3 removed split flows, so
+                // there is no longer a direction to choose a carrier for.
+                Segmented(
+                    options = NextHopCarrier.entries.map { carrierLabel(it) },
+                    selectedIndex = NextHopCarrier.entries.indexOf(net),
+                    onSelect = { net = NextHopCarrier.entries[it] },
+                    mono = true,
+                )
             }
 
             Card(padding = PaddingValues(horizontal = 15.dp, vertical = 14.dp)) {
@@ -185,42 +166,26 @@ internal fun NodeEditor(
                         verticalArrangement = Arrangement.spacedBy(3.dp),
                     ) {
                         Text(
-                            text = stringResource(R.string.editor_multiplexing),
+                            text = stringResource(R.string.editor_morph),
                             fontFamily = SomewhereType.Body,
                             fontWeight = FontWeight.Medium,
                             fontSize = 14.sp,
                             color = colors.ink,
                         )
                         Text(
-                            text = stringResource(R.string.editor_multiplexing_detail),
+                            text = stringResource(R.string.editor_morph_detail),
                             fontFamily = SomewhereType.Body,
                             fontSize = 11.5.sp,
                             lineHeight = 16.sp,
                             color = colors.faint,
                         )
                     }
-                    SomewhereSwitch(checked = mux, onCheckedChange = { mux = it })
+                    SomewhereSwitch(checked = morph, onCheckedChange = { morph = it })
                 }
-            }
-
-            // NW-P-08: a fixed ALPN is a ready-made fingerprint on a restricted
-            // network, so it is a field the user can see and change — never a
-            // constant compiled into the client.
-            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Row(verticalAlignment = Alignment.Bottom) {
-                    SectionLabel(stringResource(R.string.label_alpn), Modifier.weight(1f))
-                    Text(
-                        text = stringResource(R.string.editor_alpn_hint),
-                        fontFamily = SomewhereType.Body,
-                        fontSize = 11.sp,
-                        color = colors.faint,
-                    )
-                }
-                FieldBox { MonoText(node.alpn, colors.ink, fontSize = 13.5.sp) }
             }
 
             Labelled(stringResource(R.string.field_certificate)) {
-                UnverifiedPanel()
+                CertificatePanel(node.certificateVerification)
             }
 
             // Not in the design canvas, which draws every screen populated and
@@ -258,100 +223,57 @@ private fun Labelled(
     }
 }
 
-@Composable
-private fun CarrierPicker(
-    modifier: Modifier,
-    label: String,
-    icon: ImageVector,
-    color: Color,
-    selectedFill: Color,
-    carrier: NextHopCarrier,
-    onSelect: (NextHopCarrier) -> Unit,
-) {
-    val colors = SomewhereTheme.colors
-    Card(modifier = modifier, padding = PaddingValues(horizontal = 13.dp, vertical = 12.dp)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp),
-        ) {
-            Icon(icon, null, Modifier.size(13.dp), tint = color)
-            Text(
-                text = label.uppercase(),
-                fontFamily = SomewhereType.Display,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 10.5.sp,
-                letterSpacing = 1.16.sp,
-                color = color,
-            )
-        }
-        Segmented(
-            options = NextHopCarrier.entries.map { it.token.uppercase() },
-            selectedIndex = NextHopCarrier.entries.indexOf(carrier),
-            onSelect = { onSelect(NextHopCarrier.entries[it]) },
-            background = colors.panel,
-            borderColor = Color.Transparent,
-            selectedFill = selectedFill,
-            height = 32.dp,
-            mono = true,
-        )
-    }
-}
-
 /**
- * The certificate state, stated rather than warned about.
+ * How this node's certificate is checked — stated, not warned about.
  *
- * D-11: neither `sni` nor `pin` means upstream skips verification entirely. The
- * panel offers the two ways out instead of a dialog, because the condition is
- * not an event — it lasts as long as the node does.
+ * v1 had a third state, "not checked at all", and this panel used to be a red
+ * warning about it. v3 has no such state: every node is either pinned or held
+ * to this device's trust store under a name, so the panel says which, and
+ * names the fingerprint or the name so it can be compared with the Portal.
  */
 @Composable
-private fun UnverifiedPanel() {
+private fun CertificatePanel(policy: CertificateVerification) {
     val colors = SomewhereTheme.colors
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
-                .background(colors.criticalTint)
-                .border(1.dp, colors.criticalLine, RoundedCornerShape(10.dp))
+                .background(colors.panel)
+                .border(1.dp, colors.line, RoundedCornerShape(10.dp))
                 .padding(horizontal = 15.dp, vertical = 13.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-            Icon(SomewhereIcons.AlertTriangle, null, Modifier.size(15.dp), tint = colors.critical)
-            Text(
-                text = stringResource(R.string.cert_not_verified),
-                fontFamily = SomewhereType.Body,
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
-                color = colors.critical,
-            )
-        }
         Text(
-            text = stringResource(R.string.cert_unverified_detail),
+            text =
+                when (policy) {
+                    is CertificateVerification.Pin -> stringResource(R.string.cert_pinned)
+                    is CertificateVerification.Sni -> stringResource(R.string.cert_trusted_as, policy.host)
+                },
             fontFamily = SomewhereType.Body,
-            fontSize = 12.sp,
-            lineHeight = 17.4.sp,
-            color = colors.inkMuted,
+            fontWeight = FontWeight.Medium,
+            fontSize = 13.sp,
+            color = colors.ink,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SmallButton(
-                label = stringResource(R.string.cert_add_sni),
-                onClick = {},
-                fill = colors.criticalAction,
-                contentColor = colors.onCriticalAction,
-                height = 34.dp,
-            )
-            SmallButton(
-                label = stringResource(R.string.cert_pin_fingerprint),
-                onClick = {},
-                fill = colors.criticalAction,
-                contentColor = colors.onCriticalAction,
-                height = 34.dp,
-            )
+        when (policy) {
+            is CertificateVerification.Pin -> {
+                MonoText(policy.sha256, colors.inkMuted, fontSize = 11.sp)
+                Text(
+                    text = stringResource(R.string.cert_pinned_detail),
+                    fontFamily = SomewhereType.Body,
+                    fontSize = 12.sp,
+                    lineHeight = 17.4.sp,
+                    color = colors.inkMuted,
+                )
+            }
+            is CertificateVerification.Sni ->
+                Text(
+                    text = stringResource(R.string.cert_trusted_detail, policy.host),
+                    fontFamily = SomewhereType.Body,
+                    fontSize = 12.sp,
+                    lineHeight = 17.4.sp,
+                    color = colors.inkMuted,
+                )
         }
     }
 }

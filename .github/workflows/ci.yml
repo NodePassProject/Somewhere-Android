@@ -87,9 +87,9 @@ jobs:
     runs-on: ubuntu-latest
     # Two things that a JVM cannot check.
     #
-    # The design rules from docs/design-system.md — the certificate marker, the
-    # seven distinct rejections, the two-button QUIC notice, the absence of an
-    # upload figure — because nothing crashes when they are violated.
+    # The design rules from docs/design-system.md — the certificate statement,
+    # the distinct rejections, the Morph switch, the absence of an upload
+    # figure — because nothing crashes when they are violated.
     #
     # And the lwIP layer, because a JVM cannot load an .so built for Android:
     # until this job runs, the whole C layer is code that merely compiled.

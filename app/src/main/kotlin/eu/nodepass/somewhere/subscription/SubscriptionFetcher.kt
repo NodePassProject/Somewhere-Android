@@ -33,7 +33,7 @@ import java.net.URL
  */
 class SubscriptionFetcher(
     private val clientVersion: String,
-    private val capabilities: Set<Capability> = setOf(Capability.MUX),
+    private val capabilities: Set<Capability> = setOf(Capability.NW3, Capability.QUIC),
     private val connectTimeoutMillis: Int = 15_000,
     private val readTimeoutMillis: Int = 20_000,
     private val maxBodyBytes: Int = 512 * 1024,

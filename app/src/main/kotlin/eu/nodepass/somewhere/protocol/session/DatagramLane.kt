@@ -12,16 +12,12 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 
 /**
- * Section 9's UDP carriage, shared by the carriers that can use it.
+ * UDP over QUIC DATAGRAMs, per `docs/protocol.md` § QUIC datagrams.
  *
- * ## Why this is not inside one carrier
- *
- * A duplex QUIC flow sends and receives packets as DATAGRAMs. A **split** flow
- * may do it in one direction only: with `up=udp&down=tcp` the uplink is QUIC and
- * the downlink is a TLS stream carrying length-prefixed packets, and with
- * `up=tcp&down=udp` it is the other way round. So the framing belongs to a
- * *direction*, not to a flow, and putting it inside either carrier would mean
- * writing it twice — which is how a protocol fact grows a second shape.
+ * Kept apart from [QuicCarrier] because it is a separate concern with its own
+ * state — per-flow queues, packet ids, reassembly — and because v1 needed it
+ * from two carriers. v3 needs it from one; the separation still earns its keep
+ * by being testable without a stream in sight.
  *
  * ## One demultiplexer
  *

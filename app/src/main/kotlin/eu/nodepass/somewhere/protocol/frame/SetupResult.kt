@@ -12,7 +12,7 @@ sealed interface SetupResultReason : DecodeReason {
     data class OutOfRange(
         val value: Int,
     ) : SetupResultReason {
-        override val detail: String = "setup byte $value is outside 0..7 and is a protocol error"
+        override val detail: String = "setup byte $value is outside 0..${SetupResult.MAX_VALUE} and is a protocol error"
     }
 
     data object Missing : SetupResultReason {
@@ -21,20 +21,19 @@ sealed interface SetupResultReason : DecodeReason {
 }
 
 /**
- * The single byte a Portal returns on the logical downlink before payload relay
- * starts. NW-P-06, `docs/protocol.md` section 6.
+ * The single byte a Portal answers a flow with before payload relay starts,
+ * per `docs/protocol.md` § Setup results.
  *
- * **Each rejection is a distinct type on purpose.** The specification requires
- * all seven to reach the user as different messages, and a client that collapses
- * them into "connection failed" makes the difference between "this Portal is at
- * its flow limit" and "your session was replaced elsewhere" invisible — which is
- * precisely the information someone needs to fix their own problem. Modelling
- * them as one error carrying a number would make that collapse the path of least
- * resistance; modelling them as an enum with per-value meaning makes the
- * distinction survive refactoring.
+ * **Each rejection is a distinct value on purpose.** The specification gives
+ * each one its own meaning, and a client that collapses them into "connection
+ * failed" makes the difference between "this Portal is at its flow limit" and
+ * "the target could not be reached" invisible — which is precisely the
+ * information someone needs to fix their own problem.
  *
- * For a split flow only the downlink half receives this byte, and the result is
- * authoritative for the whole logical flow.
+ * **The numbering changed in v3, and the set shrank.** v1 had eight values;
+ * `METADATA_CONFLICT`, `PAIR_TIMEOUT` and `SESSION_REPLACED` described split
+ * flows and sessions, which no longer exist, and the survivors were renumbered.
+ * A v1 byte 4 meant `FLOW_LIMIT`; a v3 byte 4 means `INTERNAL_ERROR`.
  */
 enum class SetupResult(
     val byte: Int,
@@ -42,26 +41,17 @@ enum class SetupResult(
     /** The flow is established; payload relay begins. */
     Ready(0),
 
-    /** The request itself was malformed — a bad target, or a header that does not parse. */
+    /** The request itself was malformed — a bad target, or a request that does not parse. */
     InvalidRequest(1),
 
-    /** The two halves of a split flow disagreed on kind, carrier or hops. */
-    MetadataConflict(2),
+    /** The Portal is at a flow or resource limit and refused promptly. */
+    FlowLimit(2),
 
-    /** The other half of a split flow never arrived within the pairing deadline. */
-    PairTimeout(3),
-
-    /** The Portal is at its configured flow limit. */
-    FlowLimit(4),
-
-    /** The Portal could not reach the target. */
-    DialFailed(5),
-
-    /** This session id was taken over by another connection. */
-    SessionReplaced(6),
+    /** The target could not be reached, or the Portal's Egress is offline. */
+    DialFailed(3),
 
     /** The Portal failed for a reason it does not attribute further. */
-    InternalError(7),
+    InternalError(4),
     ;
 
     val isReady: Boolean get() = this == Ready
@@ -71,7 +61,7 @@ enum class SetupResult(
 
     companion object {
         const val LENGTH: Int = 1
-        const val MAX_VALUE: Int = 7
+        const val MAX_VALUE: Int = 4
 
         fun decode(byte: Byte): DecodeResult<SetupResult> {
             val value = byte.toInt() and 0xFF
