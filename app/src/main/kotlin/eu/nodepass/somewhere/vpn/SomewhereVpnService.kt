@@ -247,14 +247,21 @@ class SomewhereVpnService : VpnService() {
             return
         }
 
+        // Read once, as the per-app selection is: a change applies at the next
+        // connect, and the screen that changes it says so.
+        val network = (applicationContext as SomewhereApplication).network.load()
+        val plan = TunConfiguration.plan(network.exclusions, network.mtu, Build.VERSION.SDK_INT)
+
         // Read before the tunnel takes DNS over, because afterwards the active
         // network is this one and its only resolver is the one we announce.
-        val resolvers = underlyingResolvers()
+        // The user's own resolvers, when they named some, take their place.
+        val resolvers =
+            network.dnsServers.mapNotNull(TunConfiguration::parse).ifEmpty { underlyingResolvers() }
 
         val builder =
             Builder()
                 .setSession(getString(R.string.app_name))
-                .setMtu(TunConfiguration.MTU)
+                .setMtu(plan.mtu)
                 // Blocking reads: a non-blocking TUN returns 0 in a tight loop
                 // and burns a core doing nothing.
                 .setBlocking(true)
@@ -265,7 +272,10 @@ class SomewhereVpnService : VpnService() {
         // address that must not be one the fake-IP pool could mint — stay
         // checkable by a test that needs no device.
         TunConfiguration.addresses.forEach { builder.addAddress(it.address, it.prefix) }
-        TunConfiguration.routes.forEach { builder.addRoute(it.address, it.prefix) }
+        plan.routes.forEach { builder.addRoute(it.address, it.prefix) }
+        if (Build.VERSION.SDK_INT >= TunConfiguration.EXCLUDE_ROUTE_API) {
+            plan.excludes.forEach { builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(it.address), it.prefix)) }
+        }
         TunConfiguration.dnsServers.forEach { builder.addDnsServer(it) }
 
         // Fixed here for the life of this descriptor: Android has no way to

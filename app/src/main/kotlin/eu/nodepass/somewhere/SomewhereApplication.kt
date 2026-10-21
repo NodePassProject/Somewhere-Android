@@ -16,6 +16,7 @@ import eu.nodepass.somewhere.routing.RoutingPreferences
 import eu.nodepass.somewhere.routing.RuleStore
 import eu.nodepass.somewhere.subscription.RefreshPreferences
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
+import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,6 +64,9 @@ class SomewhereApplication : Application() {
     val appSelection: AppSelectionStore by lazy {
         AppSelectionStore(File(filesDir, "apps/selection.txt"))
     }
+
+    /** How the TUN is built; read by the service at each connect. */
+    val network: NetworkSettingsStore by lazy { NetworkSettingsStore(File(filesDir, "network/settings.txt")) }
 
     /** Whether connecting on launch is safe this time; see [LaunchGuard]. */
     val launchGuard: LaunchGuard by lazy { LaunchGuard(File(filesDir, "settings/launch-guard.txt")) }

@@ -65,6 +65,7 @@ fun SettingsScreen(
     onToggleAutomaticRefresh: (Boolean) -> Unit = {},
     settings: AppSettings = AppSettings(),
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
+    onOpenNetwork: () -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
@@ -128,6 +129,19 @@ fun SettingsScreen(
                                 style = SomewhereType.bodySmall,
                                 color = colors.muted,
                             )
+                        }
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = onOpenNetwork) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                stringResource(R.string.settings_network),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(stringResource(R.string.network_detail), style = SomewhereType.bodySmall, color = colors.muted)
                         }
                         Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
                     }

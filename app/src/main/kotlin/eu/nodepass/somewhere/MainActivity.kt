@@ -184,6 +184,7 @@ class MainActivity : ComponentActivity() {
                         refresh = application.refreshPreferences,
                         onRefreshScheduleChanged = { SubscriptionRefreshJob.apply(this@MainActivity) },
                         settings = application.settings,
+                        network = application.network,
                     )
                 }
             }

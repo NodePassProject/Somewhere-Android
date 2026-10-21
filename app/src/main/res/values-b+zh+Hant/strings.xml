@@ -255,4 +255,18 @@
     <string name="apps_pasted">已從剪貼簿選取 %1$d 個應用程式</string>
     <string name="apps_paste_nothing">剪貼簿中沒有套件名稱。</string>
     <string name="apps_none_shown">沒有符合的應用程式：系統應用程式已隱藏，或搜尋條件過窄。</string>
+    <string name="settings_network">網路</string>
+    <string name="network_detail">區域網路、排除路由、MTU、DNS</string>
+    <string name="network_exclude_local">區域網路不經過通道</string>
+    <string name="network_exclude_local_detail">印表機、路由器等同一網路內的裝置直接存取，兩種路由模式下都生效。</string>
+    <string name="network_excluded_routes">排除路由</string>
+    <string name="network_excluded_routes_hint">每行一個網段，例如 203.0.113.0/24</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_hint">1280 到 1500。若在目前網路大量傳輸會卡住，可以調低。</string>
+    <string name="network_dns">其他查詢使用的 DNS</string>
+    <string name="network_dns_hint">通道不自行回應的查詢（PTR、SRV、TXT）送往哪裡。留空則使用裝置自身的 DNS；若那是區域網路位址，Portal 無法存取。</string>
+    <string name="network_invalid_routes">不是有效網段：請逐行檢查。</string>
+    <string name="network_invalid_mtu">不在 1280 到 1500 之間。</string>
+    <string name="network_invalid_dns">不是 IP 位址：這裡不能填網域。</string>
+    <string name="network_applies_next">下次連線通道時生效。</string>
 </resources>

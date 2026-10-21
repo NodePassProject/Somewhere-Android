@@ -56,6 +56,7 @@ import eu.nodepass.somewhere.ui.screens.AppsScreen
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
 import eu.nodepass.somewhere.ui.screens.HomeScreen
 import eu.nodepass.somewhere.ui.screens.ImportScreen
+import eu.nodepass.somewhere.ui.screens.NetworkScreen
 import eu.nodepass.somewhere.ui.screens.NodeEditorScreen
 import eu.nodepass.somewhere.ui.screens.NodesScreen
 import eu.nodepass.somewhere.ui.screens.RoutingScreen
@@ -64,6 +65,7 @@ import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import eu.nodepass.somewhere.vpn.ActivityExport
+import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import eu.nodepass.somewhere.vpn.TunnelController
 
 /** The four destinations that carry a tab. Everything else is pushed over them. */
@@ -84,6 +86,7 @@ object Routes {
     const val APPS = "apps"
     const val SETTINGS = "settings"
     const val SCAN = "scan"
+    const val NETWORK = "network"
 }
 
 @Composable
@@ -109,6 +112,8 @@ fun SomewhereApp(
     onRefreshScheduleChanged: () -> Unit = {},
     /** The app's own preferences. A default store with no file serves previews and tests. */
     settings: AppSettingsStore = AppSettingsStore(null),
+    /** How the TUN is built. A store with no file serves previews and tests. */
+    network: NetworkSettingsStore = NetworkSettingsStore(java.io.File("/dev/null/none")),
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -243,6 +248,13 @@ fun SomewhereApp(
                         onScan = { navController.navigate(Routes.SCAN) },
                     )
                 }
+                composable(Routes.NETWORK) {
+                    NetworkScreen(
+                        initial = remember { network.load() },
+                        onSave = { network.save(it) },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
                 composable(Routes.SCAN) {
                     ScanScreen(
                         onBack = { navController.popBackStack() },
@@ -271,6 +283,7 @@ fun SomewhereApp(
                     var automatic by remember { mutableStateOf(refreshSettings.automatic) }
                     val current by settings.settings.collectAsState()
                     SettingsScreen(
+                        onOpenNetwork = { navController.navigate(Routes.NETWORK) },
                         settings = current,
                         onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },

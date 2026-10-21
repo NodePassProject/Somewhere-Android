@@ -290,4 +290,18 @@
     <string name="apps_pasted">%1$d apps selected from the clipboard</string>
     <string name="apps_paste_nothing">The clipboard holds no package names.</string>
     <string name="apps_none_shown">No app matches. System apps are hidden or the search is narrow.</string>
+    <string name="settings_network">Network</string>
+    <string name="network_detail">Local networks, excluded routes, MTU, DNS</string>
+    <string name="network_exclude_local">Keep local networks out of the tunnel</string>
+    <string name="network_exclude_local_detail">Printers, routers and other devices on this network are reached directly, in either routing mode.</string>
+    <string name="network_excluded_routes">Excluded routes</string>
+    <string name="network_excluded_routes_hint">One range per line, such as 203.0.113.0/24</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_hint">1280 to 1500. Lower it if large transfers stall on this network.</string>
+    <string name="network_dns">DNS for other queries</string>
+    <string name="network_dns_hint">Where queries the tunnel does not answer itself go (PTR, SRV, TXT). Empty uses the device\'s own; if that is a local address, the Portal cannot reach it.</string>
+    <string name="network_invalid_routes">Not a range: check each line.</string>
+    <string name="network_invalid_mtu">Not between 1280 and 1500.</string>
+    <string name="network_invalid_dns">Not an IP address: names cannot be used here.</string>
+    <string name="network_applies_next">Applies the next time the tunnel connects.</string>
 </resources>

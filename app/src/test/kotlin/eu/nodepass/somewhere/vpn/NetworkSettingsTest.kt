@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 The Somewhere Authors
+
+package eu.nodepass.somewhere.vpn
+
+import eu.nodepass.somewhere.vpn.TunConfiguration.Cidr
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import java.math.BigInteger
+
+class NetworkSettingsTest {
+    @get:Rule
+    val folder = TemporaryFolder()
+
+    /** Whether [address] would reach the TUN under [plan]: longest prefix wins. */
+    private fun reachesTun(
+        plan: TunConfiguration.Plan,
+        address: String,
+    ): Boolean {
+        val bytes = TunConfiguration.parse(address)!!
+        val value = BigInteger(1, bytes)
+
+        fun match(cidrs: List<Cidr>) =
+            cidrs
+                .mapNotNull { c ->
+                    CidrSet.range(c)?.takeIf { it.bytes == bytes.size && value >= it.first && value <= it.last }?.let { c.prefix }
+                }.maxOrNull()
+        val routed = match(plan.routes) ?: return false
+        val excluded = match(plan.excludes) ?: return true
+        return routed > excluded
+    }
+
+    @Test
+    fun `defaults are the tunnel as it was`() {
+        val plan = TunConfiguration.plan(NetworkSettings().exclusions, NetworkSettings().mtu, 35)
+        assertEquals(TunConfiguration.routes, plan.routes)
+        assertTrue(plan.excludes.isEmpty())
+        assertEquals(1500, plan.mtu)
+    }
+
+    @Test
+    fun `local networks stay out, and the tunnel's own ranges stay in, on every API level`() {
+        val exclusions = NetworkSettings(excludeLocal = true).exclusions
+        for (sdk in listOf(26, 32, 33, 36)) {
+            val plan = TunConfiguration.plan(exclusions, 1500, sdk)
+            listOf("192.168.1.10", "10.0.0.1", "172.16.5.5", "fe80::1", "fd12::1", "224.0.0.251").forEach {
+                assertFalse("API $sdk: $it should leave the tunnel", reachesTun(plan, it))
+            }
+            // Resolvers, TUN addresses and both fake-IP pools: without these
+            // every lookup and every flow by name would break.
+            listOf("10.66.0.1", "10.66.0.2", "fd66::1", "198.18.0.4", "198.19.255.1", "fc00::1:2").forEach {
+                assertTrue("API $sdk: $it must stay in the tunnel", reachesTun(plan, it))
+            }
+            listOf("8.8.8.8", "2001:db8::1", "100.64.0.1").forEach {
+                assertTrue("API $sdk: $it should be tunnelled", reachesTun(plan, it))
+            }
+        }
+    }
+
+    @Test
+    fun `an exclusion over a protected range cannot take it out`() {
+        val plan = TunConfiguration.plan(listOf(Cidr("198.16.0.0", 12), Cidr("10.66.0.0", 16)), 1500, 30)
+        assertTrue(reachesTun(plan, "198.18.0.9"))
+        assertTrue(reachesTun(plan, "10.66.0.1"))
+        assertFalse(reachesTun(plan, "198.20.0.1"))
+    }
+
+    @Test
+    fun `settings survive a restart and a bad file still builds a TUN`() {
+        val store = NetworkSettingsStore(File(folder.root, "network.txt"))
+        val wanted = NetworkSettings(true, listOf(Cidr("203.0.113.0", 24)), 1400, listOf("1.1.1.1", "2606:4700:4700::1111"))
+        assertTrue(store.save(wanted))
+        assertEquals(wanted, store.load())
+
+        File(folder.root, "bad.txt").writeText("mtu=99999\nexcludedRoutes=nonsense\ndnsServers=not-an-ip\nexcludeLocal=maybe\n")
+        val loaded = NetworkSettingsStore(File(folder.root, "bad.txt")).load()
+        assertEquals(1500, loaded.mtu)
+        assertTrue(loaded.excludedRoutes.isEmpty())
+        assertTrue(loaded.dnsServers.isEmpty())
+        assertFalse(loaded.excludeLocal)
+    }
+
+    @Test
+    fun `free text is read as ranges and addresses, all or nothing`() {
+        assertEquals(listOf(Cidr("203.0.113.0", 24), Cidr("8.8.8.8", 32)), NetworkSettings.parseRoutes("203.0.113.7/24,\n8.8.8.8"))
+        assertNull(NetworkSettings.parseRoutes("203.0.113.0/24 router.lan"))
+        assertEquals(listOf("1.1.1.1", "9.9.9.9"), NetworkSettings.parseResolvers("1.1.1.1 9.9.9.9 1.1.1.1"))
+        assertNull(NetworkSettings.parseResolvers("1.1.1.1, dns.google"))
+        assertEquals(emptyList<String>(), NetworkSettings.parseResolvers(""))
+    }
+}

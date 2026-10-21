@@ -91,6 +91,55 @@ object TunConfiguration {
      */
     val carriesIpv6: Boolean get() = routes.any { it.isIpv6 }
 
+    /**
+     * The ranges that must reach this TUN whatever is excluded: its own
+     * subnets, where the announced resolvers live, and the fake-IP pools,
+     * where every name-routed flow arrives.
+     *
+     * Both can sit inside a range someone leaves out — `10.66.0.0/24` inside
+     * `10.0.0.0/8`, `fc00::/96` inside `fc00::/7` — and leaving them out with
+     * it would break every lookup and every flow by name. They are routed
+     * explicitly, and a longer prefix wins over the exclusion it sits in.
+     */
+    val protectedRoutes: List<Cidr> =
+        listOf(
+            Cidr("10.66.0.0", 24),
+            Cidr("fd66::", 64),
+            Cidr("198.18.0.0", 15),
+            Cidr("fc00::", 96),
+        )
+
+    /** What a TUN is built with, once the user's exclusions are applied. */
+    data class Plan(
+        val routes: List<Cidr>,
+        /** For `excludeRoute`, API 33+. Empty below, where [routes] is the complement instead. */
+        val excludes: List<Cidr>,
+        val mtu: Int,
+    )
+
+    /**
+     * Routes for [exclusions] on API [sdk].
+     *
+     * From 33 the platform excludes a range itself. Below, the only way is to
+     * route everything else: the complement of the exclusions, computed per
+     * family. Either way [protectedRoutes] are routed on top.
+     */
+    fun plan(
+        exclusions: List<Cidr>,
+        mtu: Int,
+        sdk: Int,
+    ): Plan {
+        if (exclusions.isEmpty()) return Plan(routes, emptyList(), mtu)
+        return if (sdk >= EXCLUDE_ROUTE_API) {
+            Plan(routes + protectedRoutes, exclusions, mtu)
+        } else {
+            Plan(routes.flatMap { CidrSet.subtract(it, exclusions) } + protectedRoutes, emptyList(), mtu)
+        }
+    }
+
+    /** `VpnService.Builder.excludeRoute`. */
+    const val EXCLUDE_ROUTE_API = 33
+
     /** Every announced address, as bytes, for the checks that are about ranges. */
     internal fun addressBytes(): List<ByteArray> = addresses.mapNotNull { parse(it.address) }
 
