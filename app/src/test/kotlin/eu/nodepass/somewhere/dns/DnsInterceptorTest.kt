@@ -84,13 +84,30 @@ class DnsInterceptorTest {
 
     @Test
     fun `queries that are not for an address are relayed untouched`() {
-        // MX, TXT, SRV, PTR, NS, SOA, HTTPS, and ANY: every one of them needs a
-        // real resolver, and none of them can be answered with an address.
-        listOf(2, 6, 12, 15, 16, 33, 65, 255).forEach { type ->
+        // MX, TXT, SRV, PTR, NS, SOA and ANY: every one of them needs a real
+        // resolver, and none of them can be answered with an address. HTTPS and
+        // SVCB are not here any more: see the next case.
+        listOf(2, 6, 12, 15, 16, 33, 255).forEach { type ->
             val outcome = answerFor("example.com", type)
             assertTrue("type $type must be relayed", outcome is DnsInterceptor.Outcome.Relay)
         }
         assertEquals("nothing was minted for any of them", 0, pool.size)
+    }
+
+    @Test
+    fun `https and svcb for a routable name are answered empty, not relayed`() {
+        // A browser asks for these before nearly every connection. Relayed,
+        // the name went to a resolver the Portal usually cannot reach, which
+        // is also where the tunnel exists to keep it away from. NODATA sends
+        // the browser on to A and AAAA, which are answered here.
+        listOf(64, 65).forEach { type ->
+            val outcome = answerFor("example.com", type)
+            assertTrue("type $type must be answered", outcome is DnsInterceptor.Outcome.Answer)
+            assertTrue((outcome as DnsInterceptor.Outcome.Answer).noData)
+        }
+        assertEquals("and nothing was minted", 0, pool.size)
+        // A name that could not be routed by name still goes to a resolver.
+        assertTrue(interceptor.handle(dnsQuery("_svc._tcp.example", 65)) is DnsInterceptor.Outcome.Relay)
     }
 
     @Test
