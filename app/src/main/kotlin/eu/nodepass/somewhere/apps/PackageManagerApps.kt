@@ -63,6 +63,9 @@ class PackageManagerApps(
             )
         }
 
+    /** Every installed package name, and nothing else: one call, for the tunnel's start. */
+    fun installedPackageNames(): Set<String> = packages.getInstalledApplications(0).mapTo(HashSet()) { it.packageName }
+
     /** The candidates, put through every rule in [AppInventory]. */
     override fun inventory(): AppInventory = AppInventory.of(candidates(), self)
 

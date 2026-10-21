@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,14 +54,17 @@ import eu.nodepass.somewhere.vpn.NetworkSettings
 @Composable
 fun NetworkScreen(
     initial: NetworkSettings,
-    onSave: (NetworkSettings) -> Unit,
+    /** Returns whether the settings reached the disk. */
+    onSave: (NetworkSettings) -> Boolean,
     onBack: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
-    var excludeLocal by remember { mutableStateOf(initial.excludeLocal) }
-    var routes by remember { mutableStateOf(initial.excludedRoutes.joinToString("\n") { "${it.address}/${it.prefix}" }) }
-    var mtu by remember { mutableStateOf(initial.mtu.toString()) }
-    var dns by remember { mutableStateOf(initial.dnsServers.joinToString("\n")) }
+    // Saveable: an edit in progress survives a rotation or a language change.
+    var excludeLocal by rememberSaveable { mutableStateOf(initial.excludeLocal) }
+    var routes by rememberSaveable { mutableStateOf(initial.excludedRoutes.joinToString("\n") { "${it.address}/${it.prefix}" }) }
+    var mtu by rememberSaveable { mutableStateOf(initial.mtu.toString()) }
+    var dns by rememberSaveable { mutableStateOf(initial.dnsServers.joinToString("\n")) }
+    var saveFailed by remember { mutableStateOf(false) }
 
     val parsedRoutes = NetworkSettings.parseRoutes(routes)
     val parsedMtu = mtu.trim().toIntOrNull()?.takeIf { it in NetworkSettings.MIN_MTU..NetworkSettings.MAX_MTU }
@@ -80,8 +84,11 @@ fun NetworkScreen(
                     color = if (valid) colors.brand else colors.faint,
                     modifier =
                         Modifier.clickable(enabled = valid) {
-                            onSave(NetworkSettings(excludeLocal, parsedRoutes!!, parsedMtu!!, parsedDns!!))
-                            onBack()
+                            if (onSave(NetworkSettings(excludeLocal, parsedRoutes!!, parsedMtu!!, parsedDns!!))) {
+                                onBack()
+                            } else {
+                                saveFailed = true
+                            }
                         },
                 )
             },
@@ -94,7 +101,11 @@ fun NetworkScreen(
                     .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            Text(stringResource(R.string.network_applies_next), style = SomewhereType.bodySmall, color = colors.muted)
+            Text(
+                stringResource(if (saveFailed) R.string.network_save_failed else R.string.network_applies_next),
+                style = SomewhereType.bodySmall,
+                color = if (saveFailed) colors.critical else colors.muted,
+            )
 
             Panel {
                 PanelRow(onClick = { excludeLocal = !excludeLocal }) {

@@ -256,16 +256,16 @@
     <string name="settings_network">网络</string>
     <string name="network_detail">局域网、排除路由、MTU、DNS</string>
     <string name="network_exclude_local">局域网不经过隧道</string>
-    <string name="network_exclude_local_detail">打印机、路由器等同一网络内的设备直接访问，两种路由模式下都生效。</string>
+    <string name="network_exclude_local_detail">打印机、路由器等同一网络内的设备直接访问，两种路由模式下都生效：按地址访问，以及 .local、.lan、.home.arpa、.internal 下的域名。</string>
     <string name="network_excluded_routes">排除路由</string>
-    <string name="network_excluded_routes_hint">每行一个网段，例如 203.0.113.0/24</string>
+    <string name="network_excluded_routes_hint">要排除的网段，每行一个，例如 203.0.113.0/24。只对地址生效：按域名访问的网站仍按路由规则处理。</string>
     <string name="network_mtu">MTU</string>
     <string name="network_mtu_hint">1280 到 1500。如果在当前网络大流量传输会卡住，可以调低。</string>
     <string name="network_dns">其他查询使用的 DNS</string>
     <string name="network_dns_hint">隧道不自行应答的查询（PTR、SRV、TXT）发往哪里。留空则使用设备自身的 DNS；如果那是局域网地址，Portal 无法访问。</string>
-    <string name="network_invalid_routes">不是有效网段：请逐行检查。</string>
+    <string name="network_invalid_routes">不是可以排除的网段，请逐行检查。回环地址、隧道自身的网段和默认路由不能排除，最多 64 条。</string>
     <string name="network_invalid_mtu">不在 1280 到 1500 之间。</string>
-    <string name="network_invalid_dns">不是 IP 地址：这里不能填域名。</string>
+    <string name="network_invalid_dns">不是公网 IP 地址。这里不能填域名，也不能填 Portal 无法访问的局域网或私有地址。</string>
     <string name="network_applies_next">下次连接隧道时生效。</string>
     <string name="settings_backup">备份</string>
     <string name="backup_export">导出到文件</string>
@@ -279,4 +279,6 @@
     <string name="backup_newer">这个备份来自更新版本的 Somewhere。</string>
     <string name="backup_empty">这个备份里没有可恢复的内容。</string>
     <string name="backup_too_large">文件太大，不是备份文件。</string>
+    <string name="tunnel_bad_routes">Android 拒绝了其中一条排除路由，请检查网络设置。</string>
+    <string name="network_save_failed">设置无法保存，没有任何改动。</string>
 </resources>

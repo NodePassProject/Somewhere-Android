@@ -69,4 +69,12 @@ class AppListViewTest {
         assertNull(AppListView.parseImport("hello! ?? ;;"))
         assertNull(AppListView.parseImport(""))
     }
+
+    @Test
+    fun `things that look like package names but are not are dropped`() {
+        assertNull(AppListView.parseImport("v1.2 1.2 é.g rm"))
+        // These look like package names and are; the screen only accepts a
+        // paste that names at least one installed app.
+        assertEquals(setOf("e.g", "example.com"), AppListView.parseImport("see e.g example.com 1.2"))
+    }
 }

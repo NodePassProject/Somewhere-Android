@@ -258,16 +258,16 @@
     <string name="settings_network">網路</string>
     <string name="network_detail">區域網路、排除路由、MTU、DNS</string>
     <string name="network_exclude_local">區域網路不經過通道</string>
-    <string name="network_exclude_local_detail">印表機、路由器等同一網路內的裝置直接存取，兩種路由模式下都生效。</string>
+    <string name="network_exclude_local_detail">印表機、路由器等同一網路內的裝置直接存取，兩種路由模式下都生效：依位址存取，以及 .local、.lan、.home.arpa、.internal 下的網域。</string>
     <string name="network_excluded_routes">排除路由</string>
-    <string name="network_excluded_routes_hint">每行一個網段，例如 203.0.113.0/24</string>
+    <string name="network_excluded_routes_hint">要排除的網段，每行一個，例如 203.0.113.0/24。只對位址生效：依網域存取的網站仍依路由規則處理。</string>
     <string name="network_mtu">MTU</string>
     <string name="network_mtu_hint">1280 到 1500。若在目前網路大量傳輸會卡住，可以調低。</string>
     <string name="network_dns">其他查詢使用的 DNS</string>
     <string name="network_dns_hint">通道不自行回應的查詢（PTR、SRV、TXT）送往哪裡。留空則使用裝置自身的 DNS；若那是區域網路位址，Portal 無法存取。</string>
-    <string name="network_invalid_routes">不是有效網段：請逐行檢查。</string>
+    <string name="network_invalid_routes">不是可以排除的網段，請逐行檢查。迴環位址、通道自身的網段和預設路由不能排除，最多 64 條。</string>
     <string name="network_invalid_mtu">不在 1280 到 1500 之間。</string>
-    <string name="network_invalid_dns">不是 IP 位址：這裡不能填網域。</string>
+    <string name="network_invalid_dns">不是公用 IP 位址。這裡不能填網域，也不能填 Portal 無法存取的區域網路或私有位址。</string>
     <string name="network_applies_next">下次連線通道時生效。</string>
     <string name="settings_backup">備份</string>
     <string name="backup_export">匯出到檔案</string>
@@ -281,4 +281,6 @@
     <string name="backup_newer">此備份來自較新版本的 Somewhere。</string>
     <string name="backup_empty">此備份裡沒有可還原的內容。</string>
     <string name="backup_too_large">檔案太大，不是備份檔案。</string>
+    <string name="tunnel_bad_routes">Android 拒絕了其中一條排除路由，請檢查網路設定。</string>
+    <string name="network_save_failed">設定無法儲存，沒有任何變更。</string>
 </resources>

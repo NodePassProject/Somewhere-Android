@@ -272,9 +272,20 @@ class SomewhereVpnService : VpnService() {
         // address that must not be one the fake-IP pool could mint — stay
         // checkable by a test that needs no device.
         TunConfiguration.addresses.forEach { builder.addAddress(it.address, it.prefix) }
-        plan.routes.forEach { builder.addRoute(it.address, it.prefix) }
-        if (Build.VERSION.SDK_INT >= TunConfiguration.EXCLUDE_ROUTE_API) {
-            plan.excludes.forEach { builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(it.address), it.prefix)) }
+        // The plan has already dropped what the builder refuses, loopback
+        // above all. A route it refuses anyway is reported rather than left
+        // to throw on the main thread, where it killed the process — and with
+        // connect-on-launch, every launch after.
+        try {
+            plan.routes.forEach { builder.addRoute(it.address, it.prefix) }
+            if (Build.VERSION.SDK_INT >= TunConfiguration.EXCLUDE_ROUTE_API) {
+                plan.excludes.forEach { builder.excludeRoute(android.net.IpPrefix(InetAddress.getByName(it.address), it.prefix)) }
+            }
+        } catch (error: IllegalArgumentException) {
+            Log.w(TAG, "a route was refused: ${error.message}")
+            TunnelController.report(TunnelState.Failed(R.string.tunnel_bad_routes))
+            stopSelf()
+            return
         }
         TunConfiguration.dnsServers.forEach { builder.addDnsServer(it) }
 
@@ -290,11 +301,9 @@ class SomewhereVpnService : VpnService() {
             application.appSelection
                 .load()
                 .ruleFor(
-                    installed =
-                        application.installedApps
-                            .candidates()
-                            .map { it.packageName }
-                            .toSet(),
+                    // Names only: the full candidate list loads every label and
+                    // install time, one call per app, on this thread.
+                    installed = application.installedApps.installedPackageNames(),
                     self = packageName,
                 )
         rule.applyTo(
@@ -406,7 +415,13 @@ class SomewhereVpnService : VpnService() {
         // being told.
         val ruleSets = listOf(loadedRules) + bundled.map { it.loaded.rules }
         val routingSettings = application.routing.load()
-        val router = Router({ ruleSets }, { routingSettings.mode }, routingSettings.fallback)
+        val router =
+            Router(
+                { ruleSets },
+                { routingSettings.mode },
+                routingSettings.fallback,
+                local = if (network.excludeLocal) bundled.map { it.loaded.rules } else emptyList(),
+            )
         val direct = DirectDialer(protect = { socket -> protect(socket) })
         val owners = ConnectionOwners(applicationContext)
 

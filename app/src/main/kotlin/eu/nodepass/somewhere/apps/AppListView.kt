@@ -19,6 +19,8 @@ enum class AppSort {
  * its own tunnel, because nothing here sees it — [AppInventory] removed it.
  */
 object AppListView {
+    private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+
     fun arrange(
         apps: List<InstalledApp>,
         query: String,
@@ -76,9 +78,9 @@ object AppListView {
             .split('\n', '\r', ',', ' ', '\t')
             .map(String::trim)
             .filter(AppSelectionStore::isPlausiblePackageName)
-            // A package name has at least two segments. Without this a pasted
-            // sentence would import its words: "rm", "the", "and".
-            .filter { '.' in it.trim('.') }
+            // A package name is Java-identifier segments, at least two: not
+            // "rm", not "1.2", not a word with an accent in it.
+            .filter { PACKAGE_NAME.matches(it) }
             .toSet()
             .takeIf { it.isNotEmpty() }
 }

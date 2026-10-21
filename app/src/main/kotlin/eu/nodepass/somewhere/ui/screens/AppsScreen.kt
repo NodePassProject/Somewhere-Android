@@ -146,7 +146,15 @@ fun AppsScreen(
                     onSelectNone = { controller.selectNone(shown) },
                     onCopy = { clipboard.setText(AnnotatedString(AppListView.export(selection))) },
                     onPaste = {
-                        val parsed = clipboard.getText()?.text?.let(AppListView::parseImport)
+                        // At least one must be an app on this device: text
+                        // that merely looks like package names ("see
+                        // example.com") must not replace a selection.
+                        val parsed =
+                            clipboard
+                                .getText()
+                                ?.text
+                                ?.let(AppListView::parseImport)
+                                ?.takeIf { names -> installed.any { it.packageName in names } }
                         if (parsed != null) controller.replacePackages(parsed)
                         pasted = parsed?.size ?: 0
                     },

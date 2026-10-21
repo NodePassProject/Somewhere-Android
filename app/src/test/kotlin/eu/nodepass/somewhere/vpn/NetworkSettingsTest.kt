@@ -64,11 +64,42 @@ class NetworkSettingsTest {
     }
 
     @Test
-    fun `an exclusion over a protected range cannot take it out`() {
-        val plan = TunConfiguration.plan(listOf(Cidr("198.16.0.0", 12), Cidr("10.66.0.0", 16)), 1500, 30)
-        assertTrue(reachesTun(plan, "198.18.0.9"))
-        assertTrue(reachesTun(plan, "10.66.0.1"))
-        assertFalse(reachesTun(plan, "198.20.0.1"))
+    fun `an exclusion that touches a protected range is refused, and dropped from a hand-edited file`() {
+        // On API 33+ an exclusion equal to a protected route replaces it, and
+        // one inside it wins on prefix length; either breaks DNS or every flow
+        // by name. So none may overlap one at all.
+        listOf("198.18.0.0/15", "198.18.0.0/16", "10.66.0.0/25", "fd66::/80", "fc00::/96", "0.0.0.0/0").forEach {
+            assertNull("$it should be refused", NetworkSettings.parseRoutes(it))
+        }
+        // Wider is fine: the protected route is longer and still wins.
+        assertEquals(listOf(Cidr("198.16.0.0", 12)), NetworkSettings.parseRoutes("198.16.0.0/12"))
+        for (sdk in listOf(30, 35)) {
+            val plan = TunConfiguration.plan(listOf(Cidr("198.18.0.0", 16), Cidr("203.0.113.0", 24)), 1500, sdk)
+            assertTrue(reachesTun(plan, "198.18.0.9"))
+            assertFalse(reachesTun(plan, "203.0.113.5"))
+        }
+    }
+
+    @Test
+    fun `loopback is never routed or excluded, which the builder would throw on`() {
+        assertNull(NetworkSettings.parseRoutes("127.0.0.0/8"))
+        assertNull(NetworkSettings.parseRoutes("::1"))
+        // Below 33, a neighbour's complement must not start a route in 127/8.
+        val plan = TunConfiguration.plan(listOf(Cidr("126.0.0.0", 8)), 1500, 30)
+        val loopback = CidrSet.range(Cidr("127.0.0.0", 8))!!
+        assertTrue(
+            plan.routes.none { r ->
+                val range = CidrSet.range(r)!!
+                range.bytes == 4 && range.first <= loopback.last && loopback.first <= range.last
+            },
+        )
+        assertTrue(plan.routes.none { it.address == "0:0:0:0:0:0:0:1" || it.address == "::1" })
+    }
+
+    @Test
+    fun `more than 64 exclusions are refused`() {
+        val many = (1..65).joinToString("\n") { "203.0.$it.0/24" }
+        assertNull(NetworkSettings.parseRoutes(many))
     }
 
     @Test
@@ -93,5 +124,21 @@ class NetworkSettingsTest {
         assertEquals(listOf("1.1.1.1", "9.9.9.9"), NetworkSettings.parseResolvers("1.1.1.1 9.9.9.9 1.1.1.1"))
         assertNull(NetworkSettings.parseResolvers("1.1.1.1, dns.google"))
         assertEquals(emptyList<String>(), NetworkSettings.parseResolvers(""))
+        // Reached through the Portal, so nothing the Portal cannot reach or
+        // that is the tunnel itself.
+        listOf(
+            "192.168.1.1",
+            "10.66.0.1",
+            "198.18.0.5",
+            "127.0.0.1",
+            "fd00::53",
+            "fe80::1",
+            "0.0.0.0",
+            "100.64.1.1",
+            "1.1.1.0/24",
+        ).forEach {
+            assertNull("$it should be refused as a resolver", NetworkSettings.parseResolvers(it))
+        }
+        assertEquals(listOf("2606:4700:4700::1111"), NetworkSettings.parseResolvers("2606:4700:4700::1111"))
     }
 }

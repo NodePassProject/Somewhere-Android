@@ -64,14 +64,50 @@ data class NetworkSettings(
                 TunConfiguration.Cidr("ff00::", 8),
             )
 
-        /** Ranges from free text: lines, commas or spaces. Null if any piece is not one. */
-        fun parseRoutes(text: String): List<TunConfiguration.Cidr>? = split(text).map { CidrSet.parse(it) ?: return null }.distinct()
+        /** Enough for any real list; below API 33 each one is many routes. */
+        const val MAX_EXCLUDED_ROUTES = 64
 
-        /** Resolver addresses from free text. Null if any piece is not an address. */
+        /**
+         * Ranges from free text: lines, commas or spaces. Null if any piece is
+         * not one, is one the tunnel cannot leave out, or there are too many.
+         */
+        fun parseRoutes(text: String): List<TunConfiguration.Cidr>? =
+            split(text)
+                .map { piece -> CidrSet.parse(piece)?.takeIf(TunConfiguration::isExcludable) ?: return null }
+                .distinct()
+                .takeIf { it.size <= MAX_EXCLUDED_ROUTES }
+
+        /**
+         * Resolver addresses from free text. Null if any piece is not a public
+         * address.
+         *
+         * Public, because the queries reach it through the Portal: a LAN
+         * resolver is on the Portal's LAN, not this one, and the tunnel's own
+         * resolver or a fake address would be the tunnel asking itself.
+         */
         fun parseResolvers(text: String): List<String>? =
             split(text)
-                .map { piece -> piece.takeIf { TunConfiguration.parse(it) != null } ?: return null }
+                .map { piece -> piece.takeIf(::isPublicAddress) ?: return null }
                 .distinct()
+
+        private val UNUSABLE_RESOLVERS: List<TunConfiguration.Cidr>
+            get() =
+                LOCAL_RANGES + TunConfiguration.LOOPBACK + TunConfiguration.protectedRoutes +
+                    listOf(
+                        TunConfiguration.Cidr("0.0.0.0", 8),
+                        TunConfiguration.Cidr("100.64.0.0", 10),
+                        TunConfiguration.Cidr("255.255.255.255", 32),
+                    )
+
+        private fun isPublicAddress(text: String): Boolean {
+            // An address, not a range: no slash.
+            if ('/' in text) return false
+            val address = CidrSet.parse(text)?.let(CidrSet::range) ?: return false
+            return UNUSABLE_RESOLVERS.none { other ->
+                val o = CidrSet.range(other)
+                o != null && o.bytes == address.bytes && address.first >= o.first && address.first <= o.last
+            }
+        }
 
         private fun split(text: String): List<String> = text.split('\n', ',', ' ', '\t', '\r').map(String::trim).filter(String::isNotEmpty)
 

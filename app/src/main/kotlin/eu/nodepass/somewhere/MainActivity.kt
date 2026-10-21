@@ -102,8 +102,11 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val start = awaitingConsent
             awaitingConsent = null
-            if (result.resultCode == RESULT_OK && start != null) {
-                startTunnel(start)
+            // The activity may have been recreated while the dialog was up,
+            // which forgets the pending start; agreeing must still connect.
+            val pending = start ?: resolveStart()
+            if (result.resultCode == RESULT_OK && pending != null) {
+                startTunnel(pending)
             } else {
                 // Refusing is a decision, not an error. Saying so beats a
                 // button that was pressed and did nothing.
@@ -112,9 +115,25 @@ class MainActivity : ComponentActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // The first frame's bars, before the composition has read the theme.
+        // From the stored setting, so a light app on a dark system does not
+        // flash white icons for a frame.
+        val storedTheme =
+            (application as SomewhereApplication)
+                .settings.settings.value.theme
+        if (storedTheme == ThemeMode.System) {
+            enableEdgeToEdge()
+        } else {
+            val dark = storedTheme == ThemeMode.Dark
+            enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
+                navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
+            )
+        }
         super.onCreate(savedInstanceState)
-        pendingLink = linkFrom(intent)
+        // Only on a fresh start: a recreation re-delivers the same intent, and
+        // the link it carried has already been handled.
+        if (savedInstanceState == null) pendingLink = linkFrom(intent)
 
         val application = application as SomewhereApplication
         repository = application.nodes
@@ -183,7 +202,11 @@ class MainActivity : ComponentActivity() {
                         onLinkHandled = { pendingLink = null },
                         onToggleTunnel = ::toggleTunnel,
                         onChoose = ::choose,
-                        onReconnect = { running?.let(::startTunnel) },
+                        // What the tunnel would be started with now, not what
+                        // this activity remembers starting: a tunnel from the
+                        // tile, a shortcut or before a recreation is one this
+                        // instance never saw.
+                        onReconnect = { if (TunnelController.isEngaged) resolveStart()?.let(::startTunnel) },
                         onImportRules = { importRules.launch(ruleMimeTypes) },
                         refresh = application.refreshPreferences,
                         onRefreshScheduleChanged = { SubscriptionRefreshJob.apply(this@MainActivity) },
