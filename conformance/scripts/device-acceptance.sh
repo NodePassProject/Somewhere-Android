@@ -248,17 +248,57 @@ echo "  exempt from battery optimisation: $([ "${IGNORING:-0}" -gt 0 ] && echo y
 note "leave the tunnel running and the screen off for thirty minutes, then check it is still up. Nothing here can do that for you."
 
 # ── 6. MTU ──────────────────────────────────────────────────────────────────
-# TUN_MTU is 1500. Real cellular paths are frequently smaller, and there is TLS
-# or QUIC framing on top. QUIC makes this sharper: a datagram that does not fit
+# The TUN's MTU is 1500 unless Network settings lowers it (1280 to 1500). Real
+# cellular paths are frequently smaller, and there is TLS or QUIC framing on top. QUIC makes this sharper: a datagram that does not fit
 # is not fragmented by the path.
 head2 "6. Path MTU"
 UNDERLYING="$(sh "ip link show" | grep -E "wlan0|rmnet|eth0" | grep -o "mtu [0-9]*" | head -1 | cut -d' ' -f2)"
 echo "  underlying interface MTU: ${UNDERLYING:-unknown}"
 if [ -n "$UNDERLYING" ] && [ "$UNDERLYING" -lt 1500 ] 2>/dev/null; then
-    miss "the path MTU is $UNDERLYING, below the TUN's 1500. Large packets will need fragmenting somewhere, and this client does not do it."
+    miss "the path MTU is $UNDERLYING, below the TUN's default 1500. Try Settings > Network > MTU at $UNDERLYING and say whether large transfers then complete."
 else
     pass "the underlying MTU is ${UNDERLYING:-1500}, so the TUN's 1500 fits"
 fi
+
+# ── 7. Reaching the tunnel from outside the app (L5) ────────────────────────
+# What can be asked of the system from here. Each of these was checked on an
+# emulator, from the shell; the point of running them again is that a vendor
+# build can differ in exactly these places — shortcuts, background starts,
+# notification policy.
+head2 "7. Shortcuts, automation, notification, tile"
+SHORTCUTS="$(sh "dumpsys shortcut" | grep -A80 "Package: $APP_ID" | grep -c 'ShortcutInfo {id=\(connect\|disconnect\|toggle\)')"
+if [ "${SHORTCUTS:-0}" -ge 3 ]; then
+    pass "the three launcher shortcuts are registered"
+else
+    miss "expected three launcher shortcuts, found ${SHORTCUTS:-0}"
+fi
+
+# With the switch off — the default — the exported alias must refuse. Checked
+# by the tunnel staying down, since the activity finishes either way.
+sh "am force-stop $APP_ID" >/dev/null
+sh "am start -a eu.nodepass.somewhere.action.START" >/dev/null
+sleep 5
+if sh "ip addr show tun0" | grep -q inet; then
+    miss "START from another app brought the tunnel up with the automation switch off"
+    sh "am start -a eu.nodepass.somewhere.action.STOP" >/dev/null
+else
+    pass "START from another app is refused while the automation switch is off"
+fi
+DIRECT="$(adb -s "$DEVICE" shell am start -n "$APP_ID/.QuickActionActivity" -a eu.nodepass.somewhere.action.START 2>&1 | grep -c 'not exported\|SecurityException')"
+if [ "${DIRECT:-0}" -gt 0 ]; then
+    pass "the screenless activity itself is not reachable from another app"
+else
+    miss "the screenless activity was started directly from the shell"
+fi
+
+PREFS="$(adb -s "$DEVICE" shell cmd package query-activities -a android.service.quicksettings.action.QS_TILE_PREFERENCES "$APP_ID" 2>/dev/null | grep -c "$APP_ID.MainActivity")"
+[ "${PREFS:-0}" -gt 0 ] && pass "long-pressing the tile opens the app" || miss "the tile's long-press does not resolve to the app"
+
+if [ "${SDK:-0}" -ge 33 ]; then
+    GRANTED="$(sh "dumpsys package $APP_ID" | grep -c 'POST_NOTIFICATIONS: granted=true')"
+    [ "${GRANTED:-0}" -gt 0 ] && pass "notification permission is granted" || note "notification permission is not granted yet; it is asked for once a tunnel is up — answer it, then re-run"
+fi
+note "work through docs/device-checklist.md: every feature added in L5, with what to look for. Report each line that does not match."
 
 # ── Report ──────────────────────────────────────────────────────────────────
 printf '\n%s\n' "──────────────────────────────────────────"

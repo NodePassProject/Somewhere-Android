@@ -20,11 +20,13 @@ traffic.
 | Carriers | TLS (one connection per flow) and QUIC (one connection for all of them), each with Morph on and off, compared case by case against the reference implementation, which agrees on every one |
 | Certificates | Verified on both carriers, always: a pin, or this device's trust store and the hostname. v3 has no unverified mode |
 | Tunnel | `VpnService` + lwIP, **both address families**, TCP with back-pressure, UDP, DNS interception with fake-IP over IPv4 and IPv6, live throughput |
-| Routing | A rule matcher, an import path, a bundled network-structural rule set for both families, a direct path, a reject path |
-| Per-app | A real installed list, a persisted selection, and this client structurally outside its own tunnel |
-| Nodes | Stored, imported from a `nowhere://` link, probed for reachability, and failed over when one cannot be reached |
-| Subscription | Fetching and parsing with upstream's actual quota semantics, and a periodic refresh that is off until asked for |
-| UI | Nine screens, both themes, three locales, and a quick-settings tile |
+| Routing | A rule matcher, an import path, a bundled network-structural rule set for both families, a direct path, a reject path; local networks and chosen ranges kept out of the tunnel; MTU and the DNS server for relayed queries |
+| Per-app | A real installed list, a persisted selection, system apps shown or hidden, select all or none, and the list copied or pasted as text; this client structurally outside its own tunnel |
+| Nodes | Chosen by the user or left automatic (failover only when automatic), imported from a link, a batch, a QR code or a picture, shared as a link or a QR code, probed over their own carrier, sorted and filtered |
+| Subscription | Several, each with its own quota, expiry, refresh and failure, using upstream's actual quota semantics; a periodic refresh that is off until asked for |
+| Activity | Live connections with the app that opened each, closable; the DNS queries; the Portal's answers with setup time; an export for an issue |
+| Outside the app | A notification with live rates and Disconnect, a quick-settings tile, launcher shortcuts, and START/STOP/TOGGLE for automation apps behind a switch that is off |
+| UI | Ten screens, three themes (light, dark, automatic), three locales chosen in the app on Android 13+, and a plaintext backup with a warning |
 
 **What is not done**, stated as plainly as the rest:
 
@@ -60,8 +62,9 @@ There is no big-bang release.
 | **Release tail** | A bundled rule set, a connection log that shows what the Portal actually said, a launcher icon, a release build that has been run rather than only produced, and the documents a VPN-class listing requires | **Done**, 2026-08-29 |
 | **L4** · product surface | IPv6 end to end, `pin` on the QUIC carrier, node health and failover, a scheduled subscription refresh and a quick-settings tile | **Done**, 2026-08-29 |
 | **v3** · following upstream | Nowhere v3.0.1: the new authentication, FlowStart and setup outcomes; Mux and split carriers removed; stream-derived QUIC flow ids; Morph on both carriers; chain verification by name on QUIC; every conformance claim re-established against the v3 oracle and on an emulator | **Done**, 2026-10-21 |
-| **Device pass** | The first run on physical hardware: Private DNS, a real per-app list, a Wi-Fi to cellular change, Doze, a path MTU below 1500 | **Not started.** No physical device has ever been attached to this project |
-| **L5** · what the device pass asks for | Whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
+| **L5** · product surface | Everything a FlClash user reaches for that is not Clash configuration: node choice and automatic selection, QR and batch import, several subscriptions, live connections and DNS, notification, shortcuts and automation, theme and language, per-app tools, network settings, backup. Each part reviewed adversarially before the next began | **Done** on emulators, 2026-10-21 |
+| **Device pass** | The first run on physical hardware, now one pass for everything: [`docs/device-checklist.md`](docs/device-checklist.md) and `conformance/scripts/device-acceptance.sh` | **Not started.** No physical device has ever been attached to this project |
+| **L6** · what the device pass asks for | Whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
 | **Publication** | A signing key, a distribution channel, a first release | **Waiting on decisions rather than on code** |
 
 ### How much of it is done
@@ -140,6 +143,7 @@ conformance/scripts/portal-for-tests.sh --stop
 | [`docs/adr-0002-quic-certificate-verification.md`](docs/adr-0002-quic-certificate-verification.md) | How certificates are verified on the QUIC carrier: `pin` in the handshake, a name against the platform's trust store after it |
 | [`docs/adr-0003-morph.md`](docs/adr-0003-morph.md) | How Morph is applied under each carrier, and why TLS is now Conscrypt in engine mode everywhere |
 | [`docs/privacy.md`](docs/privacy.md) | What is stored, what leaves the device, and the longer list of what is not collected |
+| [`docs/device-checklist.md`](docs/device-checklist.md) | Every L5 feature, what to do on a phone, and what should happen — the device pass, numbered for reporting |
 | [`docs/store-policy.md`](docs/store-policy.md) | What a VPN-class listing requires, what is already satisfied, and what is still someone's decision |
 
 [`docs/architecture.md`](docs/architecture.md) covers the layers, which way they

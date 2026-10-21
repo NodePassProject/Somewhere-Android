@@ -28,7 +28,7 @@ comments, everything. Do not emit Chinese in project files.
 
 | Path | Purpose |
 |---|---|
-| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36. Nine screens, three locales, and the protocol, TUN, DNS, routing and per-app layers |
+| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36. Ten screens, three locales, and the protocol, TUN, DNS, routing and per-app layers |
 | `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor, plus the QUIC bridge and the library's export map |
 | `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
