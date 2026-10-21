@@ -10,6 +10,7 @@ import eu.nodepass.somewhere.nodes.NodeHealth
 import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.quic.QuicProbe
 import eu.nodepass.somewhere.subscription.Subscription
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
 import eu.nodepass.somewhere.subscription.SubscriptionReason
@@ -63,6 +64,13 @@ class NodeRepository(
     private val subscriptions: SubscriptionStore,
     private val fetcher: SubscriptionFetcher,
     private val dialer: NowhereDialer = NowhereDialer(),
+    /**
+     * How a QUIC node is probed. Null when it answered; otherwise why not.
+     *
+     * Injected because the real one needs the native QUIC library, which a JVM
+     * test does not load.
+     */
+    private val quicProbe: (NowhereUrl) -> DecodeReason? = QuicProbe::probe,
     private val io: CoroutineDispatcher,
     /**
      * Where work that outlives a screen runs.
@@ -337,6 +345,15 @@ class NodeRepository(
         val result =
             withContext(io) {
                 val started = clock()
+                if (node.usesQuic) {
+                    // Over the carrier the node actually uses. See QuicProbe.
+                    val refused = quicProbe(node)
+                    return@withContext if (refused == null) {
+                        ProbeResult.Reachable((clock() - started).toInt())
+                    } else {
+                        ProbeResult.Unreachable(refused)
+                    }
+                }
                 when (val dialed = dialer.connect(node)) {
                     is DecodeResult.Ok -> {
                         val elapsed = (clock() - started).toInt()

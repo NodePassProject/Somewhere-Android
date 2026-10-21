@@ -62,4 +62,56 @@ class ProbeAllTest {
         )
         assertNull("a withdrawn node is not dialled (NW-D-04)", probes[withdrawn.toUrl()])
     }
+
+    @Test
+    fun `a QUIC node is probed over QUIC and never dialled over TCP`() {
+        // Port 1 is closed on TCP, so a TLS dial would fail; the fake QUIC
+        // probe answers. If the repository fell back to TCP the node would read
+        // as unreachable.
+        val quic = (NowhereUrl.parse("nowhere://0123456789abcdef0123456789abcdef@127.0.0.1:1?net=udp#q") as DecodeResult.Ok).value
+        NodeStore(File(folder.root, "nodes.txt")).save(listOf(quic))
+        val asked = mutableListOf<NowhereUrl>()
+        val repository =
+            NodeRepository(
+                store = NodeStore(File(folder.root, "nodes.txt")),
+                subscriptions = SubscriptionStore(File(folder.root, "sub.txt")),
+                fetcher = SubscriptionFetcher(clientVersion = "0.1.0"),
+                quicProbe = { node ->
+                    asked += node
+                    null
+                },
+                io = Dispatchers.IO,
+                scope = CoroutineScope(Dispatchers.Unconfined),
+            )
+
+        runBlocking { repository.probeAll() }
+
+        assertEquals(listOf(quic), asked)
+        assertTrue(repository.probes.value[quic.toUrl()] is ProbeResult.Reachable)
+    }
+
+    @Test
+    fun `a QUIC refusal is carried through as the probe's answer`() {
+        val quic = (NowhereUrl.parse("nowhere://0123456789abcdef0123456789abcdef@127.0.0.1:1?net=udp#q") as DecodeResult.Ok).value
+        val repository =
+            NodeRepository(
+                store = NodeStore(File(folder.root, "other.txt")),
+                subscriptions = SubscriptionStore(File(folder.root, "sub.txt")),
+                fetcher = SubscriptionFetcher(clientVersion = "0.1.0"),
+                quicProbe = {
+                    eu.nodepass.somewhere.net.DialReason
+                        .Untrusted("pin")
+                },
+                io = Dispatchers.IO,
+                scope = CoroutineScope(Dispatchers.Unconfined),
+            )
+        val result = runBlocking { repository.probe(quic) }
+        assertEquals(
+            ProbeResult.Unreachable(
+                eu.nodepass.somewhere.net.DialReason
+                    .Untrusted("pin"),
+            ),
+            result,
+        )
+    }
 }
