@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon. Each goes to QuickActionActivity, which is
+     not exported: a shortcut starts it with this app's identity. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="toggle"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut"
+        android:shortcutShortLabel="@string/shortcut_toggle">
+        <intent
+            android:action="eu.nodepass.somewhere.action.TOGGLE"
+            android:targetClass="eu.nodepass.somewhere.QuickActionActivity"
+            android:targetPackage="eu.nodepass.somewhere" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="connect"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut"
+        android:shortcutShortLabel="@string/shortcut_connect">
+        <intent
+            android:action="eu.nodepass.somewhere.action.START"
+            android:targetClass="eu.nodepass.somewhere.QuickActionActivity"
+            android:targetPackage="eu.nodepass.somewhere" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="disconnect"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut"
+        android:shortcutShortLabel="@string/shortcut_disconnect">
+        <intent
+            android:action="eu.nodepass.somewhere.action.STOP"
+            android:targetClass="eu.nodepass.somewhere.QuickActionActivity"
+            android:targetPackage="eu.nodepass.somewhere" />
+    </shortcut>
+</shortcuts>

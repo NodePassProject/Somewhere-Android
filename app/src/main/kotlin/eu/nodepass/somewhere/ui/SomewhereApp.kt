@@ -266,7 +266,10 @@ fun SomewhereApp(
                     // the job cancelled its own schedule.
                     val refreshSettings = remember { refresh.load() }
                     var automatic by remember { mutableStateOf(refreshSettings.automatic) }
+                    val current by settings.settings.collectAsState()
                     SettingsScreen(
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
                         automaticRefresh = automatic,
                         refreshIntervalHours = refreshSettings.effectiveIntervalHours,

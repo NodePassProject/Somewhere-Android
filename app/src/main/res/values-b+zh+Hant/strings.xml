@@ -224,4 +224,17 @@
     <string name="dns_empty_detail">通道連線期間，裝置查詢的網域會顯示在這裡。</string>
     <string name="diagnostics_export">匯出</string>
     <string name="diagnostics_export_note">匯出內容包含這些記錄裡的網站和應用程式，不含節點金鑰或訂閱連結。</string>
+    <string name="notification_rates">↑ %1$s   ↓ %2$s</string>
+    <string name="notification_disconnect">中斷連線</string>
+    <string name="shortcut_connect">連線</string>
+    <string name="shortcut_disconnect">中斷連線</string>
+    <string name="shortcut_toggle">連線或中斷連線</string>
+    <string name="settings_app">應用程式</string>
+    <string name="settings_connect_on_launch">開啟時自動連線</string>
+    <string name="settings_connect_on_launch_detail">每次開啟應用程式時連線所選節點。若連續兩次啟動都以當機結束，會自動略過。</string>
+    <string name="settings_hide_recents">在最近使用的應用程式中隱藏</string>
+    <string name="settings_automation">允許其他應用程式連線和中斷連線</string>
+    <string name="settings_automation_detail">供 Tasker 等自動化應用程式使用。開啟後，任何已安裝的應用程式都能不經詢問關閉通道。動作：%1$s</string>
+    <string name="settings_notifications_off">通知已關閉，通道執行時畫面上不會有任何提示。</string>
+    <string name="settings_notifications_allow">允許通知</string>
 </resources>

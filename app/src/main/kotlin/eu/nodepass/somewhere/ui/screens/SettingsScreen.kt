@@ -23,6 +23,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,8 +35,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import eu.nodepass.somewhere.BuildConfig
+import eu.nodepass.somewhere.QuickActionActivity
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.AppSettings
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.Panel
 import eu.nodepass.somewhere.ui.components.PanelDivider
@@ -51,9 +56,18 @@ fun SettingsScreen(
     automaticRefresh: Boolean = false,
     refreshIntervalHours: Int = 0,
     onToggleAutomaticRefresh: (Boolean) -> Unit = {},
+    settings: AppSettings = AppSettings(),
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
+    // Re-read on every return to the screen: the system's notification
+    // settings are where this changes, and the user comes back from there.
+    var notificationsOn by remember { mutableStateOf(true) }
+    LifecycleResumeEffect(Unit) {
+        notificationsOn = context.notificationsEnabled()
+        onPauseOrDispose {}
+    }
 
     // The header stays put and the form scrolls under it. Scrolled with the
     // form, the header slid up beneath the status bar, whose icons then sat
@@ -164,6 +178,59 @@ fun SettingsScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_app))
+                Panel {
+                    if (!notificationsOn) {
+                        PanelRow(onClick = { context.openNotificationSettings() }) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = stringResource(R.string.settings_notifications_off),
+                                    style = SomewhereType.bodySmall,
+                                    color = colors.warn,
+                                )
+                                Text(
+                                    text = stringResource(R.string.settings_notifications_allow),
+                                    fontFamily = SomewhereType.Body,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp,
+                                    color = colors.brand,
+                                )
+                            }
+                            Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                        }
+                        PanelDivider()
+                    }
+                    SwitchRow(
+                        title = stringResource(R.string.settings_connect_on_launch),
+                        detail = stringResource(R.string.settings_connect_on_launch_detail),
+                        checked = settings.connectOnLaunch,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(connectOnLaunch = on) } },
+                    )
+                    PanelDivider()
+                    SwitchRow(
+                        title = stringResource(R.string.settings_hide_recents),
+                        detail = null,
+                        checked = settings.hideFromRecents,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(hideFromRecents = on) } },
+                    )
+                    PanelDivider()
+                    SwitchRow(
+                        title = stringResource(R.string.settings_automation),
+                        // The action names are identifiers an automation app
+                        // needs verbatim, so they are arguments, not prose.
+                        detail =
+                            stringResource(
+                                R.string.settings_automation_detail,
+                                listOf(QuickActionActivity.ACTION_START, QuickActionActivity.ACTION_STOP, QuickActionActivity.ACTION_TOGGLE)
+                                    .joinToString(", "),
+                            ),
+                        checked = settings.automation,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(automation = on) } },
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionLabel(stringResource(R.string.settings_about))
                 Panel {
                     PanelRow {
@@ -188,7 +255,9 @@ fun SettingsScreen(
                         MonoText(stringResource(R.string.protocol_baseline), colors.muted, fontSize = 12.5.sp)
                     }
                     PanelDivider()
-                    PanelRow(onClick = {}) {
+                    // GPL-3.0: the source is part of what the user received,
+                    // so the row goes to it rather than being a drawn link.
+                    PanelRow(onClick = { context.openSourceCode() }) {
                         Text(
                             text = stringResource(R.string.settings_source_code),
                             fontFamily = SomewhereType.Body,
@@ -296,4 +365,23 @@ private fun Context.openVpnSettings() {
             .setData(Uri.fromParts("package", packageName, null))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { startActivity(vpn) }.recoverCatching { startActivity(fallback) }
+}
+
+private fun Context.notificationsEnabled(): Boolean =
+    getSystemService(android.app.NotificationManager::class.java)?.areNotificationsEnabled() != false
+
+/** The app's own notification settings, where the permission can be given once the system stops asking. */
+private fun Context.openNotificationSettings() {
+    val intent =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { startActivity(intent) }
+}
+
+private fun Context.openSourceCode() {
+    val intent =
+        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/NodePassProject/Somewhere-Android"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { startActivity(intent) }
 }

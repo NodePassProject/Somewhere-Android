@@ -7,6 +7,7 @@ import android.app.Application
 import eu.nodepass.somewhere.apps.AppSelectionStore
 import eu.nodepass.somewhere.apps.PackageManagerApps
 import eu.nodepass.somewhere.data.AppSettingsStore
+import eu.nodepass.somewhere.data.LaunchGuard
 import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
@@ -62,6 +63,9 @@ class SomewhereApplication : Application() {
     val appSelection: AppSelectionStore by lazy {
         AppSelectionStore(File(filesDir, "apps/selection.txt"))
     }
+
+    /** Whether connecting on launch is safe this time; see [LaunchGuard]. */
+    val launchGuard: LaunchGuard by lazy { LaunchGuard(File(filesDir, "settings/launch-guard.txt")) }
 
     /** The app's own preferences: how screens look, what the app does unasked. */
     val settings: AppSettingsStore by lazy { AppSettingsStore(File(filesDir, "settings/app.txt")) }

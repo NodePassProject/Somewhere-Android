@@ -222,4 +222,17 @@
     <string name="dns_empty_detail">隧道连接期间，设备查询的域名会显示在这里。</string>
     <string name="diagnostics_export">导出</string>
     <string name="diagnostics_export_note">导出内容包含这些日志里的网站和应用，不含节点密钥或订阅链接。</string>
+    <string name="notification_rates">↑ %1$s   ↓ %2$s</string>
+    <string name="notification_disconnect">断开</string>
+    <string name="shortcut_connect">连接</string>
+    <string name="shortcut_disconnect">断开</string>
+    <string name="shortcut_toggle">连接或断开</string>
+    <string name="settings_app">应用</string>
+    <string name="settings_connect_on_launch">打开时自动连接</string>
+    <string name="settings_connect_on_launch_detail">每次打开应用时连接所选节点。如果连续两次启动都以崩溃结束，会自动跳过。</string>
+    <string name="settings_hide_recents">在最近任务中隐藏</string>
+    <string name="settings_automation">允许其他应用连接和断开</string>
+    <string name="settings_automation_detail">供 Tasker 等自动化应用使用。开启后，任何已安装的应用都能不经询问关闭隧道。动作：%1$s</string>
+    <string name="settings_notifications_off">通知已关闭，隧道运行时屏幕上不会有任何提示。</string>
+    <string name="settings_notifications_allow">允许通知</string>
 </resources>

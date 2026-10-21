@@ -39,6 +39,8 @@ import eu.nodepass.somewhere.quic.QuicStreamTransport
 import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.DirectDialer
 import eu.nodepass.somewhere.routing.Router
+import eu.nodepass.somewhere.ui.state.Format
+import kotlinx.coroutines.launch
 import java.net.InetAddress
 import java.net.InetSocketAddress
 
@@ -596,10 +598,37 @@ class SomewhereVpnService : VpnService() {
 
     private fun startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) createChannel()
-        startForeground(NOTIFICATION, notification())
+        startForeground(NOTIFICATION, notification(rates = null))
+        watchRates()
+    }
+
+    /** Updates the notification's rates. Cancelled with the tunnel. */
+    private var rateWatcher: kotlinx.coroutines.Job? = null
+
+    /**
+     * The two rates in the notification, once a second, while someone could
+     * be looking.
+     *
+     * Only with the screen on: a notification update wakes the system UI, and
+     * a tunnel left up overnight would otherwise redraw a shade nobody pulled
+     * down eighty thousand times. Each direction separately, as on Home.
+     */
+    private fun watchRates() {
+        rateWatcher?.cancel()
+        val power = getSystemService(android.os.PowerManager::class.java)
+        val manager = getSystemService(NotificationManager::class.java)
+        rateWatcher =
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                TunnelController.traffic.collect { sample ->
+                    if (!sample.measured || power?.isInteractive == false || pump == null) return@collect
+                    manager?.notify(NOTIFICATION, notification(rates = sample))
+                }
+            }
     }
 
     private fun stopForegroundCompat() {
+        rateWatcher?.cancel()
+        rateWatcher = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -617,7 +646,7 @@ class SomewhereVpnService : VpnService() {
         )
     }
 
-    private fun notification(): Notification {
+    private fun notification(rates: TrafficSample?): Notification {
         val open =
             PendingIntent.getActivity(
                 this,
@@ -632,12 +661,40 @@ class SomewhereVpnService : VpnService() {
                 @Suppress("DEPRECATION")
                 Notification.Builder(this)
             }
+        // Through the service's own stop action, not an exported entry point:
+        // the PendingIntent carries this app's identity, so no other app can
+        // fire it.
+        val disconnect =
+            PendingIntent.getService(
+                this,
+                1,
+                Intent(this, SomewhereVpnService::class.java).setAction(ACTION_STOP),
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+        val connected = TunnelController.state.value as? TunnelState.Connected
+        val text =
+            if (rates == null) {
+                getString(R.string.notification_connected)
+            } else {
+                getString(
+                    R.string.notification_rates,
+                    Format.throughput(rates.upstreamBytesPerSecond).let { "${it.value} ${it.unit}" },
+                    Format.throughput(rates.downstreamBytesPerSecond).let { "${it.value} ${it.unit}" },
+                )
+            }
         return builder
-            .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.notification_connected))
+            // The node, which is the thing worth seeing from the shade; the
+            // app's name is already on the notification's header.
+            .setContentTitle(connected?.node ?: getString(R.string.app_name))
+            .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(open)
             .setOngoing(true)
-            .build()
+            .setOnlyAlertOnce(true)
+            .addAction(
+                Notification.Action
+                    .Builder(null, getString(R.string.notification_disconnect), disconnect)
+                    .build(),
+            ).build()
     }
 }

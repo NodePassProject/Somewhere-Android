@@ -81,6 +81,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Long-pressing the quick-settings tile opens the app, rather
+                 than the system's app-info page. -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
             <!-- D-10: own scheme is the preferred handler; the donor family's
                  scheme is also accepted so existing dashboard import buttons
                  still reach this client. `nowhere` is the node-import scheme
@@ -94,6 +104,30 @@
                 <data android:scheme="anywhere" />
             </intent-filter>
         </activity>
+        <!-- Connect, disconnect, toggle, with no screen. Not exported: the
+             launcher's shortcuts start it with this app's identity. Other
+             apps come in through the alias below, which is refused unless the
+             user allowed it in Settings. -->
+        <activity
+            android:name=".QuickActionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity-alias
+            android:name=".AutomationActivity"
+            android:exported="true"
+            android:targetActivity=".QuickActionActivity">
+            <intent-filter>
+                <action android:name="eu.nodepass.somewhere.action.START" />
+                <action android:name="eu.nodepass.somewhere.action.STOP" />
+                <action android:name="eu.nodepass.somewhere.action.TOGGLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- The tunnel.
 
              `BIND_VPN_SERVICE` is what makes this a VPN as far as the system is

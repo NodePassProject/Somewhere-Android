@@ -3,8 +3,11 @@
 
 package eu.nodepass.somewhere
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -123,6 +126,18 @@ class MainActivity : ComponentActivity() {
                 openAsset = { assets.open(it).bufferedReader().use { reader -> reader.readText() } },
             ).also { routing = it }
 
+        if (savedInstanceState == null && application.settings.settings.value.connectOnLaunch) connectOnLaunch()
+
+        // Recents follows the switch while the app is open, so turning it on
+        // takes effect without a restart.
+        lifecycleScope.launch {
+            application.settings.settings.collect { settings ->
+                getSystemService(android.app.ActivityManager::class.java)
+                    ?.appTasks
+                    ?.forEach { it.setExcludeFromRecents(settings.hideFromRecents) }
+            }
+        }
+
         setContent {
             SomewhereTheme {
                 Box(
@@ -150,6 +165,45 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Connects on its own, once per launch, unless the last two launches that
+     * tried died doing it. See [eu.nodepass.somewhere.data.LaunchGuard].
+     *
+     * Only when consent is already held: a system dialog thrown up the moment
+     * the app opens, before the user has asked for anything, is not something
+     * a switch in Settings should be able to cause.
+     */
+    private fun connectOnLaunch() {
+        if (TunnelController.isEngaged || VpnService.prepare(this) != null) return
+        val guard = (application as SomewhereApplication).launchGuard
+        if (!guard.beginAttempt()) {
+            android.util.Log.w("SomewhereLaunch", "the last automatic connects did not survive; not connecting this time")
+            return
+        }
+        resolveStart()?.let(::startTunnel)
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(eu.nodepass.somewhere.data.LaunchGuard.SURVIVAL_MILLIS)
+            guard.survived()
+        }
+    }
+
+    /**
+     * Asks once for permission to post the tunnel's notification (API 33+).
+     *
+     * Without it the tunnel runs with nothing on screen saying so. Asked at
+     * the first connect rather than at install, because that is the moment
+     * the reason is obvious; a refusal is respected, and Settings says what
+     * it costs.
+     */
+    private fun askForNotificationsOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        val asked = getPreferences(MODE_PRIVATE)
+        if (asked.getBoolean(ASKED_NOTIFICATIONS, false)) return
+        asked.edit().putBoolean(ASKED_NOTIFICATIONS, true).apply()
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+    }
+
+    /**
      * Connect, or disconnect if something is already up.
      *
      * The consent dialog is asked for only when the system says it is needed:
@@ -161,6 +215,7 @@ class MainActivity : ComponentActivity() {
             SomewhereVpnService.stop(this)
             return
         }
+        askForNotificationsOnce()
         val start = resolveStart()
         if (start == null) {
             TunnelController.report(TunnelState.Failed(R.string.tunnel_no_node))
@@ -266,4 +321,8 @@ class MainActivity : ComponentActivity() {
             ?.takeIf { it.action == Intent.ACTION_VIEW }
             ?.data
             ?.toString()
+
+    private companion object {
+        const val ASKED_NOTIFICATIONS = "asked-notifications"
+    }
 }

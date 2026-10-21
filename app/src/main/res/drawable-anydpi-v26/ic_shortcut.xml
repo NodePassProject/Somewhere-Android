@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher-shortcut icon: the notification's two arrows, on the brand
+  colour, inside the adaptive-icon safe zone. One icon for all three shortcuts;
+  the label says which is which.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/shortcut_background" />
+    <foreground>
+        <inset
+            android:drawable="@drawable/ic_notification"
+            android:inset="30%" />
+    </foreground>
+</adaptive-icon>

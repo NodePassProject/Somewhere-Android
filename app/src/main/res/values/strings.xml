@@ -259,4 +259,17 @@
     <string name="dns_empty_detail">Names the device looks up appear here while the tunnel is up.</string>
     <string name="diagnostics_export">Export</string>
     <string name="diagnostics_export_note">The export lists the sites and apps in these logs. It holds no node keys or subscription links.</string>
+    <string name="notification_rates">↑ %1$s   ↓ %2$s</string>
+    <string name="notification_disconnect">Disconnect</string>
+    <string name="shortcut_connect">Connect</string>
+    <string name="shortcut_disconnect">Disconnect</string>
+    <string name="shortcut_toggle">Connect or disconnect</string>
+    <string name="settings_app">App</string>
+    <string name="settings_connect_on_launch">Connect when opened</string>
+    <string name="settings_connect_on_launch_detail">Connects to the selected node whenever the app is opened. Skipped after two launches in a row end in a crash.</string>
+    <string name="settings_hide_recents">Hide from recent apps</string>
+    <string name="settings_automation">Allow other apps to connect and disconnect</string>
+    <string name="settings_automation_detail">For automation apps such as Tasker. Any installed app could then turn the tunnel off without asking you. Actions: %1$s</string>
+    <string name="settings_notifications_off">Notifications are off, so the tunnel runs with nothing on screen saying so.</string>
+    <string name="settings_notifications_allow">Allow notifications</string>
 </resources>
