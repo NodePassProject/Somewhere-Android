@@ -19,9 +19,9 @@ class VectorFixtureTest {
     }
 
     @Test
-    fun fixtureCarriesTheEightKnownFamilies() {
+    fun fixtureCarriesTheNineKnownFamilies() {
         assertEquals(
-            listOf("auth", "flowStart", "target", "setupResult", "uot", "quicDatagram", "udpFlowId", "morph"),
+            listOf("auth", "flowStart", "target", "setupResult", "uot", "quicDatagram", "udpFlowId", "morph", "morphPrelude"),
             VectorFixture.families,
         )
     }
@@ -48,8 +48,8 @@ class VectorFixtureTest {
         baselineFile?.close()
 
         assertEquals("NodePassProject/Nowhere", VectorFixture.Baseline.repository)
-        assertEquals("v3.0.1", VectorFixture.Baseline.tag)
-        assertEquals("00000e0", VectorFixture.Baseline.commit)
+        assertEquals("v3.1.0", VectorFixture.Baseline.tag)
+        assertEquals("0000065", VectorFixture.Baseline.commit)
     }
 
     @Test
@@ -66,7 +66,7 @@ class VectorFixtureTest {
         // vectors fails loudly instead of quietly reducing what is checked.
         val cases = VectorFixture.families.sumOf { VectorFixture.cases(it).size }
         val rejects = VectorFixture.families.sumOf { VectorFixture.rejects(it).size }
-        assertEquals("positive cases", 34, cases)
+        assertEquals("positive cases", 38, cases)
         assertEquals("rejection cases", 29, rejects)
     }
 

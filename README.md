@@ -90,9 +90,12 @@ a release stand a physical device and a signing key that will never live here.
 ## Protocol baseline
 
 Pinned in [`conformance/PROTOCOL_BASELINE`](conformance/PROTOCOL_BASELINE):
-Nowhere **v3.0.1** (`00000e0`). Every protocol implementation detail is
-traceable to a specific section of the upstream `docs/protocol.md`. v3 is not
-wire-compatible with v1: a v3 client cannot reach a v1 Portal, or the reverse.
+Nowhere **v3.1.0** (`0000065`), with the Core specification at
+[`Nowhere-Protocol`](https://github.com/NodePassProject/Nowhere-Protocol)
+`0000001`. Every protocol implementation detail is traceable to a section of
+that specification, or of Nowhere's `docs/prelude.md` for the Authenticated
+Prelude this client sends. v3 is not wire-compatible with v1: a v3 client
+cannot reach a v1 Portal, or the reverse.
 
 ## Conformance suite
 

@@ -1,14 +1,14 @@
 {
-  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol (nw3), language-agnostic. Authentication, FlowStart, stream-derived flow ids and SetupResult are transcribed from upstream src/tests/protocol/vectors.json; datagram layouts from src/tests/protocol/datagram.rs; Morph keys and the ChaCha20 block from src/tests/transport/morph*.rs. The two Morph ciphertext vectors are computed with an independent ChaCha20 (Python `cryptography`). All hex is lowercase and unseparated.",
+  "$comment": "Byte-level fixed vectors for the Nowhere wire protocol (nw3), language-agnostic. Authentication, FlowStart, stream-derived flow ids and SetupResult are transcribed from upstream src/tests/protocol/vectors.json; datagram layouts from src/tests/protocol/datagram.rs; Morph keys and the ChaCha20 block from src/tests/transport/morph*.rs. The two Morph ciphertext vectors are computed with an independent ChaCha20 (Python `cryptography`). All hex is lowercase and unseparated. The Authenticated Prelude cases (morphPrelude) are transcribed from upstream src/tests/transport/morph/prelude.rs at v3.1.0: identity, counter, tag and encoded tail.",
   "baseline": {
     "upstreamRepo": "NodePassProject/Nowhere",
     "branch": "main",
-    "tag": "v3.0.1",
-    "commit": "00000e0",
-    "specPath": "docs/protocol.md",
-    "binaryVersionString": "nowhere-v3.0.1",
+    "tag": "v3.1.0",
+    "commit": "0000065",
+    "specPath": "Nowhere-Protocol PROTOCOL.md (Core); Nowhere docs/prelude.md (Prelude Extension)",
+    "binaryVersionString": "nowhere-v3.1.0",
     "alpn": "nw3",
-    "note": "v3.0.1 is wire-incompatible with v1.8.2: new ALPN and exporter label, a 16-byte AuthFrame with role keys, a 1-byte FlowStart, renumbered SetupResult, a 4-byte datagram base word, stream-derived flow ids, and Morph. Target and UoT are unchanged. See conformance/PROTOCOL_BASELINE."
+    "note": "v3.0.1 is wire-incompatible with v1.8.2: new ALPN and exporter label, a 16-byte AuthFrame with role keys, a 1-byte FlowStart, renumbered SetupResult, a 4-byte datagram base word, stream-derived flow ids, and Morph. Target and UoT are unchanged. See conformance/PROTOCOL_BASELINE. v3.1.0 changes no Core byte: the specification moved to NodePassProject/Nowhere-Protocol unchanged, and the Prelude Extension adds authentication data to the low seven bits of the Morph TCP prelude's last 32 bytes."
   },
   "auth": {
     "derivation": {
@@ -446,5 +446,54 @@
       "expectedWireHex": "404142434445464748494a4b40fde3549f",
       "overhead": 12
     }
+  },
+  "morphPrelude": {
+    "$comment": "Each case: the 32-byte prefix, the 12-byte nonce, the 32 tail high bits packed MSB first, identity (u64) and counter (u48) as hex, and the expected Tag (14 bytes) and encoded tail (32 bytes). Shared key is the ASCII text.",
+    "sharedKeyUtf8": "0123456789abcdef0123456789abcdef",
+    "authLabel": "tcp prelude auth",
+    "maskLabel": "tcp prelude mask",
+    "maxCounterHex": "ffffffffffff",
+    "cases": [
+      {
+        "name": "fixed",
+        "prefixHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "nonceHex": "000102030405060708090a0b",
+        "highBitsHex": "f00faa55",
+        "identityHex": "0123456789abcdef",
+        "counterHex": "000000000001",
+        "tagHex": "abb825c613d58ecda8d6489ea975",
+        "tailHex": "898f9c840e570537225e187fb7e4c990df489547d61b9e515bad2a8f4dd84d86"
+      },
+      {
+        "name": "all ones",
+        "prefixHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "nonceHex": "ffffffffffffffffffffffff",
+        "highBitsHex": "ffffffff",
+        "identityHex": "ffffffffffffffff",
+        "counterHex": "ffffffffffff",
+        "tagHex": "fe74232711614dce0c60a6a4832f",
+        "tailHex": "b2eac9c5c3fcb0e5a3f3a7c8febed9bca7aec3a1c4b0a3a5cf879c8edf8ffce8"
+      },
+      {
+        "name": "all zeros",
+        "prefixHex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "nonceHex": "000000000000000000000000",
+        "highBitsHex": "00000000",
+        "identityHex": "0000000000000000",
+        "counterHex": "000000000000",
+        "tagHex": "4568be962a1b259cf44db132261c",
+        "tailHex": "245b016f7d7e2b4c125f3e33445f0d2a103f225860664d0c7465093120367212"
+      },
+      {
+        "name": "edge bits",
+        "prefixHex": "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100",
+        "nonceHex": "0b0a09080706050403020100",
+        "highBitsHex": "80000001",
+        "identityHex": "8000000000000001",
+        "counterHex": "800000000001",
+        "tagHex": "37d8bc3e65c0ebc5b93bbabb9d76",
+        "tailHex": "b57508160f6c2d312c50315572780903206a301662675c472f676d701b032ab8"
+      }
+    ]
   }
 }

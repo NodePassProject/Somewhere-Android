@@ -141,6 +141,7 @@
 
     <string name="dial_unreachable">这个节点没有响应。</string>
     <string name="dial_handshake_failed">安全连接未能建立。请确认 Portal 使用 Nowhere v3（%1$s），并且两端的 morph 设置一致。</string>
+    <string name="dial_silent">接受了连接，随后未作应答即关闭。请检查密钥和 Morph 设置；若都正确，可能是网络受到干扰。</string>
     <string name="dial_alpn_rejected">该 Portal 不支持 Nowhere v3（%1$s）。</string>
     <string name="dial_unprotected">到该节点的连接无法保持在隧道之外。</string>
     <string name="dial_unknown">无法连接这个节点。</string>
@@ -173,6 +174,7 @@
     <string name="tunnel_unresolved">无法解析该节点的地址。</string>
     <string name="tunnel_quic_unreachable">该节点没有通过 QUIC 应答。</string>
     <string name="tunnel_tls_unreachable">该节点没有通过 TLS 应答。</string>
+    <string name="tunnel_tls_silent">该节点接受了连接，随后未作应答即关闭。请检查它的密钥和 Morph 设置；若都正确，可能是网络受到干扰。</string>
     <string name="tunnel_quic_and_tls_unreachable">该节点在 QUIC 和同端口的 TLS 上都没有应答。</string>
     <string name="tunnel_handshake_failed">该节点有应答，但 TLS 握手失败。请确认 Morph 设置与 Portal 一致。</string>
     <string name="tile_connecting">正在连接…</string>

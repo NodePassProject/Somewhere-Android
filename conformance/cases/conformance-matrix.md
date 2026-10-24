@@ -1,8 +1,10 @@
 # Conformance test matrix
 
 Derived case by case from Nowhere `docs/protocol.md`, `docs/configuration.md`,
-`docs/security.md` and `docs/interoperability.md` at **v3.0.1 @ 00000e0**.
-Section references are to `docs/protocol.md` unless stated. The **Req** column
+`docs/security.md` and `docs/interoperability.md` at **v3.1.0 @ 0000065**, with
+the Core sections now in `Nowhere-Protocol` `PROTOCOL.md` @ 0000001 and the
+Prelude Extension in Nowhere `docs/prelude.md`. Section references are to the
+Core specification unless stated. The **Req** column
 references PRD requirement IDs where one still applies; v3 cases with no v1
 counterpart carry `nw3`.
 
@@ -124,7 +126,9 @@ both, and their rows went with them; the v1 matrix is in git history.
 | `fade` prelude: printable `[0,A)`, low7 `[A,B)`, full8 after; A∈[8,12], B∈[16,32] | Unit | nw3 |
 | UDP: fresh 12-byte nonce per datagram, counter zero; ≤ 12 bytes discarded | KAT | nw3 |
 | QUIC payload size is reduced by the nonce | Unit | nw3 |
-| Morph on and off both interoperate; a mismatch fails the handshake | E2E | nw3 |
+| Morph on and off both interoperate; a mismatch fails the handshake (3.1: silence, then a reset) | E2E | nw3 |
+| Authenticated Prelude (`docs/prelude.md`): Tag, mask and 7-bit tail match upstream's vectors; prefix and high bits kept | KAT | nw3 |
+| A 3.1 Portal verifies the Tag: one Counter twice is refused, the next accepted; Counters never repeat or wrap | E2E | nw3 |
 
 ## 9. Configuration and certificates (`docs/configuration.md`, `docs/security.md`)
 

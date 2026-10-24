@@ -193,17 +193,24 @@ class MorphSocket private constructor(
          * @param prelude the 64 bytes to open with; [MorphPrelude.Fade] unless
          *   a test is pinning the wire image.
          * @param nonce the 12-byte nonce both directions' keystreams use.
+         * @param authentication what the Authenticated Prelude carries; null
+         *   only for a test pinning the policy's bytes. Allocated here, as
+         *   late as possible, because the specification spends a Counter at
+         *   encoding whether or not the connection then succeeds.
          */
         fun over(
             connected: Socket,
             keys: MorphKeys,
             prelude: ByteArray = MorphPrelude.Fade.generate(),
             nonce: ByteArray = ByteArray(ChaCha20.NONCE_BYTES).also(random::nextBytes),
+            authentication: (() -> AuthenticatedPrelude.Fields)? = { AuthenticatedPrelude.allocatorFor(keys).allocate() },
         ): MorphSocket {
             require(prelude.size == MorphPrelude.LENGTH) { "a prelude is ${MorphPrelude.LENGTH} bytes, got ${prelude.size}" }
             require(nonce.size == ChaCha20.NONCE_BYTES) { "a nonce is ${ChaCha20.NONCE_BYTES} bytes, got ${nonce.size}" }
+            val bootstrap = prelude.copyOf()
+            authentication?.let { AuthenticatedPrelude.encode(bootstrap, nonce, keys, it()) }
             val out = connected.getOutputStream()
-            out.write(prelude + nonce)
+            out.write(bootstrap + nonce)
             out.flush()
             return MorphSocket(connected, keys, nonce)
         }

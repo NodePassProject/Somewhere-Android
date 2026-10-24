@@ -448,6 +448,9 @@ class SomewhereVpnService : VpnService() {
                         // Configuration, which the next node would not fix.
                         DialReason.HandshakeFailed, is DialReason.AlpnRejected ->
                             refused(url, R.string.tunnel_handshake_failed)
+                        // Unreachable for failover's purposes, which is what
+                        // an interfering path needs, but worded as what it is.
+                        DialReason.Silent -> unreachable(url, R.string.tunnel_tls_silent)
                         else ->
                             unreachable(
                                 url,

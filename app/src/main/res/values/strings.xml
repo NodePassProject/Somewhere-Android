@@ -9,7 +9,7 @@
          an issue must match the specification, the source, and another user's
          log from a different locale. See docs/i18n.md. -->
     <string name="scheme_client" translatable="false">nowhere</string>
-    <string name="protocol_baseline" translatable="false">Nowhere v3.0.1</string>
+    <string name="protocol_baseline" translatable="false">Nowhere v3.1.0</string>
 
     <!-- SetupResult explanations. The identifier sits beside these in the layout,
          never inside them, so it cannot be localised by accident. Each of
@@ -178,6 +178,7 @@
 
     <string name="dial_unreachable">This node did not answer.</string>
     <string name="dial_handshake_failed">The secure connection could not be set up. Check that the Portal speaks Nowhere v3 (%1$s) and that both sides agree on morph.</string>
+    <string name="dial_silent">Accepted the connection, then closed it without answering. Check the key and the Morph setting; if both are right, the network may be interfering.</string>
     <string name="dial_alpn_rejected">The Portal does not speak Nowhere v3 (%1$s).</string>
     <string name="dial_unprotected">The connection to this node could not be kept outside the tunnel.</string>
     <string name="dial_unknown">This node could not be reached.</string>
@@ -210,6 +211,7 @@
     <string name="tunnel_unresolved">This node’s address could not be looked up.</string>
     <string name="tunnel_quic_unreachable">This node did not answer over QUIC.</string>
     <string name="tunnel_tls_unreachable">This node did not answer over TLS.</string>
+    <string name="tunnel_tls_silent">This node accepted the connection, then closed it without answering. Check its key and Morph setting; if both are right, the network may be interfering.</string>
     <string name="tunnel_quic_and_tls_unreachable">This node did not answer over QUIC, nor over TLS on the same port.</string>
     <string name="tunnel_handshake_failed">This node answered, but the TLS handshake failed. Check that Morph is set the same way as on the Portal.</string>
     <string name="tile_connecting">Connecting…</string>

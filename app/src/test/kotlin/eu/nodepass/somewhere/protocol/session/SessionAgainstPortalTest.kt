@@ -160,11 +160,12 @@ class SessionAgainstPortalTest {
         // shared key, so a wrong key masks TLS with the wrong keystream: the
         // Portal reads the ClientHello as noise and the handshake never
         // completes. Nothing about the AuthFrame is ever tested — the failure
-        // is earlier, and it is the dialer's.
+        // is earlier, and it is the dialer's. Since 3.1 the Portal answers that
+        // noise with silence and a reset at its deadline, not an alert.
         val (host, port) = portal()
         val wrong = node(host, port, key = "ffffffffffffffffffffffffffffffff")
         val result = NowhereDialer().connect(wrong)
-        assertEquals(DialReason.HandshakeFailed, result.reasonOrNull())
+        assertEquals(DialReason.Silent, result.reasonOrNull())
     }
 
     @Test

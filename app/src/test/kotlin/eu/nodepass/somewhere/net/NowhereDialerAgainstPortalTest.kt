@@ -95,12 +95,13 @@ class NowhereDialerAgainstPortalTest {
 
     @Test
     fun aMorphMismatchFailsTheHandshake() {
-        // The Portal masks and this side does not, so each reads the other's
-        // bytes as noise. There is no in-band detection; the handshake simply
-        // cannot complete, and the reason says what to check.
+        // The Portal masks and this side does not, so it reads our ClientHello
+        // as noise. Since 3.1 it says nothing at all — it holds the connection
+        // to its deadline and resets it — so what is observable is a connection
+        // accepted and then closed unanswered, and the reason says what to check.
         val result = dialer().connect(node("morph=0&pin=$pinEnv"))
         val reason = (result as DecodeResult.Invalid).reason
-        assertEquals(DialReason.HandshakeFailed, reason)
+        assertEquals(DialReason.Silent, reason)
         assertTrue("the message names morph as a thing to check", reason.detail.contains("morph"))
     }
 
