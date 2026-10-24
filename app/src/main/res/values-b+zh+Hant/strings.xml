@@ -62,6 +62,8 @@
     <string name="routing_no_rules">沒有匯入規則集。內建的那份仍然生效，其餘目的地都走 Portal。</string>
     <string name="routing_bundled">內建：%1$s</string>
     <string name="routing_bundled_origin">%1$s · %2$d 條規則</string>
+    <string name="routing_mainland_china">中國大陸直連</string>
+    <string name="routing_mainland_china_rules_only">僅在「依規則」模式下生效。「全部」模式下所有流量都走隧道。</string>
     <string name="routing_import">匯入規則檔案</string>
     <string name="routing_remove_rules">移除</string>
     <string name="routing_restart_needed">隧道仍在使用建立時的規則。</string>

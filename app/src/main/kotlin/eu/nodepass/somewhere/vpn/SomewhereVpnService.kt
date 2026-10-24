@@ -41,6 +41,7 @@ import eu.nodepass.somewhere.quic.QuicStreamTransport
 import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.DirectDialer
 import eu.nodepass.somewhere.routing.Router
+import eu.nodepass.somewhere.routing.RoutingMode
 import eu.nodepass.somewhere.ui.state.Format
 import kotlinx.coroutines.launch
 import java.net.InetAddress
@@ -481,18 +482,34 @@ class SomewhereVpnService : VpnService() {
         // flow would decide one thing for its first packet and another for its
         // last, which is not something a user could ever reason about.
         val loadedRules = application.rules.load().rules
-        val bundled = BundledRules.load { assets.open(it).bufferedReader().use { reader -> reader.readText() } }
+        val bundled = BundledRules.shared { assets.open(it).bufferedReader().use { reader -> reader.readText() } }
+        val routingSettings = application.routing.load()
+        val structural = bundled.filter { it.tier == BundledRules.Tier.Structural }.map { it.loaded.rules }
+        // A policy set only in Rules mode, and only when the user has it on.
+        // Not touched otherwise, so a device in the default mode never parses
+        // it; the first connect in Rules mode does, here, on the control thread.
+        val policy =
+            if (routingSettings.mode != RoutingMode.Rules) {
+                emptyList()
+            } else {
+                bundled
+                    .filter { it.tier == BundledRules.Tier.Policy }
+                    .filter { it.asset != BundledRules.MAINLAND_CHINA || routingSettings.mainlandChina }
+                    .map { it.loaded.rules }
+            }
         // Imported first, bundled after. A user who imported rules has said
         // something specific; a bundled set is what this client thought before
         // being told.
-        val ruleSets = listOf(loadedRules) + bundled.map { it.loaded.rules }
-        val routingSettings = application.routing.load()
+        val ruleSets = listOf(loadedRules) + structural + policy
         val router =
             Router(
                 { ruleSets },
                 { routingSettings.mode },
                 routingSettings.fallback,
-                local = if (network.excludeLocal) bundled.map { it.loaded.rules } else emptyList(),
+                // Structural only. "Keep local networks out" applies in every
+                // mode, and handing it the policy tier would send mainland
+                // China direct in Everything mode, which nobody asked for.
+                local = if (network.excludeLocal) structural else emptyList(),
             )
         val direct = DirectDialer(protect = { socket -> protect(socket) }, protectDatagram = { socket -> protect(socket) })
         val owners = ConnectionOwners(applicationContext)

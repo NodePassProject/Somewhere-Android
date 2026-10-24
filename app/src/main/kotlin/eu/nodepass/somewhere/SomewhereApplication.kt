@@ -12,6 +12,8 @@ import eu.nodepass.somewhere.data.NodeRepository
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.data.SubscriptionStore
 import eu.nodepass.somewhere.nodes.NodeHealth
+import eu.nodepass.somewhere.routing.BundledRules
+import eu.nodepass.somewhere.routing.RoutingMode
 import eu.nodepass.somewhere.routing.RoutingPreferences
 import eu.nodepass.somewhere.routing.RuleStore
 import eu.nodepass.somewhere.subscription.RefreshPreferences
@@ -20,6 +22,7 @@ import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.io.File
 
 /**
@@ -35,6 +38,25 @@ class SomewhereApplication : Application() {
         // Written by versions before nodes could be chosen and read by nothing
         // since. It holds a node URL with its shared key, so it does not stay.
         File(filesDir, "nodes/last-connected.txt").delete()
+        warmPolicyRules()
+    }
+
+    /**
+     * Parses the mainland-China set in the background when it will be needed.
+     *
+     * Only in Rules mode with the set on, which is the only time a tunnel
+     * consults it; then the first connect finds it already in memory instead
+     * of compiling it on the control thread while the user waits.
+     */
+    private fun warmPolicyRules() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val settings = routing.load()
+            if (settings.mode != RoutingMode.Rules || !settings.mainlandChina) return@launch
+            BundledRules
+                .shared { assets.open(it).bufferedReader().use { reader -> reader.readText() } }
+                .filter { it.tier == BundledRules.Tier.Policy }
+                .forEach { it.loaded }
+        }
     }
 
     val nodes: NodeRepository by lazy {

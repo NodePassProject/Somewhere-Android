@@ -152,6 +152,42 @@ object RuleDocument {
     }
 
     /**
+     * Reads a document this repository ships, without the import's defences.
+     *
+     * The bundled sets are not text from somewhere unknown: they are files in
+     * this repository that `BundledRulesTest` and `PolicyRulesTest` put
+     * through [parse] — credentials, unknown kinds, a rule set that builds —
+     * on every build. Repeating that per line on a phone made the 117,000-line
+     * policy set take 4.5 seconds to load on an emulator, most of it spent
+     * looking for `://` in domain names and building the rule set twice. A
+     * line this cannot read is skipped, which a test would already have failed.
+     */
+    fun parseTrusted(text: String): List<Rule> {
+        val rules = ArrayList<Rule>(text.length / 32)
+        var start = 0
+        while (start < text.length) {
+            var end = text.indexOf('\n', start)
+            if (end < 0) end = text.length
+            parseTrustedLine(text, start, end)?.let(rules::add)
+            start = end + 1
+        }
+        return rules
+    }
+
+    private fun parseTrustedLine(
+        text: String,
+        start: Int,
+        end: Int,
+    ): Rule? {
+        if (start >= end || text[start] == '#') return null
+        val first = text.indexOf(',', start).takeIf { it in start until end } ?: return null
+        val second = text.indexOf(',', first + 1).takeIf { it in first + 1 until end } ?: return null
+        val type = types[text.substring(start, first)] ?: return null
+        val action = actions[text.substring(second + 1, end).trim()] ?: return null
+        return Rule(type, text.substring(first + 1, second), action)
+    }
+
+    /**
      * Ten megabytes of text, which is far past any real list.
      *
      * The donor's own set is 38,709 rules; this is room for several times that

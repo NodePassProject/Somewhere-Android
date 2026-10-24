@@ -62,7 +62,9 @@ class RoutingController(
         scope.launch {
             mutableSettings.value = withContext(io) { preferences.load() }
             mutableLoaded.value = withContext(io) { rules.load() }
-            mutableBundled.value = withContext(io) { BundledRules.load(openAsset) }
+            // Each set's rules are touched here, on io, so that the screen
+            // reading their counts never parses on the main thread.
+            mutableBundled.value = withContext(io) { BundledRules.shared(openAsset).onEach { it.loaded } }
         }
     }
 
@@ -70,6 +72,15 @@ class RoutingController(
         val before = mutableSettings.value
         if (before.mode == mode) return
         val after = before.copy(mode = mode)
+        mutableSettings.value = after
+        if (engaged()) mutableRestartNeeded.value = true
+        scope.launch { withContext(io) { preferences.save(after) } }
+    }
+
+    fun setMainlandChina(on: Boolean) {
+        val before = mutableSettings.value
+        if (before.mainlandChina == on) return
+        val after = before.copy(mainlandChina = on)
         mutableSettings.value = after
         if (engaged()) mutableRestartNeeded.value = true
         scope.launch { withContext(io) { preferences.save(after) } }

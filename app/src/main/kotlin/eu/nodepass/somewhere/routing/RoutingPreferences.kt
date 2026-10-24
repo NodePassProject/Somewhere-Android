@@ -23,7 +23,17 @@ class RoutingPreferences(
     data class Settings(
         val mode: RoutingMode = RoutingMode.Everything,
         val fallback: RouteAction = RouteAction.Tunnel,
-    )
+        /**
+         * Whether Rules mode sends mainland-China destinations direct.
+         *
+         * On by default: someone who chose Rules mode with this set shipped
+         * is, almost always, someone for whom it is the point. It changes
+         * nothing in Everything mode, which stays the app's default.
+         */
+        val mainlandChina: Boolean = true,
+    ) {
+        internal fun render(): String = "${mode.name},${fallback.name},${if (mainlandChina) "china" else "nochina"}\n"
+    }
 
     fun load(): Settings {
         if (!file.exists()) return Settings()
@@ -33,7 +43,8 @@ class RoutingPreferences(
             // A fallback of Reject would make an unreadable file into a device
             // with no network, so an unrecognised one reads as Tunnel.
             val fallback = RouteAction.entries.firstOrNull { it.name == fields.getOrNull(1) } ?: RouteAction.Tunnel
-            Settings(mode, fallback)
+            // Absent in files written before the set existed: the default.
+            Settings(mode, fallback, mainlandChina = fields.getOrNull(2) != "nochina")
         } catch (_: IOException) {
             Settings()
         }
@@ -43,9 +54,9 @@ class RoutingPreferences(
         try {
             file.parentFile?.mkdirs()
             val temporary = File(file.parentFile, "${file.name}.tmp")
-            temporary.writeText("${settings.mode.name},${settings.fallback.name}\n")
+            temporary.writeText(settings.render())
             if (!temporary.renameTo(file)) {
-                file.writeText("${settings.mode.name},${settings.fallback.name}\n")
+                file.writeText(settings.render())
                 temporary.delete()
             }
             true
