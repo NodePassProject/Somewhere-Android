@@ -80,8 +80,8 @@ x86_64 and an API 35 x86_64 emulator:**
 - `e2e-fakeip.sh` — passes over TLS and QUIC: 20 MiB by a name only the
   Portal's network can resolve, over IPv4 and a synthetic IPv6 address, and the
   origin hears only from the Portal.
-- `e2e-android.sh` — the whole instrumentation suite, **68 tests, none
-  failing**, three runs in a row. It installs, pre-grants VPN consent and runs
+- `e2e-android.sh` — the whole instrumentation suite, **70 tests, none
+  failing**. It installs, pre-grants VPN consent and runs
   with `am instrument` (`connectedAndroidTest` reinstalls and drops the
   grant), beside `quic-origin.py`, the origin and UDP echo the QUIC cases dial.
 - `e2e-tunnel-fetch.sh` — not re-run at v3.1.0; it last passed on 2026-10-21 at

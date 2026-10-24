@@ -651,6 +651,12 @@ tasks.withType<Test>().configureEach {
     inputs.dir("src/main/assets").withPropertyName("assets").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("src/main/jni").withPropertyName("native").withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("../conformance/vectors").withPropertyName("vectors").withPathSensitivity(PathSensitivity.RELATIVE)
+    // The live-Portal tests skip without these, so whether a Portal is running
+    // is an input too. Undeclared, a run with a Portal reused the results of a
+    // run without one, and reported every live test as skipped, green.
+    listOf("NOWHERE_E2E_PORTAL", "NOWHERE_E2E_KEY", "NOWHERE_E2E_PIN", "NOWHERE_BIN", "SOMEWHERE_QUIC_LIBRARY").forEach { name ->
+        inputs.property("env.$name", providers.environmentVariable(name).orElse(""))
+    }
 }
 
 // ── The shipped release APK, checked as a file ──────────────────────────────

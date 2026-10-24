@@ -228,7 +228,8 @@ class DesignRuleUiTest {
 
         listOf(
             Triple(true, false, R.string.action_disconnect),
-            Triple(false, true, R.string.home_connecting),
+            // Cancel while connecting: that is what a tap does then (docs/ux.md).
+            Triple(false, true, R.string.action_cancel),
             Triple(false, false, R.string.action_connect),
         ).forEach { (connected, connecting, action) ->
             session =
@@ -256,7 +257,7 @@ class DesignRuleUiTest {
             // file from the same field. A second state source shows up here as
             // the two disagreeing, which is precisely what was once on screen.
             compose.onAllNodesWithText(sectionLabel(otherHeading)).assertCountEquals(0)
-            listOf(R.string.action_connect, R.string.action_disconnect, R.string.home_connecting)
+            listOf(R.string.action_connect, R.string.action_disconnect, R.string.action_cancel)
                 .filter { it != action }
                 .forEach { compose.onAllNodesWithText(string(it)).assertCountEquals(0) }
         }
