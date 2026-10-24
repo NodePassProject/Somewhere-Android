@@ -292,4 +292,17 @@
     <string name="backup_too_large">檔案太大，不是備份檔案。</string>
     <string name="tunnel_bad_routes">Android 拒絕了其中一條排除路由，請檢查網路設定。</string>
     <string name="network_save_failed">設定無法儲存，沒有任何變更。</string>
+    <string name="update_check">檢查更新</string>
+    <string name="update_idle">向 GitHub Releases 查詢是否有新版本</string>
+    <string name="update_checking">正在檢查…</string>
+    <string name="update_found">有新版本 %1$s，點按開啟發佈頁</string>
+    <string name="update_current">已是最新版本</string>
+    <string name="update_no_release">尚未發佈任何版本</string>
+    <string name="update_failed">檢查失敗：%1$s</string>
+    <string name="update_automatic">自動檢查</string>
+    <string name="update_automatic_detail">每天開啟應用時檢查一次。只向 GitHub 發一個請求，不含任何關於你的資訊。</string>
+    <string name="update_available">有新版本 %1$s</string>
+    <string name="update_no_notes">已發佈比 %1$s 更新的版本。</string>
+    <string name="update_download">下載</string>
+    <string name="update_later">稍後</string>
 </resources>

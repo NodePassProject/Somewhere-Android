@@ -54,8 +54,11 @@ import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
+import eu.nodepass.somewhere.ui.openReleasePage
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.update.UpdateCheck
+import eu.nodepass.somewhere.update.UpdateController
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
 
 @Composable
@@ -65,6 +68,8 @@ fun SettingsScreen(
     refreshIntervalHours: Int = 0,
     onToggleAutomaticRefresh: (Boolean) -> Unit = {},
     onRefreshIntervalChange: (Int) -> Unit = {},
+    updateState: UpdateController.State = UpdateController.State.Idle,
+    onCheckForUpdates: () -> Unit = {},
     settings: AppSettings = AppSettings(),
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
     onOpenNetwork: () -> Unit = {},
@@ -383,6 +388,42 @@ fun SettingsScreen(
                         MonoText(BuildConfig.VERSION_NAME, colors.muted, fontSize = 12.5.sp)
                     }
                     PanelDivider()
+                    // A found release opens its page; anything else checks
+                    // again. The answer is the row's detail line.
+                    val found = ((updateState as? UpdateController.State.Done)?.result as? UpdateCheck.Available)?.release
+                    PanelRow(onClick = { if (found != null) context.openReleasePage(found.page) else onCheckForUpdates() }) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = stringResource(R.string.update_check),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                text = updateDetail(updateState),
+                                style = SomewhereType.bodySmall,
+                                color = if (found != null) colors.brand else colors.muted,
+                            )
+                        }
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = { onSettingsChange { it.copy(checkUpdates = !it.checkUpdates) } }) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = stringResource(R.string.update_automatic),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                text = stringResource(R.string.update_automatic_detail),
+                                style = SomewhereType.bodySmall,
+                                color = colors.muted,
+                            )
+                        }
+                        SomewhereSwitch(settings.checkUpdates, { on -> onSettingsChange { it.copy(checkUpdates = on) } })
+                    }
+                    PanelDivider()
                     PanelRow {
                         Text(
                             text = stringResource(R.string.settings_protocol),
@@ -600,6 +641,20 @@ private fun Context.openNotificationSettings() {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { startActivity(intent) }
 }
+
+@Composable
+private fun updateDetail(state: UpdateController.State): String =
+    when (state) {
+        UpdateController.State.Idle -> stringResource(R.string.update_idle)
+        UpdateController.State.Checking -> stringResource(R.string.update_checking)
+        is UpdateController.State.Done ->
+            when (val result = state.result) {
+                is UpdateCheck.Available -> stringResource(R.string.update_found, result.release.version.toString())
+                UpdateCheck.Current -> stringResource(R.string.update_current)
+                UpdateCheck.NoRelease -> stringResource(R.string.update_no_release)
+                is UpdateCheck.Failed -> stringResource(R.string.update_failed, result.reason)
+            }
+    }
 
 private fun Context.openSourceCode() {
     val intent =

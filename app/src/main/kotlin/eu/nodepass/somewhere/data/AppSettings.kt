@@ -66,6 +66,13 @@ data class AppSettings(
     /** Whether the per-app list shows apps that came with the device. */
     val appsShowSystem: Boolean = true,
     val appsSort: AppSort = AppSort.Name,
+    /**
+     * Ask GitHub Releases once a day whether a newer build exists.
+     *
+     * On by default, as in FlClash. One request to a URL `docs/privacy.md`
+     * names, carrying nothing that identifies anyone.
+     */
+    val checkUpdates: Boolean = true,
 ) {
     internal fun render(): String =
         buildString {
@@ -77,6 +84,7 @@ data class AppSettings(
             append("automation=").append(automation).append('\n')
             append("appsShowSystem=").append(appsShowSystem).append('\n')
             append("appsSort=").append(appsSort.name).append('\n')
+            append("checkUpdates=").append(checkUpdates).append('\n')
         }
 
     companion object {
@@ -100,6 +108,7 @@ data class AppSettings(
                 automation = fields["automation"].asBoolean(defaults.automation),
                 appsShowSystem = fields["appsShowSystem"].asBoolean(defaults.appsShowSystem),
                 appsSort = AppSort.entries.firstOrNull { it.name == fields["appsSort"] } ?: defaults.appsSort,
+                checkUpdates = fields["checkUpdates"].asBoolean(defaults.checkUpdates),
             )
         }
 

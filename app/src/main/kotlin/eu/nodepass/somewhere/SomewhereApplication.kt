@@ -18,6 +18,8 @@ import eu.nodepass.somewhere.routing.RoutingPreferences
 import eu.nodepass.somewhere.routing.RuleStore
 import eu.nodepass.somewhere.subscription.RefreshPreferences
 import eu.nodepass.somewhere.subscription.SubscriptionFetcher
+import eu.nodepass.somewhere.update.UpdateChecker
+import eu.nodepass.somewhere.update.UpdateController
 import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -95,6 +97,16 @@ class SomewhereApplication : Application() {
 
     /** The app's own preferences: how screens look, what the app does unasked. */
     val settings: AppSettingsStore by lazy { AppSettingsStore(File(filesDir, "settings/app.txt")) }
+
+    /** Whether a newer release exists. Process-wide, so a check is not repeated per activity. */
+    val updates: UpdateController by lazy {
+        UpdateController(
+            checker = UpdateChecker(BuildConfig.VERSION_NAME),
+            file = File(filesDir, "update/state.txt"),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main),
+            io = Dispatchers.IO,
+        )
+    }
 
     /** What the device has installed, for the screen that offers a choice. */
     val installedApps: PackageManagerApps by lazy { PackageManagerApps(this) }

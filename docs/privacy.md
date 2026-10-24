@@ -1,7 +1,7 @@
 # Privacy
 
 > Applies to Somewhere for Android, package `eu.nodepass.somewhere`.
-> Last reviewed 2026-10-21, against the source at that date.
+> Last reviewed 2026-10-24, against the source at that date.
 
 ## The short version
 
@@ -12,8 +12,15 @@ opt-out: absent. The dependency list in
 analytics or reporting library, and a reader can check that in one pass, which
 is the point of saying it this way rather than promising it.
 
-Everything the app stores stays on the device. Everything it sends goes to a
-server **you configured**, and nowhere else.
+Everything the app stores stays on the device. What it sends goes to a server
+**you configured**, or — for one request, to find out whether a newer version
+exists — to GitHub, where this project publishes its releases. **Every address
+the app itself contacts is listed below**, with what it sends. None of them
+receives anything that identifies you, this device or this installation.
+
+The rule this document holds the app to is simple: it does not collect
+anything about you, and it does not send anything anywhere you could not read
+about here first.
 
 ## What is stored on the device
 
@@ -39,8 +46,11 @@ not because it is unusual.
 
 ## What leaves the device, and to where
 
-**To the Portal you configured.** Your tunnelled traffic, plus a 32-byte
-authentication frame per connection. The Portal necessarily sees the addresses
+**To the Portal you configured.** Your tunnelled traffic, plus a 16-byte
+authentication frame per connection, and over TLS with Morph on a 64-byte
+prelude whose last bytes carry a random number this app chose and a counter, so
+that the Portal can refuse a recorded connection played back to it. The number
+is new each time the app starts and means nothing outside that Portal. The Portal necessarily sees the addresses
 and names you connect to — that is what a tunnel is. What it does with them is
 its operator's policy, not this app's, and this app has no way to constrain it.
 
@@ -73,9 +83,30 @@ node's key, every subscription URL, your rules, settings and per-app list. The
 app says so before it writes one. On Android 9 and older, shared folders such as
 Downloads can be read by other apps.
 
-**Nowhere else.** No third party receives anything. The app does not look up
-your outbound IP address or test which services are reachable, which some
-clients do through third-party services.
+**To GitHub, to check for a newer version.** Once a day when the app is
+opened, while **Settings → About → Check automatically** is on (it is on by
+default, and one tap turns it off), and whenever you tap **Check for updates**:
+
+```text
+GET https://api.github.com/repos/NodePassProject/Somewhere-Android/releases/latest
+User-Agent: Somewhere/<this version>
+Accept: application/vnd.github+json
+```
+
+Nothing else is in the request: no identifier, no list of anything, no
+statistics. GitHub sees the request and the address it came from, as it does
+for anyone who opens a GitHub page; what GitHub does with that is its own
+policy. If a newer release exists, **Download** opens its page on
+`github.com` in your browser. The app never downloads or installs anything by
+itself.
+
+The request goes over your ordinary network connection, not through the
+tunnel: the app's own traffic is always kept out of its own tunnel.
+
+**That is the whole list.** The app does not look up your outbound IP address,
+does not test which services are reachable, and contacts no address that is
+not named in this section. A new kind of request is added to this list in the
+same change that adds it to the app.
 
 ## What is not collected
 
@@ -102,7 +133,7 @@ worth reading:
 
 ## The Activity screen
 
-The Logs tab shows three things, all held in memory and never written to
+The Activity screen (the **Logs** tab) shows three things, all held in memory and never written to
 storage:
 
 - **Connections**: what the tunnel is carrying now — destination as host and
@@ -133,7 +164,7 @@ public issue trackers, and helpfulness is how credentials get published.
 
 | Permission | Why |
 |---|---|
-| `INTERNET` | To reach the Portal and the subscription URL |
+| `INTERNET` | To reach the Portal, the subscription URL and, for the update check, GitHub |
 | `ACCESS_NETWORK_STATE` | To notice when the network changes under a live tunnel |
 | `BIND_VPN_SERVICE` | To establish the tunnel. Android shows its own consent dialog and the tunnel cannot start without it |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | A tunnel must survive the app being backgrounded, which is the normal case: nobody watches a VPN |

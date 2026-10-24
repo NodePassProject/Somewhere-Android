@@ -64,6 +64,7 @@ import eu.nodepass.somewhere.ui.screens.ScanScreen
 import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.update.UpdateController
 import eu.nodepass.somewhere.vpn.ActivityExport
 import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import eu.nodepass.somewhere.vpn.TunnelController
@@ -117,6 +118,8 @@ fun SomewhereApp(
     onExportBackup: () -> Unit = {},
     onImportBackup: () -> Unit = {},
     backupMessage: Int? = null,
+    /** Release checks. Null in previews and tests, which have no network to ask. */
+    updates: UpdateController? = null,
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -289,6 +292,8 @@ fun SomewhereApp(
                         onExportBackup = onExportBackup,
                         onImportBackup = onImportBackup,
                         backupMessage = backupMessage,
+                        updateState = updates?.state?.collectAsState()?.value ?: UpdateController.State.Idle,
+                        onCheckForUpdates = { updates?.checkNow() },
                         settings = current,
                         onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
@@ -309,6 +314,12 @@ fun SomewhereApp(
                     )
                 }
             }
+        }
+
+        // Over whatever screen is open: an automatic check finishes when it
+        // finishes, and the answer is the same wherever the user is.
+        updates?.offer?.collectAsState()?.value?.let { release ->
+            UpdateDialog(release, onLater = { updates.dismiss(release) })
         }
 
         if (tab != null) {

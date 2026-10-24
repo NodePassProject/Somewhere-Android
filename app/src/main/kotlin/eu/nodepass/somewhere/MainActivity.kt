@@ -162,6 +162,7 @@ class MainActivity : ComponentActivity() {
         // and none of them should be able to bring the tunnel up through it.
         val fromLauncher = intent?.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)
         if (savedInstanceState == null && fromLauncher && application.settings.settings.value.connectOnLaunch) connectOnLaunch()
+        if (savedInstanceState == null) application.updates.checkIfDue(application.settings.settings.value.checkUpdates)
 
         // Recents follows the switch while the app is open, so turning it on
         // takes effect without a restart.
@@ -217,6 +218,7 @@ class MainActivity : ComponentActivity() {
                         onExportBackup = { exportBackup.launch(backupFileName()) },
                         onImportBackup = { importBackup.launch(arrayOf("application/json", "application/octet-stream", "text/*")) },
                         backupMessage = backupMessage,
+                        updates = application.updates,
                     )
                 }
             }
