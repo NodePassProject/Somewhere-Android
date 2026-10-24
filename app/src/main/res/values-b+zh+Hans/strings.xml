@@ -185,6 +185,7 @@
     <string name="tunnel_no_apps">没有选中任何已安装的应用，隧道将不传输任何流量。</string>
     <string name="tunnel_certificate_refused">该节点的证书未被接受。使用自动生成证书的 Portal 需要 pin；证书受本设备信任的 Portal 两者都不需要。</string>
     <string name="home_connecting">连接中…</string>
+    <string name="home_fell_back_to_tls">当前网络下 QUIC 没有应答，此节点改走同端口的 TLS。下次连接会再次尝试 QUIC。</string>
     <string name="nodes_automatic">自动</string>
     <string name="nodes_automatic_detail">自动使用可用的最佳节点。当前：%1$s</string>
     <string name="nodes_automatic_none">自动使用可用的最佳节点（暂无可用节点）。</string>

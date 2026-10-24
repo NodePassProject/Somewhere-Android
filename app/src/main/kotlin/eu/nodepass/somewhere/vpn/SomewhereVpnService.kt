@@ -105,6 +105,9 @@ class SomewhereVpnService : VpnService() {
         const val ACTION_STOP = "eu.nodepass.somewhere.STOP"
         const val EXTRA_NODE_URL = "node"
 
+        /** How long the first QUIC handshake of a tunnel may take before TLS is tried. */
+        private const val STARTUP_QUIC_HANDSHAKE_MILLIS = 6_000L
+
         /**
          * Whether an unreachable node may be swapped for another.
          *
@@ -412,7 +415,11 @@ class SomewhereVpnService : VpnService() {
         // the Portal answered, and every other node will answer the same way to
         // the same wrong pin — so it stops here instead of walking the list.
         try {
-            quicConnection?.current()
+            // Shorter than a rebuild's wait: a Portal's own handshake deadline
+            // is five seconds, so a QUIC handshake not done in six is not
+            // coming, and on a network that drops UDP every second past that
+            // was a second before the TLS fallback below could even start.
+            quicConnection?.current(handshakeMillis = STARTUP_QUIC_HANDSHAKE_MILLIS)
         } catch (error: Exception) {
             Log.w(TAG, "the QUIC Portal did not answer: ${error.message}")
             val refused =
@@ -687,14 +694,14 @@ class SomewhereVpnService : VpnService() {
         private var connection: QuicConnection? = null
         private var generation = 0
 
-        fun current(): QuicConnection =
+        fun current(handshakeMillis: Long? = null): QuicConnection =
             synchronized(lock) {
                 connection?.takeIf { it.isAlive }?.let { return it }
                 runCatching { connection?.close() }
                 generation++
                 Log.i(TAG, "opening QUIC connection, generation $generation")
                 open().also {
-                    it.completeHandshake()
+                    if (handshakeMillis == null) it.completeHandshake() else it.completeHandshake(handshakeMillis)
                     connection = it
                 }
             }

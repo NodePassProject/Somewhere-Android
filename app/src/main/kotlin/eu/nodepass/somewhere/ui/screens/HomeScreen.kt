@@ -135,6 +135,7 @@ fun HomeScreen(
             SessionSnapshot.DISCONNECTED.copy(
                 connected = tunnel is TunnelState.Connected,
                 connecting = tunnel is TunnelState.Connecting,
+                fellBackToTls = (tunnel as? TunnelState.Connected)?.fellBackToTls == true,
                 measured = traffic.measured,
                 upstreamBytesPerSecond = traffic.upstreamBytesPerSecond,
                 downstreamBytesPerSecond = traffic.downstreamBytesPerSecond,
@@ -286,7 +287,7 @@ internal fun Home(
                 icon = SomewhereIcons.ArrowUp,
                 color = colors.direction(upstream = true).figure,
                 tint = colors.direction(upstream = true).tint,
-                carrier = carrierLabel(node.url.net),
+                carrier = carrierLabel(if (session.fellBackToTls) NextHopCarrier.Tcp else node.url.net),
                 bytesPerSecond = session.upstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.upstreamOfPeak else 0f,
                 history = upstreamHistory.takeIf { session.measured }.orEmpty(),
@@ -296,11 +297,20 @@ internal fun Home(
                 icon = SomewhereIcons.ArrowDown,
                 color = colors.direction(upstream = false).figure,
                 tint = colors.direction(upstream = false).tint,
-                carrier = carrierLabel(node.url.net),
+                carrier = carrierLabel(if (session.fellBackToTls) NextHopCarrier.Tcp else node.url.net),
                 bytesPerSecond = session.downstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.downstreamOfPeak else 0f,
                 history = downstreamHistory.takeIf { session.measured }.orEmpty(),
             )
+            // The cards name the carrier in use; this says why it is not the
+            // one the link asked for, which would otherwise look like a bug.
+            if (session.connected && session.fellBackToTls) {
+                Text(
+                    text = stringResource(R.string.home_fell_back_to_tls),
+                    style = SomewhereType.bodySmall,
+                    color = colors.muted,
+                )
+            }
         }
 
         SessionFacts(session, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))

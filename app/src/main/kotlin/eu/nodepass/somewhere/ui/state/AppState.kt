@@ -93,6 +93,8 @@ data class SessionSnapshot(
     val connected: Boolean,
     /** Between the tap and the TUN. Not [connected], and not disconnected either. */
     val connecting: Boolean,
+    /** A QUIC node carried over TLS on the same port, because QUIC did not answer. */
+    val fellBackToTls: Boolean = false,
     /**
      * Whether the figures below were measured.
      *

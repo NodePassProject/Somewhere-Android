@@ -223,6 +223,7 @@
     <string name="tunnel_no_apps">No installed application is selected, so the tunnel would carry nothing.</string>
     <string name="tunnel_certificate_refused">This node\'s certificate was not accepted. A Portal on a generated certificate needs a pin; one with a certificate this device trusts needs neither.</string>
     <string name="home_connecting">Connecting…</string>
+    <string name="home_fell_back_to_tls">QUIC did not answer on this network, so this node is carried over TLS on the same port. The next connect tries QUIC again.</string>
     <string name="nodes_automatic">Automatic</string>
     <string name="nodes_automatic_detail">The best node that answers. Now: %1$s</string>
     <string name="nodes_automatic_none">The best node that answers, once one has.</string>
