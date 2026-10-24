@@ -13,6 +13,11 @@ import eu.nodepass.somewhere.protocol.session.Flow
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.PacketFlow
 import eu.nodepass.somewhere.protocol.target.Target
+import eu.nodepass.somewhere.routing.DirectDialer
+import eu.nodepass.somewhere.routing.RouteAction
+import eu.nodepass.somewhere.routing.Router
+import eu.nodepass.somewhere.routing.RoutingMode
+import eu.nodepass.somewhere.routing.RoutingRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,6 +54,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * is bounded here rather than left to grow: [MAX_FLOWS] concurrent relays, and
  * anything beyond is dropped with a word in the log rather than silently.
  *
+ * ## Routed like TCP
+ *
+ * Each relay is decided by the same [Router] as a TCP connection, once, when
+ * it opens. A DIRECT destination gets a protected socket of its own and never
+ * reaches the Portal; a REJECT one is dropped, which for QUIC is what sends
+ * the application back to TCP. It once went to the Portal whatever the rules
+ * said, so HTTP/3 to a site the user had marked DIRECT, and UDP to the LAN,
+ * left through the Portal — invisibly, because a QUIC connection that works
+ * looks the same whichever way it went.
+ *
  * ## Reaping
  *
  * A UDP flow has no close to wait for. Each relay is closed once it has been
@@ -66,6 +81,10 @@ class UdpRelay(
     private val tracker: ConnectionTracker? = null,
     /** Who opened a relay, by app label; see [NowhereFlowHandler]. */
     private val ownerOf: (OwnerQuery) -> String? = { null },
+    /** The same decision the TCP path makes. See the class comment. */
+    private val router: Router = Router({ listOf(RoutingRules.EMPTY) }, { RoutingMode.Everything }),
+    /** Where a DIRECT relay's socket comes from. */
+    private val direct: DirectDialer = DirectDialer(protect = { false }),
 ) {
     private companion object {
         const val TAG = "UdpRelay"
@@ -106,6 +125,8 @@ class UdpRelay(
         val isIpv6: Boolean,
         /** The synthetic address this relay is holding, or null if it holds none. */
         val heldAddress: ByteArray?,
+        /** Straight out rather than through the Portal. */
+        val direct: Boolean,
     ) {
         val outbound = Channel<ByteArray>(capacity = Channel.BUFFERED)
 
@@ -180,7 +201,17 @@ class UdpRelay(
                 }
             }
 
-        val relay = Relay(key, isIpv6, if (resolved.retained) dialAddress.copyOf() else null)
+        val action = router.decide(target)
+        if (action == RouteAction.Reject) {
+            // As for TCP: a decision, logged, and nothing on the wire to say
+            // so. The synthetic address was never taken, so nothing to release.
+            Log.i(TAG, "a rule rejects $target")
+            if (resolved.retained) fakeIp.release(dialAddress)
+            return false
+        }
+
+        val relay =
+            Relay(key, isIpv6, if (resolved.retained) dialAddress.copyOf() else null, direct = action == RouteAction.Direct)
         relay.lastUsed = now()
         relay.outbound.trySend(data)
         if (relays.putIfAbsent(key, relay) != null) {
@@ -189,7 +220,11 @@ class UdpRelay(
             return relays[key]?.outbound?.trySend(data)?.isSuccess == true
         }
         relay.tracked =
-            tracker?.open(ConnectionProtocol.Udp, TargetText.describe(target), ConnectionRoute.Portal) {
+            tracker?.open(
+                ConnectionProtocol.Udp,
+                TargetText.describe(target),
+                if (relay.direct) ConnectionRoute.Direct else ConnectionRoute.Portal,
+            ) {
                 // Asked from the main thread; closing a flow can write to the
                 // network, so it happens on the relay's own scope.
                 relay.job?.cancel()
@@ -215,6 +250,11 @@ class UdpRelay(
                 ),
             ),
         )
+
+        if (relay.direct) {
+            serveDirect(relay, target, first)
+            return
+        }
 
         // Over QUIC the first packet is not framed: it goes as a DATAGRAM once
         // the Portal has answered. The session knows which carrier it is on, so
@@ -263,6 +303,39 @@ class UdpRelay(
         }
         // The dial carried this one; the pump never sees it.
         meter.recordUpstream(framed.size)
+        relay.up(first.size)
+        val up = scope.launch { pumpUp(relay, flow) }
+        val down = scope.launch { pumpDown(relay, flow) }
+        val reaper = scope.launch { reap(relay) }
+        up.join()
+        down.join()
+        reaper.cancel()
+        close(relay)
+    }
+
+    /** A relay a rule sent straight out: the same pumps, over a protected socket. */
+    private suspend fun serveDirect(
+        relay: Relay,
+        target: Target,
+        first: ByteArray,
+    ) {
+        val opened = withContext(Dispatchers.IO + NonCancellable) { direct.datagram(target) }
+        val flow =
+            when (opened) {
+                is DecodeResult.Ok -> opened.value
+                is DecodeResult.Invalid -> {
+                    Log.w(TAG, "direct UDP to $target failed: ${opened.reason.detail}")
+                    close(relay)
+                    return
+                }
+            }
+        relay.flow = flow
+        if (relay.outbound.isClosedForSend) {
+            close(relay)
+            return
+        }
+        withContext(Dispatchers.IO) { flow.sendPacket(first) }
+        meter.recordUpstream(first.size)
         relay.up(first.size)
         val up = scope.launch { pumpUp(relay, flow) }
         val down = scope.launch { pumpDown(relay, flow) }

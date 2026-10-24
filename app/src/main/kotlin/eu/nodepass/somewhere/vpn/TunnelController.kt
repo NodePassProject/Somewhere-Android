@@ -41,6 +41,12 @@ sealed interface TunnelState {
          * from.
          */
         val nodeUrl: String = "",
+        /**
+         * A QUIC node that did not answer over QUIC and is carried over TLS on
+         * the same port for this session. Shown, because the link says QUIC
+         * and the user should not have to read a log to learn otherwise.
+         */
+        val fellBackToTls: Boolean = false,
     ) : TunnelState {
         // The URL carries the shared key, and a data class prints every field.
         override fun toString(): String = "Connected(node=$node, sinceElapsedRealtime=$sinceElapsedRealtime)"

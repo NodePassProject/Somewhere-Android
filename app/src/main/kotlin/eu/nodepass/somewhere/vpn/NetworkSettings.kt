@@ -14,7 +14,8 @@ import java.io.IOException
  * the screen that writes it may not be open. Read once per tunnel, like the
  * per-app selection and the rules: a change applies at the next connect.
  *
- * Every default is the behaviour before the setting existed.
+ * Every default is the behaviour before the setting existed, except
+ * [excludeLocal]: see there.
  */
 data class NetworkSettings(
     /**
@@ -22,8 +23,14 @@ data class NetworkSettings(
      * unique-local and multicast, both families. For "everything through the
      * Portal" users, whose printer otherwise went to a Portal that has its own
      * 192.168.0.0/16 and not theirs. Rules mode already sends them direct.
+     *
+     * **On by default**, as in mainstream clients. Off, a new user's printer,
+     * NAS and router page went to the Portal in the default mode and simply
+     * stopped answering, which reads as the tunnel breaking the LAN. The
+     * resolver and the fake-IP pools stay inside whatever this says; see
+     * [TunConfiguration.plan].
      */
-    val excludeLocal: Boolean = false,
+    val excludeLocal: Boolean = true,
     /** More ranges to leave out, as the user typed them, already validated. */
     val excludedRoutes: List<TunConfiguration.Cidr> = emptyList(),
     val mtu: Int = TunConfiguration.MTU,
@@ -121,7 +128,10 @@ data class NetworkSettings(
                     }.toMap()
             val defaults = NetworkSettings()
             return NetworkSettings(
-                excludeLocal = fields["excludeLocal"] == "true",
+                // An unreadable value is the default, not "off": with the
+                // default on, reading it as off would put the LAN back through
+                // the Portal on a file nobody chose to write that way.
+                excludeLocal = fields["excludeLocal"]?.toBooleanStrictOrNull() ?: defaults.excludeLocal,
                 excludedRoutes = fields["excludedRoutes"]?.let(::parseRoutes) ?: defaults.excludedRoutes,
                 // Clamped on read: a hand-edited file must still build a TUN.
                 mtu = fields["mtu"]?.toIntOrNull()?.coerceIn(MIN_MTU, MAX_MTU) ?: defaults.mtu,

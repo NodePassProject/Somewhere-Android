@@ -37,11 +37,21 @@ class NetworkSettingsTest {
     }
 
     @Test
-    fun `defaults are the tunnel as it was`() {
-        val plan = TunConfiguration.plan(NetworkSettings().exclusions, NetworkSettings().mtu, 35)
+    fun `defaults keep local networks out and nothing else`() {
+        // The one default that is not the tunnel as it was: a new user's LAN
+        // stays on the LAN. Everything else is as before.
+        assertTrue(NetworkSettings().excludeLocal)
+        assertEquals(NetworkSettings.LOCAL_RANGES, NetworkSettings().exclusions)
+        val plan = TunConfiguration.plan(NetworkSettings(excludeLocal = false).exclusions, NetworkSettings().mtu, 35)
         assertEquals(TunConfiguration.routes, plan.routes)
         assertTrue(plan.excludes.isEmpty())
         assertEquals(1500, plan.mtu)
+    }
+
+    @Test
+    fun `a file that turned local networks off keeps them off, and an unreadable one gets the default`() {
+        assertFalse(NetworkSettings.parse("excludeLocal=false\n").excludeLocal)
+        assertTrue(NetworkSettings.parse("mtu=1400\n").excludeLocal)
     }
 
     @Test
@@ -114,7 +124,7 @@ class NetworkSettingsTest {
         assertEquals(1500, loaded.mtu)
         assertTrue(loaded.excludedRoutes.isEmpty())
         assertTrue(loaded.dnsServers.isEmpty())
-        assertFalse(loaded.excludeLocal)
+        assertTrue("an unreadable value is the default", loaded.excludeLocal)
     }
 
     @Test

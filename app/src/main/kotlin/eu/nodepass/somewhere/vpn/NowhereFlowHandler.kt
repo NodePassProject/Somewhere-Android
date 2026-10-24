@@ -249,7 +249,7 @@ class NowhereFlowHandler(
     private val dns = DnsInterceptor(fakeIp, synthesiseIpv6 = TunConfiguration.carriesIpv6)
 
     /** Datagrams, carried as UDP over stream. Everything DNS cannot answer lands here. */
-    private val udp = UdpRelay(session, fakeIp, meter, pump, scope, tracker, ownerOf)
+    private val udp = UdpRelay(session, fakeIp, meter, pump, scope, tracker, ownerOf, router, direct)
     private val nextId = AtomicLong(1)
     private val connections = ConcurrentHashMap<Long, Connection>()
 

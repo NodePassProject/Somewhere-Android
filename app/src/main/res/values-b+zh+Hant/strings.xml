@@ -174,6 +174,9 @@
     <string name="tunnel_bad_node">無法讀取該節點。</string>
     <string name="tunnel_unresolved">無法解析該節點的位址。</string>
     <string name="tunnel_quic_unreachable">該節點沒有透過 QUIC 回應。</string>
+    <string name="tunnel_tls_unreachable">該節點沒有透過 TLS 回應。</string>
+    <string name="tunnel_quic_and_tls_unreachable">該節點在 QUIC 和同連接埠的 TLS 上都沒有回應。</string>
+    <string name="tunnel_handshake_failed">該節點有回應，但 TLS 交握失敗。請確認 Morph 設定與 Portal 一致。</string>
     <string name="tile_connecting">正在連線…</string>
     <string name="settings_refresh_auto">自動重新整理</string>
     <string name="settings_refresh_auto_detail">每 %1$d 小時一次，需有網路。預設關閉：重新整理會把訂閱權杖送往儀表板。</string>

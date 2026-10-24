@@ -9,10 +9,15 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.frame.FlowKind
 import eu.nodepass.somewhere.protocol.frame.SetupResult
 import eu.nodepass.somewhere.protocol.session.Flow
+import eu.nodepass.somewhere.protocol.session.PacketFlow
 import eu.nodepass.somewhere.protocol.target.Target
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 
 /** Why a direct connection did not happen. */
 sealed interface DirectReason : DecodeReason {
@@ -72,6 +77,14 @@ class DirectDialer(
     private val protect: (Socket) -> Boolean,
     private val connectTimeoutMillis: Int = DEFAULT_CONNECT_TIMEOUT_MILLIS,
     private val open: () -> Socket = ::Socket,
+    /**
+     * `VpnService.protect` for a datagram socket.
+     *
+     * Refuses by default, so a caller that forgot to pass one gets no direct
+     * UDP at all rather than datagrams that loop back into the tunnel.
+     */
+    private val protectDatagram: (DatagramSocket) -> Boolean = { false },
+    private val openDatagram: () -> DatagramSocket = { DatagramSocket(null) },
 ) {
     fun connect(target: Target): DecodeResult<Flow> {
         if (target is Target.Ip && isSynthetic(target.octets)) {
@@ -94,6 +107,44 @@ class DirectDialer(
                 }
             socket.connect(address, connectTimeoutMillis)
             DecodeResult.Ok(DirectFlow(target, socket))
+        } catch (error: IOException) {
+            runCatching { socket.close() }
+            DecodeResult.Invalid(DirectReason.DialFailed(error.javaClass.simpleName))
+        } catch (error: SecurityException) {
+            runCatching { socket.close() }
+            DecodeResult.Invalid(DirectReason.DialFailed(error.javaClass.simpleName))
+        }
+    }
+
+    /**
+     * A UDP association that leaves the device without touching the Portal.
+     *
+     * The same two rules as [connect]: protected before anything is sent, and
+     * never to a synthetic address. A name is resolved here, on the network
+     * underneath — this process is outside its own tunnel — which is what a
+     * DIRECT rule for a name means.
+     */
+    fun datagram(target: Target): DecodeResult<PacketFlow> {
+        if (target is Target.Ip && isSynthetic(target.octets)) {
+            return DecodeResult.Invalid(DirectReason.SyntheticAddress)
+        }
+
+        val socket = openDatagram()
+        return try {
+            socket.bind(InetSocketAddress(0))
+            if (!protectDatagram(socket)) {
+                socket.close()
+                return DecodeResult.Invalid(DirectReason.NotProtected)
+            }
+            val address =
+                when (target) {
+                    is Target.Domain -> InetAddress.getByName(target.host)
+                    is Target.Ip -> InetAddress.getByAddress(target.octets)
+                }
+            // Connected, so the kernel drops datagrams from anyone else — the
+            // reply has to come from the address the device wrote to.
+            socket.connect(InetSocketAddress(address, target.port))
+            DecodeResult.Ok(DirectPacketFlow(target, socket))
         } catch (error: IOException) {
             runCatching { socket.close() }
             DecodeResult.Invalid(DirectReason.DialFailed(error.javaClass.simpleName))
@@ -156,5 +207,68 @@ private class DirectFlow(
 
     override fun close() {
         runCatching { socket.close() }
+    }
+}
+
+/**
+ * A protected UDP socket wearing the interface a tunnelled UDP flow wears.
+ *
+ * A [PacketFlow], so the relay's packet pumps carry it unchanged. The stream
+ * half of [Flow] sends and receives one datagram per call, which nothing uses
+ * but which is at least not a lie about what a datagram socket does.
+ */
+private class DirectPacketFlow(
+    override val target: Target,
+    private val socket: DatagramSocket,
+) : PacketFlow {
+    override val id: UInt = 0u
+
+    override val kind: FlowKind = FlowKind.Udp
+
+    override val setupResult: SetupResult = SetupResult.Ready
+
+    override val isOpen: Boolean get() = !socket.isClosed
+
+    private val buffer = ByteArray(MAX_DATAGRAM)
+
+    override fun sendPacket(payload: ByteArray) {
+        // Lossy, as the interface says: a datagram that cannot be sent is
+        // dropped, which is what the device's own UDP socket would do.
+        runCatching { socket.send(DatagramPacket(payload, payload.size)) }
+    }
+
+    override fun receivePacket(timeoutMillis: Long): ByteArray? {
+        socket.soTimeout = timeoutMillis.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
+        val packet = DatagramPacket(buffer, buffer.size)
+        return try {
+            socket.receive(packet)
+            packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
+        } catch (_: SocketTimeoutException) {
+            null
+        }
+    }
+
+    override fun write(bytes: ByteArray) = sendPacket(bytes)
+
+    override fun flush() = Unit
+
+    override fun read(
+        into: ByteArray,
+        offset: Int,
+        length: Int,
+    ): Int {
+        val packet = receivePacket(Long.MAX_VALUE) ?: return 0
+        val count = minOf(packet.size, length)
+        packet.copyInto(into, offset, 0, count)
+        return count
+    }
+
+    override fun close() {
+        runCatching { socket.close() }
+    }
+
+    private companion object {
+        /** The largest UDP payload over IPv4 or IPv6 without jumbograms. */
+        const val MAX_DATAGRAM = 65_535
     }
 }

@@ -88,6 +88,37 @@ class FailoverOnDeviceTest {
     }
 
     @Test
+    fun aNodeNamedByHostIsLookedUpRatherThanReportedUnresolvable() {
+        // Every other case here uses an `.invalid` name, which fails to resolve
+        // whether or not the lookup is allowed to run — so none of them could
+        // tell a lookup that ran from one the platform refused. `localhost`
+        // resolves on every device. Port 1 has nothing listening, so the
+        // attempt must end as unreachable *after* the name was looked up.
+        //
+        // The service once resolved the Portal on the main thread, where
+        // StrictMode refuses any lookup by name with NetworkOnMainThreadException.
+        // The catch read that as "could not be looked up", so on a device every
+        // node named by host failed, and only nodes given as an address worked.
+        val node =
+            when (val parsed = NowhereUrl.parse("nowhere://0123456789abcdef0123456789abcdef@localhost:1")) {
+                is DecodeResult.Ok -> parsed.value
+                is DecodeResult.Invalid -> throw AssertionError(parsed.reason.detail)
+            }
+        SomewhereVpnService.start(TunnelHarness.context, node, mayFailOver = false)
+        awaitOutcome(node)
+        TunnelHarness.await("the attempt to end") { TunnelController.state.value is TunnelState.Failed }
+
+        val failed = TunnelController.state.value as TunnelState.Failed
+        // Not merely "not unresolvable": the name resolved, the dial was
+        // refused, and that is what the user must be told.
+        assertEquals(
+            "a resolvable name with nothing listening should be reported as a TLS node that did not answer",
+            eu.nodepass.somewhere.R.string.tunnel_tls_unreachable,
+            failed.reason,
+        )
+    }
+
+    @Test
     fun aSucceedingNodeClearsWhatWentBeforeIt() {
         // Recorded through the same object the service writes to, so a
         // regression in either half shows up here.

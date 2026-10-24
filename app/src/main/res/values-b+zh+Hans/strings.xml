@@ -172,6 +172,9 @@
     <string name="tunnel_bad_node">无法读取该节点。</string>
     <string name="tunnel_unresolved">无法解析该节点的地址。</string>
     <string name="tunnel_quic_unreachable">该节点没有通过 QUIC 应答。</string>
+    <string name="tunnel_tls_unreachable">该节点没有通过 TLS 应答。</string>
+    <string name="tunnel_quic_and_tls_unreachable">该节点在 QUIC 和同端口的 TLS 上都没有应答。</string>
+    <string name="tunnel_handshake_failed">该节点有应答，但 TLS 握手失败。请确认 Morph 设置与 Portal 一致。</string>
     <string name="tile_connecting">正在连接…</string>
     <string name="settings_refresh_auto">自动刷新</string>
     <string name="settings_refresh_auto_detail">每 %1$d 小时一次，需有网络。默认关闭：刷新会把订阅令牌发往面板。</string>

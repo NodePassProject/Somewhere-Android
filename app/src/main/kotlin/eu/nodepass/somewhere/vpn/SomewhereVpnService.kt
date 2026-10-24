@@ -23,6 +23,7 @@ import eu.nodepass.somewhere.apps.carriesNothing
 import eu.nodepass.somewhere.apps.ruleFor
 import eu.nodepass.somewhere.data.NodeStore
 import eu.nodepass.somewhere.dns.FakeIpPool
+import eu.nodepass.somewhere.net.DialReason
 import eu.nodepass.somewhere.net.NowhereDialer
 import eu.nodepass.somewhere.nodes.Attempt
 import eu.nodepass.somewhere.nodes.Failover
@@ -30,6 +31,7 @@ import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.session.NowhereSession
 import eu.nodepass.somewhere.protocol.session.QuicCarrier
 import eu.nodepass.somewhere.protocol.session.StreamTransport
+import eu.nodepass.somewhere.protocol.url.NextHopCarrier
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.quic.QuicConnection
 import eu.nodepass.somewhere.quic.QuicDial
@@ -43,6 +45,7 @@ import eu.nodepass.somewhere.ui.state.Format
 import kotlinx.coroutines.launch
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.util.concurrent.Executors
 
 /**
  * The tunnel.
@@ -128,7 +131,24 @@ class SomewhereVpnService : VpnService() {
         }
     }
 
-    private var pump: TunPump? = null
+    /**
+     * The one thread that starts and stops tunnels.
+     *
+     * Not the main thread, which is where the system delivers every callback
+     * below. Bringing a tunnel up resolves the Portal's name and dials it, and
+     * StrictMode refuses both there with `NetworkOnMainThreadException` — whose
+     * message is null, so it was logged as "cannot resolve <host>: null" and
+     * reported as an address that could not be looked up. Every node named by
+     * host failed that way on a device; the emulator suites used addresses and
+     * never met it. One thread rather than a pool, so that a start, a stop and
+     * a failover still happen in the order they were asked for, and the fields
+     * below are only ever written from here.
+     */
+    private val control = Executors.newSingleThreadExecutor { task -> Thread(task, "tunnel-control") }
+
+    // Volatile because the notification's rate watcher reads it from the main
+    // thread; everything else here is touched only by [control].
+    @Volatile private var pump: TunPump? = null
     private var handler: NowhereFlowHandler? = null
     private var session: NowhereSession? = null
 
@@ -165,6 +185,11 @@ class SomewhereVpnService : VpnService() {
         flags: Int,
         startId: Int,
     ): Int {
+        control.execute { handle(intent) }
+        return START_STICKY
+    }
+
+    private fun handle(intent: Intent?) {
         when (intent?.action) {
             ACTION_STOP -> {
                 teardown()
@@ -191,19 +216,23 @@ class SomewhereVpnService : VpnService() {
 
             else -> Log.w(TAG, "unknown action ${intent?.action}")
         }
-        return START_STICKY
     }
 
     override fun onRevoke() {
         // Another VPN app took over, or the user revoked consent. There is no
         // tunnel any more whatever this service thinks.
         Log.i(TAG, "consent revoked")
-        teardown()
-        stopSelf()
+        control.execute {
+            teardown()
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
-        teardown()
+        // Queued behind whatever start is in flight, so the teardown sees the
+        // tunnel that start built rather than racing it.
+        control.execute { teardown() }
+        control.shutdown()
         super.onDestroy()
     }
 
@@ -356,7 +385,7 @@ class SomewhereVpnService : VpnService() {
         // The node is the one the user configured, not `resolved`: the name to
         // verify is the host they named, and `resolved` has the address in its
         // place so that dialling it does not resolve through our own tunnel.
-        val quicConnection =
+        var quicConnection =
             if (resolved.usesQuic) {
                 ReconnectingQuic {
                     QuicDial.open(node, InetSocketAddress(portal, resolved.port), protect = { socket -> protect(socket) })
@@ -364,7 +393,9 @@ class SomewhereVpnService : VpnService() {
             } else {
                 null
             }
-        quic = quicConnection
+        // The carrier this session actually uses. The node's own, unless QUIC
+        // did not answer and the same Portal does over TLS; see below.
+        var carrier = resolved
         // Fail here rather than later: a tunnel that came up and then could not
         // reach its Portal is harder to read than one that never came up.
         //
@@ -377,31 +408,69 @@ class SomewhereVpnService : VpnService() {
             quicConnection?.current()
         } catch (error: Exception) {
             Log.w(TAG, "the QUIC Portal did not answer: ${error.message}")
-            descriptor.close()
             val refused =
                 (error as? QuicException)?.failure is QuicFailure.Untrusted || error.message?.contains("pin") == true
             if (refused) {
-                (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Refused)
-                TunnelController.report(TunnelState.Failed(R.string.tunnel_certificate_refused))
-                stopSelf()
-            } else {
-                unreachable(url, R.string.tunnel_quic_unreachable)
+                descriptor.close()
+                refused(url, R.string.tunnel_certificate_refused)
+                return
             }
-            return
+            // A Portal listens for TLS and QUIC on the same port, and the
+            // networks that throttle or drop UDP — a mainland Chinese carrier,
+            // a hotel, a corporate firewall — usually pass TCP. So before
+            // calling the node unreachable, the same Portal is tried over TLS,
+            // which the probe below does. The link is not rewritten: this is
+            // the session's carrier, and the next connect tries QUIC again.
+            runCatching { quicConnection?.close() }
+            quicConnection = null
+            carrier = resolved.copy(net = NextHopCarrier.Tcp)
+            Log.i(TAG, "trying the same Portal over TLS")
+        }
+        quic = quicConnection
+        val fellBack = carrier.net != resolved.net
+
+        // A TLS node opens nothing at startup — each flow dials its own
+        // connection — so without this a Portal that was down still came up
+        // "Connected", was recorded healthy, and failover never ran. One dial
+        // and a close proves what the QUIC check above proves: the address,
+        // the port, Morph, the certificate and the ALPN. Not the key, which
+        // only a flow tests.
+        if (!carrier.usesQuic) {
+            when (val probed = dialer.connect(carrier)) {
+                is DecodeResult.Ok -> runCatching { probed.value.close() }
+                is DecodeResult.Invalid -> {
+                    Log.w(TAG, "the TLS Portal did not answer: ${probed.reason.detail}")
+                    descriptor.close()
+                    when (probed.reason) {
+                        is DialReason.Untrusted -> refused(url, R.string.tunnel_certificate_refused)
+                        // The Portal answered and the handshake went wrong:
+                        // a Morph setting or an ALPN that does not match it.
+                        // Configuration, which the next node would not fix.
+                        DialReason.HandshakeFailed, is DialReason.AlpnRejected ->
+                            refused(url, R.string.tunnel_handshake_failed)
+                        else ->
+                            unreachable(
+                                url,
+                                if (fellBack) R.string.tunnel_quic_and_tls_unreachable else R.string.tunnel_tls_unreachable,
+                            )
+                    }
+                    return
+                }
+            }
         }
 
         val nowhere =
             NowhereSession(
                 sharedKey = node.sharedKey,
                 connect = {
-                    when (val transport = dialer.connect(resolved)) {
+                    when (val transport = dialer.connect(carrier)) {
                         is DecodeResult.Ok -> transport.value
                         is DecodeResult.Invalid -> error(transport.reason.detail)
                     }
                 },
-                quicStreams = quicConnection?.streams(),
+                quicStreams = quic?.streams(),
                 // A QUIC UDP flow sends every packet as a DATAGRAM.
-                quicDatagrams = quicConnection?.datagrams(),
+                quicDatagrams = quic?.datagrams(),
             )
 
         // Read once, at the moment the tunnel is built, exactly as the
@@ -422,7 +491,7 @@ class SomewhereVpnService : VpnService() {
                 routingSettings.fallback,
                 local = if (network.excludeLocal) bundled.map { it.loaded.rules } else emptyList(),
             )
-        val direct = DirectDialer(protect = { socket -> protect(socket) })
+        val direct = DirectDialer(protect = { socket -> protect(socket) }, protectDatagram = { socket -> protect(socket) })
         val owners = ConnectionOwners(applicationContext)
 
         val flows =
@@ -446,10 +515,10 @@ class SomewhereVpnService : VpnService() {
 
         startForegroundCompat()
         running.start()
-        // "Connected" here means the TUN is up and lwIP is running, not that
-        // any flow has reached the Portal. A probe proved the address, the
-        // port, TLS and the ALPN; the shared key is only tested when a flow
-        // opens, and the Portal answers a wrong key with silence.
+        // "Connected" here means the Portal answered on this node's carrier:
+        // the QUIC handshake or the TLS probe above proved the address, the
+        // port, Morph, the certificate and the ALPN. The shared key is only
+        // tested when a flow opens; a v3 Portal closes on a wrong one.
         // The node worked. Recorded before the state is published, so a screen
         // that reacts to Connected already sees the health that goes with it.
         val app = applicationContext as SomewhereApplication
@@ -459,9 +528,12 @@ class SomewhereVpnService : VpnService() {
                 node = node.displayName ?: "${node.host}:${node.port}",
                 sinceElapsedRealtime = android.os.SystemClock.elapsedRealtime(),
                 nodeUrl = url,
+                fellBackToTls = fellBack,
             ),
         )
-        Log.i(TAG, "tunnel up via ${node.host}:${node.port} over ${node.net.token}${if (node.morph) " with morph" else ""}")
+        val fallbackNote = if (fellBack) " (QUIC did not answer)" else ""
+        val morphNote = if (node.morph) " with morph" else ""
+        Log.i(TAG, "tunnel up via ${node.host}:${node.port} over ${carrier.net.token}$fallbackNote$morphNote")
     }
 
     /**
@@ -480,6 +552,16 @@ class SomewhereVpnService : VpnService() {
         return servers
     }
 
+    /** The node answered and said no. Recorded, reported, and not failed over. */
+    private fun refused(
+        url: String,
+        reason: Int,
+    ) {
+        (applicationContext as SomewhereApplication).nodeHealth.record(url, Attempt.Refused)
+        TunnelController.report(TunnelState.Failed(reason))
+        stopSelf()
+    }
+
     /**
      * This node could not be reached. Try the next one, or report and stop.
      *
@@ -494,6 +576,7 @@ class SomewhereVpnService : VpnService() {
      * leaves two descriptors or two pumps alive, which against a NO_SYS lwIP
      * would not complain and would break something else much later.
      */
+
     private fun unreachable(
         url: String,
         reason: Int,
