@@ -17,7 +17,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="${1:-}"
-APP_ID="${2:-}"
+APP_ID="${2:-eu.nodepass.somewhere}"
 # Upstream clone location. This suite is published, so it must not assume any
 # particular layout outside its own repository: set NOWHERE_CLONE to a checkout
 # of NodePassProject/Nowhere at the pinned baseline. The default suits a
@@ -53,6 +53,13 @@ printf 'nowhere-e2e-ok' > "$RUNDIR/probe.txt"
 (cd "$RUNDIR" && exec python3 -m http.server "$TARGET_PORT" --bind 0.0.0.0) > "$RUNDIR/target.log" 2>&1 &
 PIDS+=($!); wait_for_port "$TARGET_PORT" "target service"
 
+# The QUIC cases' own fixture: an origin on 28091 and a UDP echo on 28092, on
+# loopback, because those addresses are the Portal's view and the Portal runs
+# here. Without it every QUIC case reports DIAL_FAILED, which reads as a client
+# defect and is not one.
+python3 "$ROOT/scripts/quic-origin.py" > "$RUNDIR/quic-origin.log" 2>&1 &
+PIDS+=($!); wait_for_port 28091 "QUIC origin"
+
 # Bind 0.0.0.0 so the device can reach it through 10.0.2.2
 "$BIN" "portal://${KEY}@0.0.0.0:${PORTAL_PORT}" > "$RUNDIR/portal.log" 2>&1 &
 PIDS+=($!); wait_for_port "$PORTAL_PORT" "Portal"
@@ -78,28 +85,30 @@ export NOWHERE_E2E_PORTAL="10.0.2.2:${PORTAL_PORT}"
 export NOWHERE_E2E_KEY="$KEY"
 export NOWHERE_E2E_TARGET="10.0.2.2:${TARGET_PORT}"
 
-# VpnService shows a consent dialog. Instrumentation must pre-grant it, otherwise
-# the test hangs on the dialog.
-if [ -n "$APP_ID" ]; then
-    # `appops` is a standalone binary some images omit; `cmd appops` reaches
-    # the same service through the shell command dispatcher. Trying only the
-    # first was reported as a note and left the run to hang on a consent dialog.
-    if adb shell cmd appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1 ||
-        adb shell appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1; then
-        echo "OK  pre-granted VPN consent for $APP_ID"
-    else
-        echo "NOTE: pre-grant failed (app may not be installed yet; retry after install)"
-    fi
-fi
+# --- Install, grant, run -----------------------------------------------------
+# Installed first and run with `am instrument`, not `connectedAndroidTest`:
+# that task reinstalls the app as it starts, which drops a VPN consent granted
+# before it, and every tunnel case then fails on consent instead of testing
+# anything. VpnService shows a consent dialog that instrumentation cannot
+# dismiss, so it is pre-granted between the install and the run. `appops` is a
+# standalone binary some images omit; `cmd appops` reaches the same service.
+( cd "$PROJECT" && ./gradlew --no-daemon -q installDebug installDebugAndroidTest ) >/dev/null 2>&1 \
+    || fail "could not install the app and its tests"
+adb shell cmd appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1 ||
+    adb shell appops set "$APP_ID" ACTIVATE_VPN allow >/dev/null 2>&1 ||
+    fail "could not pre-grant VPN consent for $APP_ID"
+echo "OK  installed, VPN consent pre-granted for $APP_ID"
 
-# --- Run the tests ---------------------------------------------------------
-echo "Running connectedAndroidTest ..."
-( cd "$PROJECT" && ./gradlew --no-daemon connectedAndroidTest \
-    -PnowhereE2ePortal="$NOWHERE_E2E_PORTAL" \
-    -PnowhereE2eKey="$NOWHERE_E2E_KEY" \
-    -PnowhereE2ePin="$PIN" \
-    -PnowhereE2eTarget="$NOWHERE_E2E_TARGET" ) 2>&1 | tail -40
-STATUS=${PIPESTATUS[0]}
+echo "Running the instrumentation suite ..."
+adb shell am instrument -w \
+    -e nowhereE2ePortal "$NOWHERE_E2E_PORTAL" \
+    -e nowhereE2eKey "$NOWHERE_E2E_KEY" \
+    -e nowhereE2ePin "$PIN" \
+    -e nowhereE2eTarget "$NOWHERE_E2E_TARGET" \
+    "$APP_ID.test/androidx.test.runner.AndroidJUnitRunner" > "$RUNDIR/instrument.log" 2>&1
+grep -E '^(OK|FAILURES|Tests run)|^[0-9]+\) ' "$RUNDIR/instrument.log" | tail -40
+grep -q '^OK (' "$RUNDIR/instrument.log"
+STATUS=$?
 
 echo
 echo "--- Portal log ---"
