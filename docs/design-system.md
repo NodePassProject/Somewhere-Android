@@ -21,8 +21,10 @@ because a carrier belongs to neither direction.
 
 ## Colour
 
-Two themes, following the system setting. Contrast ratios are measured against
-each theme's own ground; AA is 4.5:1 for text.
+Two palettes, light and dark. Which one is shown is the user's choice —
+Automatic (follow the system, the default), Light or Dark; see
+[`ux.md`](ux.md#theme-mode). Contrast ratios are measured against each
+palette's own ground; AA is 4.5:1 for text.
 
 | Token | Light | | Dark | |
 |---|---|---|---|---|

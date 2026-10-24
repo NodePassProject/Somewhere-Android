@@ -121,12 +121,15 @@ New protocol code lands with a matching known-answer or behavioural case.
 
 ## Design and language
 
-Two documents in `docs/` carry the UI decisions. Both exist because nothing
+The documents in `docs/` that carry the UI decisions exist because nothing
 crashes when they are violated:
 
 - [`docs/design-system.md`](docs/design-system.md) — colour tokens for both
   themes with measured contrast, type, controls, and the four rules the UI has to
   keep. Copy values from there rather than from a mockup.
+- [`docs/ux.md`](docs/ux.md) — information architecture (which tab a feature
+  belongs on), theme modes, screen states, interaction, accessibility and
+  writing rules.
 - [`docs/i18n.md`](docs/i18n.md) — English, Simplified and Traditional Chinese,
   matched by script (`values-b+zh+Hans`) rather than by region.
 - [`docs/brand.md`](docs/brand.md) — the brand hue, which carries no protocol
