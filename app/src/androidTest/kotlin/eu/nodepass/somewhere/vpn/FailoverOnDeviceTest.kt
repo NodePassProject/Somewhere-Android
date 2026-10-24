@@ -73,9 +73,9 @@ class FailoverOnDeviceTest {
     @Test
     fun anUnresolvableNodeIsRecordedAsUnreachableRatherThanRefused() {
         // The distinction the whole policy rests on. Unreachable moves to
-        // another node; refused does not, because a Portal answers a bad key
-        // with silence and failing over on that would walk the entire list on
-        // one mistyped character.
+        // another node; refused does not, because failing over on a setting
+        // that is wrong everywhere would walk the entire list on one mistyped
+        // character.
         val node = url("no-such-host.invalid")
         SomewhereVpnService.start(TunnelHarness.context, node)
         awaitOutcome(node)

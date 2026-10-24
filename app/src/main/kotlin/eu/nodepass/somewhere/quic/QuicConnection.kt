@@ -541,8 +541,8 @@ class QuicConnection private constructor(
      * @return the count copied, or `-1` at a clean end of stream — the contract
      *   [eu.nodepass.somewhere.protocol.session.Transport] already has.
      * @throws SocketTimeoutException when nothing arrives in time, which is the
-     *   same signal a socket gives and the shape a caller already handles: a
-     *   rejected AuthFrame is answered with silence rather than a close.
+     *   same signal a socket gives and the shape a caller already handles for
+     *   a Portal that is slow or gone.
      */
     fun receive(
         streamId: Long,

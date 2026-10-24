@@ -33,8 +33,8 @@ import java.io.File
  * **[Reachable] is deliberately narrow.** It means a TLS connection completed
  * and the Portal agreed to speak this node's ALPN. It does **not** mean the
  * shared key is right: authentication is carried in the frame that opens a
- * flow, and a Portal that rejects it answers with silence rather than a close
- * (learned against a live Portal, recorded in `internal/NOTES.md`). So a green
+ * flow, and a probe opens none. (With Morph on, a wrong key is also a wrong
+ * mask and the probe fails; with it off, only the first flow finds out.) So a green
  * node here is a node whose address, port, TLS and ALPN are correct — which is
  * most of what goes wrong — and the key is proven the first time traffic moves.
  */

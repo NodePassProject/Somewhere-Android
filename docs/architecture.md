@@ -5,13 +5,14 @@ What the layers are, which way they depend, and the rules that keep them apart.
 ## The shape
 
 ```
-ui/            screens, theme, icons, presentation state
+ui/            screens, theme, icons, presentation state, the app's language
+update/        whether GitHub Releases has a newer build
   ↓
 vpn/           VpnService · TUN configuration · lwIP bridge · flow handler · tile
   ↓
 data/          NodeStore · SubscriptionStore · NodeRepository
 nodes/         NodeHealth · Failover — which node carries the traffic
-routing/       rules, the direct path, the reject path
+routing/       rules and their bundled tiers, the direct path (TCP and UDP), the reject path
 dns/           interception, the fake-IP pool, both families
 apps/          which applications the tunnel carries
   ↓
@@ -56,8 +57,9 @@ Two carriers, chosen by the node's `net`: TLS, one connection per flow
 (`DedicatedTlsLane`), and QUIC, one connection for all of them (`QuicCarrier`).
 `NowhereSession` picks between them and owns nothing else — v1's session id and
 flow-id allocator went with the Mux and split carriers they existed for.
-`morph/` is the v3 wire mask (ADR-0003); `tls/PeerVerification` is the one
-certificate decision both carriers hand their chain to.
+`morph/` is the v3 wire mask (ADR-0003) and the Authenticated Prelude that
+v3.1.0's Portals use to refuse a replayed bootstrap; `tls/PeerVerification` is
+the one certificate decision both carriers hand their chain to.
 
 ### `subscription/`
 
@@ -109,20 +111,40 @@ Compose. Three rules that are not obvious from the code:
   to a sentence a person reads is `ui/state/DialReasonText.kt`'s job, and
   shipping `detail` to a screen is a defect that has already happened once.
 
-## What is not here yet
+### `vpn/`
 
-`VpnService` and the TUN / lwIP layer. Until they exist nothing routes device
-traffic, and the home screen reports a session that is honestly disconnected.
-The layer will sit beside `net/` and feed `protocol/`; nothing above it should
-need to change to accommodate it, which is the test of whether these boundaries
-were drawn in the right places.
+The tunnel: `SomewhereVpnService`, the TUN configuration, the lwIP bridge and
+the flow handler that turns each TCP connection and UDP association lwIP hands
+up into a Portal flow or a direct one.
+
+- **The service starts and stops tunnels on one control thread**, never the
+  main thread, which is where StrictMode refuses a lookup by name — and where
+  every node named by host once failed for that reason.
+- **"Connected" means a Portal answered**: the QUIC handshake, or one TLS dial
+  and a close. A QUIC node that does not answer is tried over TLS on the same
+  port before it is called unreachable; only unreachability fails over.
+- **One `Router` decides TCP and UDP alike**, once per connection or
+  association. The structural rule tier is consulted in every mode for its
+  DIRECT answers when local networks are kept out; the policy tier (mainland
+  China) only in Rules mode, with its switch on.
+
+### `routing/`
+
+`RoutingRules` is the matcher: domain suffixes packed into one sorted byte
+array searched once per label boundary, CIDRs in a bit trie per family.
+`BundledRules` lists the shipped sets by tier and parses each once per process,
+on first use; the generated policy set compiles in a single pass from its text.
+`DirectDialer` opens what a rule sends direct — a protected TCP socket or UDP
+socket, dialled by name, never by a synthetic address.
 
 ## Testing, by layer
 
 | Layer | How it is tested |
 |---|---|
-| `protocol/` | Known-answer vectors, fuzzing, and **sixteen tests against a live Portal** — the failures that matter are the ones no fixture predicts |
+| `protocol/` | Known-answer vectors, fuzzing, and **nineteen tests against a live Portal**, the replay refusal of the Authenticated Prelude among them — the failures that matter are the ones no fixture predicts |
 | `subscription/` | A real local `HttpServer`, so the tests see the bytes actually put on the wire |
 | `net/` | Against a live Portal, including pins verified against a fingerprint read over an independent connection |
 | `data/` | Temporary directories and a real HTTP server; the round trip is fuzzed, because storage inherits every rounding error the round trip has |
-| `ui/` | Contrast and i18n rules as unit tests; the four design rules as instrumentation tests on a device |
+| `routing/` | The bundled sets against their own claims (provenance, DIRECT only, counts, no country in the structural tier), the one-pass compiler against the general path, and load time on a device |
+| `vpn/` | Instrumentation on a device with a Portal on the host, through `conformance/scripts/e2e-android.sh` |
+| `ui/` | Contrast and i18n rules as unit tests; the design rules and the update rows as instrumentation tests on a device |

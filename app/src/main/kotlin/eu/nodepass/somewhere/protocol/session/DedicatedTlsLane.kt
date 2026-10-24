@@ -133,9 +133,10 @@ class DedicatedTlsLane(
 
         // Setup is over, so the deadline that protected it comes off.
         //
-        // Until READY the timeout is the only thing between a wrong key and a
-        // hang, because a Portal answers a rejected AuthFrame with silence
-        // rather than a close. Afterwards it is the opposite: a tunnel that
+        // Until READY the timeout is what bounds a Portal that is slow or gone
+        // (a v3 Portal closes on a rejected AuthFrame, but a v1 one fell
+        // silent, and a silent one still must not hang a flow). Afterwards it
+        // is the opposite: a tunnel that
         // dropped a connection because nothing was said for fifteen seconds
         // would break every idle SSH session, every websocket and every long
         // poll — quiet is what most connections do most of the time. Observed

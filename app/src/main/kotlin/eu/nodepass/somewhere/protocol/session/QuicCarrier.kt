@@ -156,7 +156,7 @@ class QuicCarrier(
         // the stream id rather than on remembering, because a connection that
         // died and was rebuilt starts again at Stream 0 and has never
         // authenticated — a carrier that remembered having done it would send
-        // that first flow bare, and a Portal answers a bare flow with silence.
+        // that first flow bare, and a Portal does not admit a bare flow.
         // Only one stream is credited before authentication, so no later
         // stream can be opened ahead of this one.
         val authFrame =
@@ -188,8 +188,7 @@ class QuicCarrier(
         if (result.isRejection) return invalid(QuicCarrierReason.Rejected(result))
 
         // Setup is over, so the deadline that protected it comes off. Before
-        // READY it is the only thing between a wrong key and a hang, because a
-        // Portal answers a rejected AuthFrame with silence; afterwards it would
+        // READY it bounds a Portal that is slow or gone; afterwards it would
         // close every idle SSH session, websocket and long poll.
         transport.setReadTimeout(0)
 
