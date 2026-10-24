@@ -644,6 +644,13 @@ tasks.withType<Test>().configureEach {
     System.getenv("SOMEWHERE_QUIC_LIBRARY")?.takeIf { it.isNotBlank() }?.let {
         systemProperty("somewhere.quic.library", it)
     }
+    // Several unit tests read these by path — every translation, every
+    // bundled rule set — so they are inputs. Undeclared, a deleted
+    // translation left the test task up to date and the build green.
+    inputs.dir("src/main/res").withPropertyName("resources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("src/main/assets").withPropertyName("assets").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("src/main/jni").withPropertyName("native").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("../conformance/vectors").withPropertyName("vectors").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // ── The shipped release APK, checked as a file ──────────────────────────────

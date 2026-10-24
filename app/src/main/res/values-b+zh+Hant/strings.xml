@@ -35,7 +35,6 @@
     <string name="home_stat_handshake">交握</string>
     <string name="home_state_connected">已連線</string>
     <string name="home_state_disconnected">已中斷</string>
-    <string name="home_node_options">節點選項</string>
     <string name="action_connect">連線</string>
     <string name="action_disconnect">中斷連線</string>
 

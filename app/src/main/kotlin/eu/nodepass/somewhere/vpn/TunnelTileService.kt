@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.vpn
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.service.quicksettings.Tile
@@ -11,6 +12,7 @@ import android.util.Log
 import eu.nodepass.somewhere.MainActivity
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.SomewhereApplication
+import eu.nodepass.somewhere.ui.AppLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,6 +50,11 @@ import kotlinx.coroutines.launch
  * in that case. With no node at all it opens the app rather than inventing one.
  */
 class TunnelTileService : TileService() {
+    // The app's language below Android 13, where the platform does not keep it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     private var watching: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 

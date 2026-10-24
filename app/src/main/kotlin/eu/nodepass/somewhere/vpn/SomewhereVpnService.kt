@@ -42,6 +42,7 @@ import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.DirectDialer
 import eu.nodepass.somewhere.routing.Router
 import eu.nodepass.somewhere.routing.RoutingMode
+import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.ui.state.Format
 import kotlinx.coroutines.launch
 import java.net.InetAddress
@@ -90,6 +91,11 @@ import java.util.concurrent.Executors
  * dashboard's — and this client does not override it in either direction.
  */
 class SomewhereVpnService : VpnService() {
+    // The app's language below Android 13, where the platform does not keep it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     companion object {
         private const val TAG = "SomewhereVpn"
         const val CHANNEL = "tunnel"

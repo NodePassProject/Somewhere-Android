@@ -4,10 +4,12 @@
 package eu.nodepass.somewhere
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Bundle
 import android.util.Log
+import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
 import eu.nodepass.somewhere.vpn.TunnelController
 
@@ -35,6 +37,11 @@ import eu.nodepass.somewhere.vpn.TunnelController
  * without consent opens the app, where it can.
  */
 class QuickActionActivity : Activity() {
+    // The app's language below Android 13, where the platform does not keep it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         handle(intent)

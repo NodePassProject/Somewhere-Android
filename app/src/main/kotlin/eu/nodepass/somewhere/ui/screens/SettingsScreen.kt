@@ -263,25 +263,23 @@ fun SettingsScreen(
                             modifier = Modifier.weight(2f),
                         )
                     }
-                    if (AppLanguage.supported) {
-                        PanelDivider()
-                        PanelRow(onClick = { choosingLanguage = true }) {
-                            Text(
-                                text = stringResource(R.string.settings_language),
-                                fontFamily = SomewhereType.Body,
-                                fontSize = 14.sp,
-                                color = colors.ink,
-                                modifier = Modifier.weight(1f),
-                            )
-                            val current = AppLanguage.current(context)
-                            Text(
-                                text = if (current.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(current),
-                                fontFamily = SomewhereType.Body,
-                                fontSize = 13.sp,
-                                color = colors.muted,
-                            )
-                            Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
-                        }
+                    PanelDivider()
+                    PanelRow(onClick = { choosingLanguage = true }) {
+                        Text(
+                            text = stringResource(R.string.settings_language),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        val current = AppLanguage.current(context)
+                        Text(
+                            text = if (current.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(current),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 13.sp,
+                            color = colors.muted,
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
                     }
                 }
             }

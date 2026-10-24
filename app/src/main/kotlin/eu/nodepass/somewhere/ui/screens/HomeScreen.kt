@@ -268,7 +268,10 @@ internal fun Home(
                 }
                 IconSquare(
                     icon = SomewhereIcons.MoreVertical,
-                    contentDescription = stringResource(R.string.home_node_options),
+                    // What it opens, as the empty Home's button says. It was
+                    // labelled "Node options", which a screen reader announced
+                    // for a button that opens Settings.
+                    contentDescription = stringResource(R.string.settings_title),
                     onClick = onOpenSettings,
                 )
             }

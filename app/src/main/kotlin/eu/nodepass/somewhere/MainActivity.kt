@@ -4,6 +4,7 @@
 package eu.nodepass.somewhere
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -33,6 +34,7 @@ import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.subscription.SubscriptionRefreshJob
+import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.ui.SomewhereApp
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.vpn.SomewhereVpnService
@@ -52,6 +54,11 @@ import kotlinx.coroutines.withContext
  * every screen.
  */
 class MainActivity : ComponentActivity() {
+    // The app's language below Android 13, where the platform does not keep it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     private var pendingLink by mutableStateOf<String?>(null)
 
     /** What the last backup action came to, for Settings to say. */

@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.i18n
 
+import eu.nodepass.somewhere.ui.AppLanguage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,7 +20,15 @@ import javax.xml.parsers.DocumentBuilderFactory
  */
 class StringResourceTest {
     private companion object {
-        val LOCALES = listOf("values", "values-b+zh+Hans", "values-b+zh+Hant")
+        /**
+         * The resource directory for each shipping language, derived from
+         * [AppLanguage.LANGUAGES] so that adding a language is one list entry
+         * plus its files. English is the unqualified default.
+         */
+        val LOCALES: List<String> =
+            AppLanguage.LANGUAGES.map { (tag, _) ->
+                if (tag == "en") "values" else "values-b+" + tag.replace('-', '+')
+            }
 
         /**
          * Values, not prose. A user pasting one of these into an issue must
@@ -97,6 +106,47 @@ class StringResourceTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun everyLocaleTranslatesEveryString() {
+        // A string missing from a locale falls back to English mid-screen,
+        // which reads as broken. Named in full, so a contributor adding a
+        // language sees exactly what is left.
+        val base = translatableStrings("values").keys + plurals("values")
+        LOCALES.filter { it != "values" }.forEach { locale ->
+            val missing = base - (translatableStrings(locale).keys + plurals(locale))
+            assertTrue("$locale has no translation for: ${missing.sorted().joinToString()}", missing.isEmpty())
+        }
+    }
+
+    @Test
+    fun everyLanguageDirectoryIsAShippingLanguage() {
+        // A strings.xml in a directory AppLanguage does not list is a
+        // translation nobody can choose and no test checks.
+        val directories =
+            File("src/main/res")
+                .listFiles { file -> file.isDirectory && file.name.startsWith("values") && File(file, "strings.xml").exists() }!!
+                .map { it.name }
+                .toSet()
+        assertEquals(LOCALES.toSet(), directories)
+    }
+
+    private fun plurals(locale: String): Set<String> {
+        val file = File(resourceDir(locale), "strings.xml")
+        if (!file.exists()) return emptySet()
+        val nodes =
+            DocumentBuilderFactory
+                .newInstance()
+                .newDocumentBuilder()
+                .parse(file)
+                .getElementsByTagName("plurals")
+        return (0 until nodes.length)
+            .mapNotNull {
+                nodes.item(it).attributes.getNamedItem("name")?.nodeValue?.let { name ->
+                    "plurals/$name"
+                }
+            }.toSet()
     }
 
     @Test
@@ -269,7 +319,11 @@ class StringResourceTest {
                 }
             }
 
-        assertEquals("locales_config must declare exactly the shipping locales", listOf("en", "zh-Hans", "zh-Hant"), declared)
+        assertEquals(
+            "locales_config must declare exactly AppLanguage.LANGUAGES, in the same order",
+            AppLanguage.LANGUAGES.map { it.first },
+            declared,
+        )
         declared.forEach { locale ->
             assertTrue(
                 "'$locale' matches by region; locales must match by script — see docs/i18n.md",

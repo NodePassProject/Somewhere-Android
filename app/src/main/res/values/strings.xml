@@ -55,7 +55,6 @@
     <string name="home_stat_handshake">Handshake</string>
     <string name="home_state_connected">Connected</string>
     <string name="home_state_disconnected">Disconnected</string>
-    <string name="home_node_options">Node options</string>
     <string name="action_connect">Connect</string>
     <string name="action_disconnect">Disconnect</string>
 
