@@ -25,7 +25,7 @@ class SubscriptionBodyTest {
         }
 
     @Test
-    fun plainLinesAreReadAsThey() {
+    fun plainLinesAreReadAsTheyAre() {
         assertEquals(listOf("fra.example.net", "sgp.example.net"), hosts(plain))
     }
 
@@ -48,5 +48,16 @@ class SubscriptionBodyTest {
         assertTrue(Subscription.from("<html>not a feed</html>", null, null, false) is DecodeResult.Invalid)
         assertNull(Subscription.decodeBody("not base64 at all!"))
         assertNull(Subscription.decodeBody("   "))
+    }
+
+    @Test
+    fun linesThatAreNotNodesAreCountedNotSilentlyDropped() {
+        val mixed = plain + "\nvless://someone-else@host:443\n\nnot a link\n"
+        val parsed = (Subscription.from(mixed, null, null, false) as DecodeResult.Ok).value
+        assertEquals(2, parsed.nodes.size)
+        assertEquals(2, parsed.skippedLines)
+        val encoded = Base64.getEncoder().encodeToString(mixed.toByteArray())
+        assertEquals(2, (Subscription.from(encoded, null, null, false) as DecodeResult.Ok).value.skippedLines)
+        assertEquals(0, (Subscription.from(plain, null, null, false) as DecodeResult.Ok).value.skippedLines)
     }
 }

@@ -174,4 +174,6 @@ data class SubscriptionState(
     val refreshing: Boolean = false,
     /** Why the last fetch failed, rendered by the screen in its own language. */
     val failure: DecodeReason? = null,
+    /** Lines the last fetch skipped because no node could be read from them. */
+    val skippedLines: Int = 0,
 )

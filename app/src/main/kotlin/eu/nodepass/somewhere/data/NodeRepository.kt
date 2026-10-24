@@ -125,6 +125,11 @@ class NodeRepository(
     /** The ids of the subscriptions being fetched right now. */
     val refreshing: StateFlow<Set<String>> = _refreshing.asStateFlow()
 
+    private val _skippedLines = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /** Per subscription, how many lines its last fetch could not read. Absent when none. */
+    val skippedLines: StateFlow<Map<String, Int>> = _skippedLines.asStateFlow()
+
     private val _refreshFailures = MutableStateFlow<Map<String, DecodeReason>>(emptyMap())
 
     /** Each subscription's last reason for failing, absent if its last fetch worked. */
@@ -371,6 +376,7 @@ class NodeRepository(
                         _subscriptionList.value = subscriptions.loadAll()
                     }
                     _refreshFailures.update { it - id }
+                    _skippedLines.update { if (subscription.skippedLines > 0) it + (id to subscription.skippedLines) else it - id }
                 }
 
                 is DecodeResult.Invalid -> {

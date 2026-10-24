@@ -341,4 +341,8 @@
     <string name="update_no_notes">A newer version than %1$s has been published.</string>
     <string name="update_download">Download</string>
     <string name="update_later">Later</string>
+    <plurals name="subscription_skipped_lines">
+        <item quantity="one">%1$d line in this subscription is not a node this app can read, and was skipped.</item>
+        <item quantity="other">%1$d lines in this subscription are not nodes this app can read, and were skipped.</item>
+    </plurals>
 </resources>

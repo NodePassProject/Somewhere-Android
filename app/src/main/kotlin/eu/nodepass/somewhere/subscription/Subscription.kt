@@ -107,6 +107,8 @@ data class Subscription(
     val title: String?,
     /** True when the fetch crossed the network in the clear. */
     val fetchedOverPlaintext: Boolean,
+    /** Lines that were not a node this client can read, and were skipped. */
+    val skippedLines: Int = 0,
 ) {
     companion object {
         /**
@@ -126,7 +128,9 @@ data class Subscription(
             // dashboards and every v2rayN-style provider serve — only when the
             // plain reading found nothing, so a plain feed is never second-
             // guessed by a decoder that happens to accept it.
-            val nodes = parseLines(body).ifEmpty { decodeBody(body)?.let(::parseLines).orEmpty() }
+            val plainLines = nonEmptyLines(body)
+            val lines = if (plainLines.any(::isNode)) plainLines else decodeBody(body)?.let(::nonEmptyLines) ?: plainLines
+            val nodes = lines.mapNotNull { line -> (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value }
 
             if (nodes.isEmpty()) return invalid(SubscriptionReason.NoNodes)
 
@@ -135,16 +139,18 @@ data class Subscription(
                 usage = SubscriptionUsage.parse(usageHeader),
                 title = decodeTitle(titleHeader),
                 fetchedOverPlaintext = plaintext,
+                skippedLines = lines.size - nodes.size,
             ).ok()
         }
 
-        private fun parseLines(text: String): List<NowhereUrl> =
+        private fun nonEmptyLines(text: String): List<String> =
             text
                 .lineSequence()
                 .map(String::trim)
                 .filter { it.isNotEmpty() }
-                .mapNotNull { line -> (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value }
                 .toList()
+
+        private fun isNode(line: String): Boolean = NowhereUrl.parse(line) is DecodeResult.Ok
 
         /**
          * A body that is one base64 document, or null.

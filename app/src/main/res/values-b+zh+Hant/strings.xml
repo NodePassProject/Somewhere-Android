@@ -305,4 +305,7 @@
     <string name="update_no_notes">已發佈比 %1$s 更新的版本。</string>
     <string name="update_download">下載</string>
     <string name="update_later">稍後</string>
+    <plurals name="subscription_skipped_lines">
+        <item quantity="other">此訂閱中有 %1$d 行不是本應用能讀取的節點，已略過。</item>
+    </plurals>
 </resources>

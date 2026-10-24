@@ -303,4 +303,7 @@
     <string name="update_no_notes">已发布比 %1$s 更新的版本。</string>
     <string name="update_download">下载</string>
     <string name="update_later">稍后</string>
+    <plurals name="subscription_skipped_lines">
+        <item quantity="other">此订阅中有 %1$d 行不是本应用能读取的节点，已跳过。</item>
+    </plurals>
 </resources>

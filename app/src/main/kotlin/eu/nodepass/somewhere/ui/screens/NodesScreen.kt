@@ -101,6 +101,7 @@ fun NodesScreen(
     val health by nodes.healthChanges.collectAsState()
     val records by nodes.subscriptionList.collectAsState()
     val refreshFailures by nodes.refreshFailures.collectAsState()
+    val skippedLines by nodes.skippedLines.collectAsState()
     val refreshing by nodes.refreshing.collectAsState()
     var removing by remember { mutableStateOf<String?>(null) }
 
@@ -192,6 +193,7 @@ fun NodesScreen(
                     record.asState(clock = System::currentTimeMillis).copy(
                         refreshing = record.id in refreshing,
                         failure = refreshFailures[record.id],
+                        skippedLines = skippedLines[record.id] ?: 0,
                     )
                 },
             onRefresh = nodes::refreshInBackground,
@@ -493,6 +495,21 @@ private fun SubscriptionCard(
             }
         }
         subscription.failure?.let { RefreshFailure(it.asMessage()) }
+        // A partial feed says so (docs/ux.md § Screen states): a provider that
+        // added a node in a format this client does not read would otherwise
+        // look like one that never added it.
+        if (subscription.failure == null && subscription.skippedLines > 0) {
+            Text(
+                text =
+                    pluralStringResource(
+                        R.plurals.subscription_skipped_lines,
+                        subscription.skippedLines,
+                        subscription.skippedLines,
+                    ),
+                style = SomewhereType.bodySmall,
+                color = colors.warn,
+            )
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             usage?.expiresAtEpochSeconds?.let { epoch ->
                 MonoText(
