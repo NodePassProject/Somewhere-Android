@@ -23,7 +23,7 @@
     <string name="tab_home">主页</string>
     <string name="tab_nodes">节点</string>
     <string name="tab_routing">路由</string>
-    <string name="tab_logs">日志</string>
+    <string name="tab_activity">活动</string>
 
     <string name="home_connected_to">已连接到</string>
     <string name="home_not_connected">未连接</string>
@@ -78,8 +78,6 @@
     <plurals name="apps_excluded_count">
         <item quantity="other">已排除 %d 个应用</item>
     </plurals>
-
-    <string name="diagnostics_title">诊断</string>
     <string name="diagnostics_connections">连接</string>
     <string name="diagnostics_runtime">运行时</string>
     <string name="diagnostics_all_reasons">全部拒绝原因</string>
@@ -205,6 +203,8 @@
     <string name="scan_allow_camera">允许使用相机</string>
     <string name="scan_not_found">这张图片中没有找到二维码。</string>
     <string name="action_cancel">取消</string>
+    <string name="node_removed">已删除节点</string>
+    <string name="action_undo">撤销</string>
     <string name="subscription_remove">移除</string>
     <string name="subscription_remove_title">要移除这个订阅吗？</string>
     <string name="subscription_remove_detail">它带来的节点会保留，改为由你手动管理；已被订阅撤下的节点会删除。订阅链接会被忘掉。</string>

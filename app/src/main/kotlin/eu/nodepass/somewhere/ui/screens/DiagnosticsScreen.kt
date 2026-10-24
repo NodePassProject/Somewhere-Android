@@ -108,7 +108,7 @@ fun DiagnosticsScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = stringResource(R.string.diagnostics_title),
+                    text = stringResource(R.string.tab_activity),
                     style = SomewhereType.screenTitle,
                     color = colors.ink,
                     modifier = Modifier.weight(1f),

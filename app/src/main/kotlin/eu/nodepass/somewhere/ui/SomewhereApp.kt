@@ -18,7 +18,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -28,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +75,7 @@ import eu.nodepass.somewhere.update.UpdateController
 import eu.nodepass.somewhere.vpn.ActivityExport
 import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import eu.nodepass.somewhere.vpn.TunnelController
+import kotlinx.coroutines.launch
 
 /** The four destinations that carry a tab. Everything else is pushed over them. */
 enum class Tab(
@@ -78,7 +86,7 @@ enum class Tab(
     Home("home", R.string.tab_home, SomewhereIcons.TabHome),
     Nodes("nodes", R.string.tab_nodes, SomewhereIcons.TabNodes),
     Routing("routing", R.string.tab_routing, SomewhereIcons.TabRouting),
-    Logs("logs", R.string.tab_logs, SomewhereIcons.TabLogs),
+    Activity("activity", R.string.tab_activity, SomewhereIcons.TabLogs),
 }
 
 object Routes {
@@ -144,6 +152,14 @@ fun SomewhereApp(
     // same reason as [editing]: it may be a node URL with its shared key.
     var scanned by remember { mutableStateOf<String?>(null) }
 
+    // One node removed, undoable for as long as the snackbar shows. Held here
+    // and not in the back stack for the reason [editing] is: a node URL is a
+    // shared key.
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val removedText = stringResource(R.string.node_removed)
+    val undoText = stringResource(R.string.action_undo)
+
     Column(
         Modifier
             .fillMaxSize()
@@ -185,7 +201,7 @@ fun SomewhereApp(
                         onImportRules = onImportRules,
                     )
                 }
-                composable(Tab.Logs.route) {
+                composable(Tab.Activity.route) {
                     val entries by TunnelController.connectionLog.recent.collectAsState()
                     val live by TunnelController.connections.collectAsState()
                     val dns by TunnelController.dnsLog.recent.collectAsState()
@@ -234,7 +250,19 @@ fun SomewhereApp(
                         editing = editing,
                         onBack = {
                             editing = null
-                            navController.popBackStack()
+                            // Only while the editor is on top. Clearing
+                            // [editing] recomposes the leaving screen, whose
+                            // nothing-to-edit guard calls this again; a second
+                            // pop took the user from Nodes back to Home.
+                            if (navController.currentDestination?.route == Routes.EDITOR) navController.popBackStack()
+                        },
+                        onRemoved = { removed ->
+                            scope.launch {
+                                snackbar.currentSnackbarData?.dismiss()
+                                val answer =
+                                    snackbar.showSnackbar(removedText, actionLabel = undoText, duration = SnackbarDuration.Long)
+                                if (answer == SnackbarResult.ActionPerformed) nodes.restore(removed)
+                            }
                         },
                     )
                 }
@@ -313,6 +341,15 @@ fun SomewhereApp(
                         },
                     )
                 }
+            }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 12.dp)) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = colors.surfaceAlt,
+                    contentColor = colors.ink,
+                    actionColor = colors.brand,
+                    shape = RoundedCornerShape(12.dp),
+                )
             }
         }
 

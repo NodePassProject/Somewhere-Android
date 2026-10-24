@@ -73,6 +73,8 @@ fun NodeEditorScreen(
     nodes: NodeRepository,
     editing: NowhereUrl?,
     onBack: () -> Unit,
+    /** After a removal, with what it takes to undo it. */
+    onRemoved: (NodeRepository.Removed) -> Unit = {},
 ) {
     // Nothing to edit means the screen was reached by a back-stack restore
     // rather than by a tap. Leaving rather than rendering a blank form.
@@ -87,8 +89,9 @@ fun NodeEditorScreen(
             onBack()
         },
         onRemove = {
-            nodes.remove(editing)
+            val removed = nodes.remove(editing)
             onBack()
+            removed?.let(onRemoved)
         },
         onBack = onBack,
     )

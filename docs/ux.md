@@ -69,7 +69,7 @@ Home ──────────── Settings ── Network
 Nodes ─────────── Add nodes ── Scan QR code
   │               Node editor
 Routing ───────── Per-app
-Activity (tab currently labelled "Logs")
+Activity
 ```
 
 | Tab | Answers | Holds |
@@ -169,5 +169,3 @@ up must not be shown as Connected.
 
 - **The launcher icon** is being redesigned separately; the current one stays
   until it is replaced. `brand.md` constrains its hue.
-- **Renaming the Logs tab to Activity** — the screen already is one; the label,
-  the route and the strings in three locales change together.

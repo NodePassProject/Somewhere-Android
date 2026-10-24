@@ -418,12 +418,32 @@ class NodeRepository(
         synchronized(storeLock) { _nodes.value = store.addAll(nodes) }
     }
 
-    fun remove(node: NowhereUrl) {
+    /** What [remove] took out, enough to put it back exactly. */
+    data class Removed(
+        val entry: NodeStore.Entry,
+        val index: Int,
+        val wasChosen: Boolean,
+    )
+
+    fun remove(node: NowhereUrl): Removed? {
         _probes.update { it - node.toUrl() }
-        synchronized(storeLock) { _nodes.value = store.remove(node) }
+        val removed =
+            synchronized(storeLock) {
+                val before = store.load()
+                val index = before.indexOfFirst { it.url.toUrl() == node.toUrl() }
+                _nodes.value = store.remove(node)
+                if (index < 0) null else Removed(before[index], index, _choice.value == NodeChoice.Chosen(node.toUrl()))
+            }
         // A deliberate deletion, unlike a refresh that dropped the node: the
         // choice goes with it, so it cannot come back with a later import.
-        if (_choice.value == NodeChoice.Chosen(node.toUrl())) choose(NodeChoice.Automatic)
+        if (removed?.wasChosen == true) choose(NodeChoice.Automatic)
+        return removed
+    }
+
+    /** Undoes [remove]: the node, its place in the list, its subscription, and the choice if it was chosen. */
+    fun restore(removed: Removed) {
+        synchronized(storeLock) { _nodes.value = store.restore(removed.entry, removed.index) }
+        if (removed.wasChosen) choose(NodeChoice.Chosen(removed.entry.url.toUrl()))
     }
 
     fun replace(

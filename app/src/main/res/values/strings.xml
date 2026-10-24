@@ -44,7 +44,7 @@
     <string name="tab_home">Home</string>
     <string name="tab_nodes">Nodes</string>
     <string name="tab_routing">Routing</string>
-    <string name="tab_logs">Logs</string>
+    <string name="tab_activity">Activity</string>
 
     <!-- Home -->
     <string name="home_connected_to">Connected to</string>
@@ -109,7 +109,6 @@
     </plurals>
 
     <!-- Diagnostics -->
-    <string name="diagnostics_title">Diagnostics</string>
     <string name="diagnostics_connections">Connections</string>
     <string name="diagnostics_runtime">Runtime</string>
     <string name="diagnostics_all_reasons">All rejection reasons</string>
@@ -242,6 +241,8 @@
     <string name="scan_allow_camera">Allow camera</string>
     <string name="scan_not_found">No QR code was found in that image.</string>
     <string name="action_cancel">Cancel</string>
+    <string name="node_removed">Node removed</string>
+    <string name="action_undo">Undo</string>
     <string name="subscription_remove">Remove</string>
     <string name="subscription_remove_title">Remove this subscription?</string>
     <string name="subscription_remove_detail">Its nodes stay, as nodes you manage yourself; the ones it had already withdrawn go. The subscription link is forgotten.</string>

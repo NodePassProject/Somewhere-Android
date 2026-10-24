@@ -133,7 +133,7 @@ worth reading:
 
 ## The Activity screen
 
-The Activity screen (the **Logs** tab) shows three things, all held in memory and never written to
+The Activity tab shows three things, all held in memory and never written to
 storage:
 
 - **Connections**: what the tunnel is carrying now — destination as host and

@@ -233,6 +233,20 @@ class NodeStore(
         return load()
     }
 
+    /**
+     * Puts back an entry [remove] took out, where it was, with its origin and
+     * subscription. Does nothing if an identical node has been stored since.
+     */
+    fun restore(
+        entry: Entry,
+        index: Int,
+    ): List<Entry> {
+        val existing = load()
+        if (existing.any { it.url.toUrl() == entry.url.toUrl() }) return existing
+        saveEntries(existing.toMutableList().apply { add(index.coerceIn(0, size), entry) })
+        return load()
+    }
+
     fun remove(node: NowhereUrl): List<Entry> {
         val rendered = node.toUrl()
         saveEntries(load().filter { it.url.toUrl() != rendered })

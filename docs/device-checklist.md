@@ -31,17 +31,17 @@ Items marked **(device)** are ones an emulator could not settle at all.
 | A14 | Edit → Share → Copy link, then look at the clipboard preview **(device)** | Android 13+ shows the copy as sensitive (hidden), not the key |
 | A15 | Add two subscriptions | Two cards, each with its own refresh, quota, expiry and failure; Remove asks first and keeps the nodes the subscription still listed |
 
-## B · Activity (the Logs tab)
+## B · Activity
 
 | # | Do | Expect |
 |---|---|---|
-| B1 | Connect, browse for a minute, open Logs → Connections | Live connections with host and port, the **app that opened each**, TCP/UDP, PORTAL/DIRECT, bytes up and down, and an age that keeps ticking **(device: app names)** |
+| B1 | Connect, browse for a minute, open Activity → Connections | Live connections with host and port, the **app that opened each**, TCP/UDP, PORTAL/DIRECT, bytes up and down, and an age that keeps ticking **(device: app names)** |
 | B2 | Close one; then Close all, during a download | Each disappears; the app sees its connection reset; the tunnel stays up; the next download works |
-| B3 | Logs → DNS | Names with type and FAKE-IP / NODATA / RELAYED / SERVFAIL; cleared at the next connect |
-| B4 | Logs → Portal answers | READY entries say how long the flow took in ms (not a fixed figure) |
+| B3 | Activity → DNS | Names with type and FAKE-IP / NODATA / RELAYED / SERVFAIL; cleared at the next connect |
+| B4 | Activity → Portal answers | READY entries say how long the flow took in ms (not a fixed figure) |
 | B5 | Turn on **Private DNS → Automatic** in Android settings, connect, browse **(device)** | Sites load; no stream of DIAL_FAILED entries to port 853 |
 | B6 | Turn on **Private DNS → a hostname** (e.g. dns.google), connect **(device)** | Report what happens: this sends DNS over TLS outside the fake-IP layer, and names may then leave by address |
-| B7 | Logs → Export | A dialog says what the export contains; then the share sheet with a text that uses READY / DIAL_FAILED and holds no key or subscription link |
+| B7 | Activity → Export | A dialog says what the export contains; then the share sheet with a text that uses READY / DIAL_FAILED and holds no key or subscription link |
 | B8 | Home while downloading | Each direction draws its own line for the last minute; the handshake figure is a dash until traffic is measured |
 
 ## C · From outside the app

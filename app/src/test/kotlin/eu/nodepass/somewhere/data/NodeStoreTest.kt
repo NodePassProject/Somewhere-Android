@@ -322,4 +322,21 @@ class NodeStoreTest {
         assertEquals(NodeStore.Origin.Manual, after.single().origin)
         assertEquals(node(frankfurt).host, after.single().url.host)
     }
+
+    @Test
+    fun aRemovedNodeIsRestoredWhereItWasWithItsOrigin() {
+        val store = store()
+        store.add(node(frankfurt))
+        store.add(node(singapore), NodeStore.Origin.Subscription)
+        store.add(node("nowhere://0123456789abcdef0123456789abcdef@lon.example.net:443#London"))
+        val before = store.load()
+        val taken = before[1]
+
+        store.remove(taken.url)
+        val after = store.restore(taken, 1)
+
+        assertEquals(before.map { it.url.toUrl() }, after.map { it.url.toUrl() })
+        assertEquals(NodeStore.Origin.Subscription, after[1].origin)
+        assertEquals("restoring twice adds nothing", after, store.restore(taken, 0))
+    }
 }

@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -500,10 +502,14 @@ private fun PrimaryAction(
     onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
+    val haptics = LocalHapticFeedback.current
+    // Cancel while connecting, because that is what a tap does then: the
+    // state line above already says "Connecting…", and a button repeating it
+    // hid that it could stop the attempt.
     val label =
         when {
             session.connected -> R.string.action_disconnect
-            session.connecting -> R.string.home_connecting
+            session.connecting -> R.string.action_cancel
             else -> R.string.action_connect
         }
     Row(
@@ -514,7 +520,11 @@ private fun PrimaryAction(
                 .clip(RoundedCornerShape(14.dp))
                 .background(colors.primaryAction)
                 .border(1.dp, colors.primaryActionLine, RoundedCornerShape(14.dp))
-                .clickable(onClick = onClick),
+                .clickable {
+                    // The one haptic in the app (docs/ux.md § Interaction).
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    onClick()
+                },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
     ) {
