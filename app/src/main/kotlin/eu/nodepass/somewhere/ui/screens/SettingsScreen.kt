@@ -44,6 +44,7 @@ import eu.nodepass.somewhere.QuickActionActivity
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.AppSettings
 import eu.nodepass.somewhere.data.ThemeMode
+import eu.nodepass.somewhere.subscription.RefreshPreferences
 import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.Panel
@@ -63,6 +64,7 @@ fun SettingsScreen(
     automaticRefresh: Boolean = false,
     refreshIntervalHours: Int = 0,
     onToggleAutomaticRefresh: (Boolean) -> Unit = {},
+    onRefreshIntervalChange: (Int) -> Unit = {},
     settings: AppSettings = AppSettings(),
     onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
     onOpenNetwork: () -> Unit = {},
@@ -186,6 +188,29 @@ fun SettingsScreen(
                         // uses: two switch styles on one screen read as two
                         // kinds of setting.
                         SomewhereSwitch(automaticRefresh, onToggleAutomaticRefresh)
+                    }
+                    if (automaticRefresh) {
+                        PanelDivider()
+                        PanelRow {
+                            Text(
+                                text = stringResource(R.string.settings_refresh_interval),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                                modifier = Modifier.weight(0.8f),
+                            )
+                            val choices = RefreshPreferences.INTERVAL_CHOICES
+                            Segmented(
+                                options = choices.map { stringResource(R.string.settings_refresh_hours, it) },
+                                // An interval written by hand that is not one of
+                                // the choices selects none, rather than pretending.
+                                selectedIndex = choices.indexOf(refreshIntervalHours),
+                                onSelect = { index -> onRefreshIntervalChange(choices[index]) },
+                                height = 30.dp,
+                                mono = true,
+                                modifier = Modifier.weight(2f),
+                            )
+                        }
                     }
                     PanelDivider()
                     // "Only over HTTPS" was a switch over an enforcement that

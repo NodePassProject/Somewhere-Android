@@ -282,8 +282,7 @@ fun SomewhereApp(
                     // preference is a file the scheduled job also reads, and a
                     // screen holding a cached copy would disagree with it after
                     // the job cancelled its own schedule.
-                    val refreshSettings = remember { refresh.load() }
-                    var automatic by remember { mutableStateOf(refreshSettings.automatic) }
+                    var refreshSettings by remember { mutableStateOf(refresh.load()) }
                     val current by settings.settings.collectAsState()
                     SettingsScreen(
                         onOpenNetwork = { navController.navigate(Routes.NETWORK) },
@@ -293,11 +292,18 @@ fun SomewhereApp(
                         settings = current,
                         onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
-                        automaticRefresh = automatic,
+                        automaticRefresh = refreshSettings.automatic,
                         refreshIntervalHours = refreshSettings.effectiveIntervalHours,
                         onToggleAutomaticRefresh = { wanted ->
-                            automatic = wanted
-                            refresh.save(refreshSettings.copy(automatic = wanted))
+                            refreshSettings = refreshSettings.copy(automatic = wanted)
+                            refresh.save(refreshSettings)
+                            onRefreshScheduleChanged()
+                        },
+                        onRefreshIntervalChange = { hours ->
+                            refreshSettings = refreshSettings.copy(intervalHours = hours)
+                            refresh.save(refreshSettings)
+                            // Rescheduled, because a periodic job keeps the
+                            // interval it was scheduled with.
                             onRefreshScheduleChanged()
                         },
                     )

@@ -217,6 +217,8 @@
     <string name="tile_connecting">Connecting…</string>
     <string name="settings_refresh_auto">Refresh automatically</string>
     <string name="settings_refresh_auto_detail">Every %1$d hours, when the device has a network. Off by default: a refresh sends your subscription token to the dashboard.</string>
+    <string name="settings_refresh_interval">Every</string>
+    <string name="settings_refresh_hours">%1$d h</string>
     <string name="tunnel_no_consent">Android did not grant permission to create a tunnel.</string>
     <string name="tunnel_no_apps">No installed application is selected, so the tunnel would carry nothing.</string>
     <string name="tunnel_certificate_refused">This node\'s certificate was not accepted. A Portal on a generated certificate needs a pin; one with a certificate this device trusts needs neither.</string>

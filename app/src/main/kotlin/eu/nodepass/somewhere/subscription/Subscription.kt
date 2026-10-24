@@ -122,13 +122,11 @@ data class Subscription(
             titleHeader: String?,
             plaintext: Boolean,
         ): DecodeResult<Subscription> {
-            val nodes =
-                body
-                    .lineSequence()
-                    .map(String::trim)
-                    .filter { it.isNotEmpty() }
-                    .mapNotNull { line -> (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value }
-                    .toList()
+            // Plain lines first; a whole-body base64 feed — what most
+            // dashboards and every v2rayN-style provider serve — only when the
+            // plain reading found nothing, so a plain feed is never second-
+            // guessed by a decoder that happens to accept it.
+            val nodes = parseLines(body).ifEmpty { decodeBody(body)?.let(::parseLines).orEmpty() }
 
             if (nodes.isEmpty()) return invalid(SubscriptionReason.NoNodes)
 
@@ -139,6 +137,32 @@ data class Subscription(
                 fetchedOverPlaintext = plaintext,
             ).ok()
         }
+
+        private fun parseLines(text: String): List<NowhereUrl> =
+            text
+                .lineSequence()
+                .map(String::trim)
+                .filter { it.isNotEmpty() }
+                .mapNotNull { line -> (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value }
+                .toList()
+
+        /**
+         * A body that is one base64 document, or null.
+         *
+         * Standard or URL-safe alphabet, padded or not, wrapped at any width:
+         * feeds in the field are all four. Whitespace is removed before
+         * decoding because a wrapped body is still one document.
+         */
+        internal fun decodeBody(body: String): String? {
+            val compact = body.filterNot(Char::isWhitespace)
+            if (compact.isEmpty() || compact.any { it !in BASE64_ALPHABET }) return null
+            val padded = compact.trimEnd('=').let { it + "=".repeat((4 - it.length % 4) % 4) }
+            val decoder = if (compact.any { it == '-' || it == '_' }) Base64.getUrlDecoder() else Base64.getDecoder()
+            return runCatching { String(decoder.decode(padded), Charsets.UTF_8) }.getOrNull()
+        }
+
+        private val BASE64_ALPHABET: Set<Char> =
+            (('A'..'Z') + ('a'..'z') + ('0'..'9') + listOf('+', '/', '-', '_', '=')).toSet()
 
         /** `profile-title: base64:…`, or a literal. A bad encoding yields no title. */
         private fun decodeTitle(header: String?): String? {
