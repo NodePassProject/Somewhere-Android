@@ -93,6 +93,20 @@ class AppsController(
             current.copy(packages = packages)
         }
 
+    /** Adds every one of [shown] to the selection. */
+    fun selectAll(shown: List<InstalledApp>) = change { AppListView.selectAll(it, shown) }
+
+    /** Removes every one of [shown] from the selection. */
+    fun selectNone(shown: List<InstalledApp>) = change { AppListView.selectNone(it, shown) }
+
+    /**
+     * Replaces the named packages with [packages], keeping the mode.
+     *
+     * Replaces rather than adds: a pasted list is a list someone exported to
+     * get exactly this selection back.
+     */
+    fun replacePackages(packages: Set<String>) = change { it.copy(packages = packages) }
+
     /** An application's icon. Straight through; the adapter caches and threads it. */
     suspend fun icon(packageName: String) = apps.icon(packageName)
 

@@ -10,15 +10,20 @@ package eu.nodepass.somewhere.nodes
  * between the two failures decides whether moving to another node is sensible
  * or catastrophic.**
  *
- * A Portal answers a rejected authentication frame with silence rather than a
- * close — deliberately, so that failure is not an oracle for active probing.
- * That is the same shape on the wire as a Portal that is down. But the causes
- * could not be more different: one is a node that is unreachable right now, and
- * the other is a shared key that is wrong and will still be wrong on the next
+ * One failure is a node that is unreachable right now; the other is a setting
+ * — a pin, a Morph switch — that is wrong and will still be wrong on the next
  * node in the list. A client that failed over on the second walks the entire
  * list on one mistyped character and then reports the last node's failure,
  * which is the wrong node, the wrong message, and several seconds of connection
  * attempts against Portals that never had a chance.
+ *
+ * **One case cannot be told apart, and is filed as unreachable.** With Morph
+ * on, a wrong shared key is also a wrong mask, and a v3.1 Portal answers what
+ * it cannot unmask with silence and a reset, deliberately, so that it is no
+ * oracle for probing. A network that interferes after the ClientHello ends the
+ * same way. Failing over is right for the network and wasted for the key; it is
+ * chosen because the network case is the one a user cannot fix by retyping,
+ * and the message names the key first (`DialReason.Silent`).
  */
 sealed interface Attempt {
     /** A tunnel came up on this node. */
@@ -96,6 +101,18 @@ class NodeHealth(
     private val records = HashMap<String, Record>()
     private val lock = Any()
 
+    private val mutableChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
+    /**
+     * Ticks whenever an outcome is recorded or the memory is cleared.
+     *
+     * Automatic selection ranks by health, so a screen that names the node it
+     * would pick has to be told when health moves; without this it kept naming
+     * a node that had just failed while a tap connected somewhere else. Decay
+     * is not announced — it changes nothing until the next decision anyway.
+     */
+    val changes: kotlinx.coroutines.flow.StateFlow<Long> = mutableChanges
+
     fun record(
         node: String,
         attempt: Attempt,
@@ -121,6 +138,7 @@ class NodeHealth(
                 Attempt.Refused -> record.refused = true
             }
         }
+        mutableChanges.value++
     }
 
     fun health(node: String): Health =
@@ -138,7 +156,10 @@ class NodeHealth(
         }
 
     /** Forgets everything. For a user who has changed their list, or a test. */
-    fun clear() = synchronized(lock) { records.clear() }
+    fun clear() {
+        synchronized(lock) { records.clear() }
+        mutableChanges.value++
+    }
 
     /**
      * The order to try nodes in, best first.

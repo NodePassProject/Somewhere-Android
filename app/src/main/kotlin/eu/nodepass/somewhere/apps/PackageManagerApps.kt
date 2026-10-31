@@ -4,6 +4,7 @@
 package eu.nodepass.somewhere.apps
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.util.LruCache
@@ -55,8 +56,15 @@ class PackageManagerApps(
                         android.Manifest.permission.INTERNET,
                         info.packageName,
                     ) == PackageManager.PERMISSION_GRANTED,
+                // An updated system app is still a system app: it shipped with
+                // the device, and updating it did not make it the user's.
+                system = info.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0,
+                installedAt = runCatching { packages.getPackageInfo(info.packageName, 0).firstInstallTime }.getOrDefault(0L),
             )
         }
+
+    /** Every installed package name, and nothing else: one call, for the tunnel's start. */
+    fun installedPackageNames(): Set<String> = packages.getInstalledApplications(0).mapTo(HashSet()) { it.packageName }
 
     /** The candidates, put through every rule in [AppInventory]. */
     override fun inventory(): AppInventory = AppInventory.of(candidates(), self)

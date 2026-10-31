@@ -9,7 +9,7 @@
          an issue must match the specification, the source, and another user's
          log from a different locale. See docs/i18n.md. -->
     <string name="scheme_client" translatable="false">nowhere</string>
-    <string name="protocol_baseline" translatable="false">Nowhere v3.0.1</string>
+    <string name="protocol_baseline" translatable="false">Nowhere v3.1.0</string>
 
     <!-- SetupResult explanations. The identifier sits beside these in the layout,
          never inside them, so it cannot be localised by accident. Each of
@@ -44,7 +44,7 @@
     <string name="tab_home">Home</string>
     <string name="tab_nodes">Nodes</string>
     <string name="tab_routing">Routing</string>
-    <string name="tab_logs">Logs</string>
+    <string name="tab_activity">Activity</string>
 
     <!-- Home -->
     <string name="home_connected_to">Connected to</string>
@@ -55,7 +55,6 @@
     <string name="home_stat_handshake">Handshake</string>
     <string name="home_state_connected">Connected</string>
     <string name="home_state_disconnected">Disconnected</string>
-    <string name="home_node_options">Node options</string>
     <string name="action_connect">Connect</string>
     <string name="action_disconnect">Disconnect</string>
 
@@ -87,6 +86,8 @@
     <string name="routing_no_rules">No imported rule set. The bundled one still applies, and everything else goes through the Portal.</string>
     <string name="routing_bundled">Bundled: %1$s</string>
     <string name="routing_bundled_origin">%1$s · %2$d rules</string>
+    <string name="routing_mainland_china">Mainland China direct</string>
+    <string name="routing_mainland_china_rules_only">Applies in Rules mode. In Everything mode, all traffic goes through the tunnel.</string>
     <string name="routing_import">Import a rule file</string>
     <string name="routing_remove_rules">Remove</string>
     <string name="routing_restart_needed">The tunnel is still using the rules it was built with.</string>
@@ -107,7 +108,6 @@
     </plurals>
 
     <!-- Diagnostics -->
-    <string name="diagnostics_title">Diagnostics</string>
     <string name="diagnostics_connections">Connections</string>
     <string name="diagnostics_runtime">Runtime</string>
     <string name="diagnostics_all_reasons">All rejection reasons</string>
@@ -167,7 +167,7 @@
     <string name="settings_version">Version</string>
     <string name="settings_protocol">Protocol</string>
     <string name="settings_source_code">Source code</string>
-    <string name="settings_privacy_note">Somewhere does not collect analytics, does not log the sites you visit, and has no account. Your node list stays on this device.</string>
+    <string name="settings_privacy_note">Somewhere has no analytics and no account. Your nodes, and the activity it shows you, stay on this device unless you export them.</string>
 
     <string name="nodes_empty_title">No nodes yet</string>
     <string name="nodes_empty_detail">Add one from your provider\'s dashboard, or paste a link.</string>
@@ -178,6 +178,7 @@
 
     <string name="dial_unreachable">This node did not answer.</string>
     <string name="dial_handshake_failed">The secure connection could not be set up. Check that the Portal speaks Nowhere v3 (%1$s) and that both sides agree on morph.</string>
+    <string name="dial_silent">Accepted the connection, then closed it without answering. Check the key and the Morph setting; if both are right, the network may be interfering.</string>
     <string name="dial_alpn_rejected">The Portal does not speak Nowhere v3 (%1$s).</string>
     <string name="dial_unprotected">The connection to this node could not be kept outside the tunnel.</string>
     <string name="dial_unknown">This node could not be reached.</string>
@@ -209,11 +210,139 @@
     <string name="tunnel_bad_node">This node could not be read.</string>
     <string name="tunnel_unresolved">This node’s address could not be looked up.</string>
     <string name="tunnel_quic_unreachable">This node did not answer over QUIC.</string>
+    <string name="tunnel_tls_unreachable">This node did not answer over TLS.</string>
+    <string name="tunnel_tls_silent">This node accepted the connection, then closed it without answering. Check its key and Morph setting; if both are right, the network may be interfering.</string>
+    <string name="tunnel_quic_and_tls_unreachable">This node did not answer over QUIC, nor over TLS on the same port.</string>
+    <string name="tunnel_handshake_failed">This node answered, but the TLS handshake failed. Check that Morph is set the same way as on the Portal.</string>
     <string name="tile_connecting">Connecting…</string>
     <string name="settings_refresh_auto">Refresh automatically</string>
     <string name="settings_refresh_auto_detail">Every %1$d hours, when the device has a network. Off by default: a refresh sends your subscription token to the dashboard.</string>
+    <string name="settings_refresh_interval">Every</string>
+    <string name="settings_refresh_hours">%1$d h</string>
     <string name="tunnel_no_consent">Android did not grant permission to create a tunnel.</string>
     <string name="tunnel_no_apps">No installed application is selected, so the tunnel would carry nothing.</string>
     <string name="tunnel_certificate_refused">This node\'s certificate was not accepted. A Portal on a generated certificate needs a pin; one with a certificate this device trusts needs neither.</string>
     <string name="home_connecting">Connecting…</string>
+    <string name="home_fell_back_to_tls">QUIC did not answer on this network, so this node is carried over TLS on the same port. The next connect tries QUIC again.</string>
+    <string name="nodes_automatic">Automatic</string>
+    <string name="nodes_automatic_detail">The best node that answers. Now: %1$s</string>
+    <string name="nodes_automatic_none">The best node that answers, once one has.</string>
+    <string name="nodes_selected">Selected</string>
+    <string name="nodes_test_all">Test all nodes</string>
+    <string name="nodes_sort_list">Your order</string>
+    <string name="nodes_sort_latency">Latency</string>
+    <string name="nodes_sort_name">Name</string>
+    <string name="nodes_hide_unreachable">Hide unreachable</string>
+    <string name="nodes_hidden">%1$d hidden</string>
+    <string name="scan_title">Scan QR code</string>
+    <string name="scan_hint">Point the camera at a node or subscription QR code.</string>
+    <string name="scan_choose_image">Choose an image</string>
+    <string name="scan_no_camera">Camera access was not granted. An image that contains a QR code works too.</string>
+    <string name="scan_allow_camera">Allow camera</string>
+    <string name="scan_not_found">No QR code was found in that image.</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="node_removed">Node removed</string>
+    <string name="action_undo">Undo</string>
+    <string name="subscription_remove">Remove</string>
+    <string name="subscription_remove_title">Remove this subscription?</string>
+    <string name="subscription_remove_detail">Its nodes stay, as nodes you manage yourself; the ones it had already withdrawn go. The subscription link is forgotten.</string>
+    <string name="subscription_never_fetched">Not fetched yet</string>
+    <string name="import_batch_summary">Nodes: %1$d · Subscriptions: %2$d</string>
+    <string name="import_batch_rejected">Not understood</string>
+    <string name="import_batch_line">Line %1$d: %2$s</string>
+    <string name="import_add_all">Add all</string>
+    <string name="editor_share">Share</string>
+    <string name="editor_copy_link">Copy link</string>
+    <string name="editor_share_link">Share link…</string>
+    <string name="editor_show_qr">Show QR code</string>
+    <string name="editor_share_warning">The link carries this node\'s key. Anyone who has it can use the node.</string>
+    <string name="editor_link_copied">Link copied</string>
+    <string name="log_ready_unmeasured">Ready · %1$s</string>
+    <string name="diagnostics_dns">DNS</string>
+    <string name="diagnostics_portal">Portal answers</string>
+    <string name="live_empty_title">No connections right now</string>
+    <string name="live_empty_detail">Connections the tunnel carries appear here while it is up.</string>
+    <string name="live_close_all">Close all</string>
+    <string name="live_close">Close</string>
+    <string name="live_unknown_app">Unknown app</string>
+    <string name="dns_empty_title">No queries yet</string>
+    <string name="dns_empty_detail">Names the device looks up appear here while the tunnel is up.</string>
+    <string name="diagnostics_export">Export</string>
+    <string name="diagnostics_export_note">The export lists the sites and apps in these logs. It holds no node keys or subscription links.</string>
+    <string name="notification_rates">↑ %1$s   ↓ %2$s</string>
+    <string name="notification_disconnect">Disconnect</string>
+    <string name="shortcut_connect">Connect</string>
+    <string name="shortcut_disconnect">Disconnect</string>
+    <string name="shortcut_toggle">Connect or disconnect</string>
+    <string name="settings_app">App</string>
+    <string name="settings_connect_on_launch">Connect when opened</string>
+    <string name="settings_connect_on_launch_detail">Connects to the selected node whenever the app is opened. Skipped after two launches in a row end in a crash.</string>
+    <string name="settings_hide_recents">Hide from recent apps</string>
+    <string name="settings_automation">Allow other apps to connect and disconnect</string>
+    <string name="settings_automation_detail">For automation apps such as Tasker. Any installed app could then turn the tunnel off without asking you. Actions: %1$s</string>
+    <string name="settings_notifications_off">Notifications are off, so the tunnel runs with nothing on screen saying so.</string>
+    <string name="settings_notifications_allow">Allow notifications</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="theme_system">Automatic</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_language">Language</string>
+    <string name="language_system">Device language</string>
+    <string name="shortcut_toggle_short">Toggle</string>
+    <string name="apps_show_system">System apps</string>
+    <string name="apps_sort_name">Name</string>
+    <string name="apps_sort_installed">Newest</string>
+    <string name="apps_select_all">Select all</string>
+    <string name="apps_select_none">Select none</string>
+    <string name="apps_copy">Copy list</string>
+    <string name="apps_paste">Paste list</string>
+    <string name="apps_pasted">%1$d apps selected from the clipboard</string>
+    <string name="apps_paste_nothing">The clipboard holds no package names.</string>
+    <string name="apps_none_shown">No app matches. System apps are hidden or the search is narrow.</string>
+    <string name="settings_network">Network</string>
+    <string name="network_detail">Local networks, excluded routes, MTU, DNS</string>
+    <string name="network_exclude_local">Keep local networks out of the tunnel</string>
+    <string name="network_exclude_local_detail">Printers, routers and other devices on this network are reached directly, in either routing mode: by address, and by name under .local, .lan, .home.arpa and .internal.</string>
+    <string name="network_excluded_routes">Excluded routes</string>
+    <string name="network_excluded_routes_hint">Ranges to leave out, one per line, such as 203.0.113.0/24. Applies to addresses: a site reached by name goes by the routing rules.</string>
+    <string name="network_mtu">MTU</string>
+    <string name="network_mtu_hint">1280 to 1500. Lower it if large transfers stall on this network.</string>
+    <string name="network_dns">DNS for other queries</string>
+    <string name="network_dns_hint">Where queries the tunnel does not answer itself go (PTR, SRV, TXT). Empty uses the device\'s own; if that is a local address, the Portal cannot reach it.</string>
+    <string name="network_invalid_routes">Not a range this tunnel can leave out: check each line. Loopback, the tunnel\'s own ranges and a default route cannot be excluded; at most 64 ranges.</string>
+    <string name="network_invalid_mtu">Not between 1280 and 1500.</string>
+    <string name="network_invalid_dns">Not a public IP address. Names, and local or private addresses the Portal cannot reach, do not work here.</string>
+    <string name="network_applies_next">Applies the next time the tunnel connects.</string>
+    <string name="settings_backup">Backup</string>
+    <string name="backup_export">Export to a file</string>
+    <string name="backup_export_warning">The file is not encrypted. It holds every node\'s key and every subscription link, and also your rules, settings and per-app list: anyone who has it can use the nodes. Keep it somewhere private; on Android 9 and older, Downloads can be read by other apps.</string>
+    <string name="backup_import">Restore from a file</string>
+    <string name="backup_import_warning">Everything here is replaced by what the file holds: nodes, subscriptions, rules and settings. A tunnel that is up is disconnected first.</string>
+    <string name="backup_exported">Backup written.</string>
+    <string name="backup_restored">Restored. Connect to use the restored setup.</string>
+    <string name="backup_failed">The file could not be read or written.</string>
+    <string name="backup_not_backup">That file is not a Somewhere backup.</string>
+    <string name="backup_newer">That backup is from a newer version of Somewhere.</string>
+    <string name="backup_empty">That backup holds nothing to restore.</string>
+    <string name="backup_too_large">That file is too large to be a backup.</string>
+    <string name="tunnel_bad_routes">Android refused one of the excluded routes. Check Network settings.</string>
+    <string name="network_save_failed">The settings could not be saved. Nothing was changed.</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_idle">Asks GitHub Releases for a newer version</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_found">Version %1$s is available. Open its page</string>
+    <string name="update_current">This is the latest version</string>
+    <string name="update_no_release">No release has been published yet</string>
+    <string name="update_failed">Could not check: %1$s</string>
+    <string name="update_automatic">Check automatically</string>
+    <string name="update_automatic_detail">Once a day when the app opens. One request to GitHub, carrying nothing about you.</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_no_notes">A newer version than %1$s has been published.</string>
+    <string name="update_download">Download</string>
+    <string name="update_later">Later</string>
+    <plurals name="subscription_skipped_lines">
+        <item quantity="one">%1$d line in this subscription is not a node this app can read, and was skipped.</item>
+        <item quantity="other">%1$d lines in this subscription are not nodes this app can read, and were skipped.</item>
+    </plurals>
 </resources>

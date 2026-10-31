@@ -84,5 +84,8 @@ class RefreshPreferences(
 
         /** A day. Beyond it, a manual refresh is the honest mechanism. */
         const val MAXIMUM_INTERVAL_HOURS: Int = 24
+
+        /** What Settings offers. Four, because a segmented control holds four. */
+        val INTERVAL_CHOICES: List<Int> = listOf(1, DEFAULT_INTERVAL_HOURS, 12, MAXIMUM_INTERVAL_HOURS)
     }
 }

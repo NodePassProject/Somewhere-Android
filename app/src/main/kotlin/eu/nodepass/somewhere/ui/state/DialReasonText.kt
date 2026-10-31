@@ -29,6 +29,7 @@ fun DecodeReason.asMessage(): String =
     when (this) {
         is DialReason.Unreachable -> stringResource(R.string.dial_unreachable)
         is DialReason.HandshakeFailed -> stringResource(R.string.dial_handshake_failed, Nw3.ALPN)
+        is DialReason.Silent -> stringResource(R.string.dial_silent)
         is DialReason.AlpnRejected -> stringResource(R.string.dial_alpn_rejected, Nw3.ALPN)
         is DialReason.Untrusted -> stringResource(R.string.tunnel_certificate_refused)
         is DialReason.Unprotected -> stringResource(R.string.dial_unprotected)

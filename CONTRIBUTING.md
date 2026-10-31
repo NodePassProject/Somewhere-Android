@@ -43,6 +43,11 @@ conformance/scripts/portal-for-tests.sh --stop
   classpath gate and the design-rule suite were each broken on purpose once to
   confirm they notice.
 
+## Translations
+
+New languages are welcome. Three files change and a test says when they
+agree — see [Adding a language](docs/i18n.md#adding-a-language).
+
 ## Things that are easy to get wrong
 
 `CLAUDE.md` carries a numbered list of them — verified facts about the protocol,

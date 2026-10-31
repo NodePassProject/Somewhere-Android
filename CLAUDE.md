@@ -19,8 +19,9 @@ comments, everything. Do not emit Chinese in project files.
   carriers, so the protocol layer now has two carriers: TLS, one connection per
   flow, and QUIC, one connection for all of them, each with Morph on or off.
   A bare `nowhere://key@host:port` is a TLS node with Morph on; `?net=udp` is
-  QUIC. The oracle differential agrees with v3.0.1 on every case over both
-  carriers and both Morph settings. What has *not* happened is a physical
+  QUIC. Morph TCP carries upstream's Authenticated Prelude (v3.1.0). The
+  oracle differential agrees with v3.1.0 on every case over both carriers and
+  both Morph settings. What has *not* happened is a physical
   device: every device result in this repository is from an emulator. The
   README's roadmap carries the stage view and the conformance row counts.
 
@@ -28,11 +29,12 @@ comments, everything. Do not emit Chinese in project files.
 
 | Path | Purpose |
 |---|---|
-| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36. Nine screens, three locales, and the protocol, TUN, DNS, routing and per-app layers |
+| `app/` | The client. Kotlin, Compose, `minSdk` 26, `compileSdk` 36. Ten screens, three locales, and the protocol, TUN, DNS, routing and per-app layers |
 | `app/src/main/jni/` | Vendored lwIP and its JNI bridge, inherited from the donor, plus the QUIC bridge and the library's export map |
 | `tools/quic/` | The QUIC stack's pinned commits and the script that fetches and builds them. Not vendored (D-17); the conformance probe reads the same pin |
 | `conformance/` | Byte-level vectors, self-verifying checker, end-to-end smoke test, drift detection, test matrix |
-| `app/src/main/assets/rules/` | The bundled rule set (D-14), network-structural tier only, both address families, carrying a provenance header |
+| `app/src/main/assets/rules/` | The bundled rule sets, each carrying a provenance header: the network-structural tier at the top level (D-14), and `policy/mainland-china.list`, the one policy set (D-18), generated — never edited |
+| `tools/rules/` | The mainland-China set's generator and its inputs, pinned by URL and checksum in `SOURCES` |
 | `docs/` | Architecture, the design system, i18n, brand, privacy, store policy, and the ADRs: TLS exporter, QUIC certificate verification, Morph |
 
 The lwIP layer is inherited from `NodePassProject/Anywhere-Android` (GPL-3.0) at
@@ -50,7 +52,8 @@ it goes wrong.
 ## Conventions
 
 - Every protocol implementation detail must be traceable to a specific section of
-  the upstream `docs/protocol.md`.
+  the Core specification (`Nowhere-Protocol` `PROTOCOL.md`, standalone since
+  v3.1.0) or of a Nowhere extension it uses (`docs/prelude.md`).
 - New protocol code lands with a matching known-answer or behavioural case.
   Protocol-layer coverage gate: 90%.
 - Keep `conformance/PROTOCOL_BASELINE` current: upstream commit plus the KAT
@@ -79,14 +82,14 @@ python3 conformance/scripts/verify-vectors.py
 | Gate | What it enforces |
 |---|---|
 | `ktlintCheck` | Style. `@Composable` PascalCase is exempted through ktlint's own `.editorconfig` switch, not suppressed |
-| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`, `.subscription.*`, `.dns.*`, `.apps.*` and `.routing.*`** — the last three joined the protocol layer's gate because they are the same kind of code: a wrong answer is wrong silently, and in `routing` it is wrong in the worst direction, with traffic leaving the device somewhere the user did not ask it to. Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
+| `koverVerifyDebug` | **90% line coverage on `eu.nodepass.somewhere.protocol.*`, `.subscription.*`, `.dns.*`, `.apps.*`, `.routing.*` and `.nodes.*`** — the last four joined the protocol layer's gate because they are the same kind of code: a wrong answer is wrong silently, and in `routing` it is wrong in the worst direction, with traffic leaving the device somewhere the user did not ask it to. Kover 0.9 filters only at report level, so the report *is* the protocol layer — deliberately, because one number applied to the whole app just gets gamed with trivial tests |
 | `lintDebug` | Android lint |
 | `checkClasspathConsistency` | **Compile and runtime resolving different versions of the same module.** Added after `FlowRow` compiled against `foundation-layout` 1.7.2 and shipped against 1.9.2: the signature differed, so the screen crashed with `NoSuchMethodError` the first time it was opened, with the build, ktlint, lint and 253 tests all green. Re-running the gate against that BOM reports **29** skewed modules, not one — the crash we hit was one of many latent ones |
 | `verify-vectors.py` | 86 known-answer checks, recomputed from the spec prose with a stdlib-only ChaCha20 checked against RFC 8439 first. References no upstream code and needs no clone |
 | `checkNativeLibraries` | **What the shipped `.so` files export, how they are aligned, and what they need.** Reads the APK rather than a build intermediate. Verified to fail: removing the version script reports 1,684 non-JNI exports on arm64-v8a, starting with `AES_CMAC` |
 | `checkNativeBridge` | **That the QUIC bridge cannot open a socket.** A source rule over `app/src/main/jni/quic/`: no `socket`, `bind`, `connect`, `sendto` or `recvfrom`. Addresses and packets cross the JNI boundary as bytes, so there is no path by which a datagram escapes `VpnService.protect()`, and no way for one to grow later without the gate saying so |
 | `checkReleaseArtifact` | **What R8 left in the APK that ships.** R8 renames the JNI callbacks C resolves by name, and the failure is not a crash but a tunnel that comes up and answers nothing. The gate reads the artifact rather than running instrumentation against a second R8 output — two R8 runs produce two name sets, so that test would be checking a build nobody ships |
-| `drift-check.sh` | Upstream normative change. Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired on 2026-08-26 (pin to v1.8.2) and on 2026-10-21 for v3, the first change to reach the wire (pin to v3.0.1, D-21) |
+| `drift-check.sh` | Upstream normative change, in both the implementation repository and the standalone specification (`Nowhere-Protocol`). Runs daily in CI and opens an issue; see `conformance/PROTOCOL_BASELINE` for when the pin is held and when it moves — it fired on 2026-08-26 (pin to v1.8.2), on 2026-10-21 for v3, the first change to reach the wire (pin to v3.0.1, D-21), and on 2026-10-22 for v3.1.0, the Prelude Extension (pin to v3.1.0, issue #3) |
 
 Both gates that can silently pass were verified to actually fail. The coverage
 gate: a protocol class with no tests produces `lines covered percentage is
@@ -121,12 +124,15 @@ New protocol code lands with a matching known-answer or behavioural case.
 
 ## Design and language
 
-Two documents in `docs/` carry the UI decisions. Both exist because nothing
+The documents in `docs/` that carry the UI decisions exist because nothing
 crashes when they are violated:
 
 - [`docs/design-system.md`](docs/design-system.md) — colour tokens for both
   themes with measured contrast, type, controls, and the four rules the UI has to
   keep. Copy values from there rather than from a mockup.
+- [`docs/ux.md`](docs/ux.md) — information architecture (which tab a feature
+  belongs on), theme modes, screen states, interaction, accessibility and
+  writing rules.
 - [`docs/i18n.md`](docs/i18n.md) — English, Simplified and Traditional Chinese,
   matched by script (`values-b+zh+Hans`) rather than by region.
 - [`docs/brand.md`](docs/brand.md) — the brand hue, which carries no protocol
@@ -404,22 +410,52 @@ Two rules from those documents that reach into protocol code:
     Google APIs image; four were the device's. Exact counts belong on a host
     (`oracle-diff.sh`); on a device the assertion is "at least one per flow".
 
+48. **A lookup by name on the main thread fails as "cannot be looked up".**
+    StrictMode refuses it with `NetworkOnMainThreadException`, whose message is
+    null, and the service once ran `startTunnel` there: every node named by host
+    failed on a device, logged as `cannot resolve <host>: null`, while every
+    emulator suite passed because it used addresses. Tunnels start on the
+    service's control thread. `FailoverOnDeviceTest` resolves `localhost` to
+    keep it so.
+49. **`connectedAndroidTest` reinstalls the app, and that drops VPN consent.**
+    Granting it with `cmd appops` before the task does nothing; every tunnel
+    case then fails on consent. `e2e-android.sh` installs, grants, and runs
+    with `am instrument`.
+50. **A 3.1 Portal answers a Morph bootstrap it cannot unmask with silence.**
+    A wrong key, or Morph on one side only, used to fail the TLS handshake; it
+    now holds the connection to its deadline and resets it. That is
+    `DialReason.Silent`, treated as unreachable so that an interfering path
+    still fails over.
+51. **Unit tests that read files by path need those files declared as task
+    inputs.** `StringResourceTest` reads `src/main/res`; with nothing declared,
+    deleting a translation left `testDebugUnitTest` up to date and green. The
+    resources, assets, native sources and vectors are inputs in
+    `app/build.gradle.kts` now; a test that reads another directory adds it.
+52. **The policy rule set cannot be loaded the way an import is.** Through
+    `RuleDocument.parse` and a tree of HashMaps it took 4.5 s and about 31 MiB
+    on an emulator, per connect. It is parsed once per process, only in Rules
+    mode, by a single-pass compiler that copies the generated text into one
+    packed byte array (about 0.6 s cold, 4-5 MiB). Keep the generator's output
+    sorted, lower-case and DIRECT-only, or the fast path declines and the slow
+    one returns.
+
 ## Already verified — do not redo
 
 - The donor project `Anywhere-Android` **builds clean** on this toolchain
   (JDK 21 / android-36 / NDK 28.2 / CMake 3.22.1), 1m50s cold, one harmless lwIP
   macro warning. Inheriting its shell is not a risk.
-- `cargo build --release --locked` succeeds on Linux x86_64 at Nowhere v3.0.1
+- `cargo build --release --locked` succeeds on Linux x86_64 at Nowhere v3.1.0
   (and did on macOS/aarch64 at v1.8.2).
 - **End-to-end works** over TLS and QUIC, Morph on: SOCKS5 → the oracle's
   Vector → Portal → target. Re-run `conformance/scripts/smoke-local.sh`.
 - **Authentication and Morph derivations agree three ways** — spec prose, an
   independent implementation, and upstream's fixed vectors, byte for byte.
-  Re-run `python3 conformance/scripts/verify-vectors.py` (86 checks).
+  Re-run `python3 conformance/scripts/verify-vectors.py` (99 checks, the
+  Authenticated Prelude's four vectors among them).
 - **The dialer's certificate handling is verified against a live Portal**: the
   pin is the fingerprint the Portal itself logged, exported by
   `conformance/scripts/portal-for-tests.sh`, so a passing pin test cannot be the
   dialer agreeing with itself.
-- **The oracle differential passes against v3.0.1** on every case over TLS and
+- **The oracle differential passes against v3.1.0** on every case over TLS and
   QUIC, Morph on and off. Re-run `conformance/scripts/oracle-diff.sh`; it needs
   a host QUIC bridge (`conformance/scripts/build-host-quic.sh`, which needs Go).

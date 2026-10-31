@@ -123,4 +123,23 @@ class RouterTest {
         val router = router(rules = arrayOf(Rule(RuleType.DomainSuffix, "ads.example", RouteAction.Reject)))
         assertEquals(RouteAction.Reject, router.decide(domain("x.ads.example")))
     }
+
+    @Test
+    fun localRulesSendANameDirectEvenWhenEverythingElseIsTunnelled() {
+        // Network settings' "keep local networks out": nas.lan arrives by
+        // name, holding a fake address that is always routed in, so only a
+        // rule can keep it off the Portal.
+        val local = RoutingRules.of(listOf(Rule(RuleType.DomainSuffix, "lan", RouteAction.Direct))).getOrThrow()
+        val router = Router({ emptyList() }, { RoutingMode.Everything }, RouteAction.Tunnel, local = listOf(local))
+        assertEquals(RouteAction.Direct, router.decide((Target.ofDomain("nas.lan", 445) as DecodeResult.Ok).value))
+        assertEquals(RouteAction.Tunnel, router.decide((Target.ofDomain("example.com", 443) as DecodeResult.Ok).value))
+    }
+
+    @Test
+    fun localRulesNeverSendAnythingThroughTheTunnelThemselves() {
+        // Only their DIRECT answers count; anything else falls to the mode.
+        val local = RoutingRules.of(listOf(Rule(RuleType.DomainSuffix, "example.com", RouteAction.Reject))).getOrThrow()
+        val router = Router({ emptyList() }, { RoutingMode.Everything }, RouteAction.Tunnel, local = listOf(local))
+        assertEquals(RouteAction.Tunnel, router.decide((Target.ofDomain("example.com", 443) as DecodeResult.Ok).value))
+    }
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.protocol.frame.SetupResult
+import eu.nodepass.somewhere.ui.screens.ActivitySurface
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
 import eu.nodepass.somewhere.ui.screens.Home
 import eu.nodepass.somewhere.ui.screens.NodeEditor
@@ -109,7 +110,7 @@ class DesignRuleUiTest {
                     flowId = 8400 + index,
                 )
             }
-        compose.setContent { SomewhereTheme { DiagnosticsScreen(entries = entries) } }
+        compose.setContent { SomewhereTheme { DiagnosticsScreen(entries = entries, initial = ActivitySurface.Portal) } }
 
         // Scrolled to, not merely looked for. The screen is a lazy list, so an
         // identifier below the fold is not composed at all — and whether it is
@@ -145,7 +146,7 @@ class DesignRuleUiTest {
         // support. The word must not appear at all.
         compose.setContent {
             SomewhereTheme {
-                NodeList(entries = SampleState.nodes, subscription = SampleState.subscription)
+                NodeList(entries = SampleState.nodes, subscriptions = listOf(SampleState.subscription))
             }
         }
         assertEquals(
@@ -162,7 +163,7 @@ class DesignRuleUiTest {
         // stand behind.
         compose.setContent {
             SomewhereTheme {
-                NodeList(entries = SampleState.nodes, subscription = SampleState.subscription)
+                NodeList(entries = SampleState.nodes, subscriptions = listOf(SampleState.subscription))
             }
         }
         compose.onNodeWithText(string(R.string.quota_per_portal_note), substring = true).assertIsDisplayed()
@@ -227,7 +228,8 @@ class DesignRuleUiTest {
 
         listOf(
             Triple(true, false, R.string.action_disconnect),
-            Triple(false, true, R.string.home_connecting),
+            // Cancel while connecting: that is what a tap does then (docs/ux.md).
+            Triple(false, true, R.string.action_cancel),
             Triple(false, false, R.string.action_connect),
         ).forEach { (connected, connecting, action) ->
             session =
@@ -255,7 +257,7 @@ class DesignRuleUiTest {
             // file from the same field. A second state source shows up here as
             // the two disagreeing, which is precisely what was once on screen.
             compose.onAllNodesWithText(sectionLabel(otherHeading)).assertCountEquals(0)
-            listOf(R.string.action_connect, R.string.action_disconnect, R.string.home_connecting)
+            listOf(R.string.action_connect, R.string.action_disconnect, R.string.action_cancel)
                 .filter { it != action }
                 .forEach { compose.onAllNodesWithText(string(it)).assertCountEquals(0) }
         }

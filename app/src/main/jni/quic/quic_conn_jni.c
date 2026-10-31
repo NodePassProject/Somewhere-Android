@@ -130,6 +130,13 @@ struct quic_conn {
     ngtcp2_ccerr last_error;
     char message[192];
 
+    // Why the certificate was refused, when it was. Kept apart from `message`
+    // because the refusal is not the last thing said: the TLS stack then fails
+    // the handshake, ngtcp2 reports ERR_CRYPTO, and that overwrote the one
+    // sentence that said what was wrong. A wrong pin then read as a dead
+    // Portal, and the tunnel failed over on a configuration error.
+    char refusal[192];
+
     // The certificate this connection will accept, and nothing else.
     //
     // SHA-256 of the leaf's DER encoding, which is what a `pin=` parameter
@@ -182,6 +189,12 @@ static uint64_t now_ns(void) {
 
 static void say(struct quic_conn *c, const char *what) {
     snprintf(c->message, sizeof(c->message), "%s", what);
+}
+
+// A certificate refusal: said, and also kept where later errors cannot reach.
+static void refuse(struct quic_conn *c, const char *what) {
+    snprintf(c->refusal, sizeof(c->refusal), "%s", what);
+    say(c, what);
 }
 
 // ── datagrams ───────────────────────────────────────────────────────────────
@@ -492,7 +505,7 @@ static enum ssl_verify_result_t verify_pin(SSL *ssl, uint8_t *out_alert) {
         // Installed without a pin to compare against. Refusing is the only safe
         // answer: this callback exists because verification was asked for.
         if (c) {
-            say(c, "the verification callback could not find the pin it was installed for");
+            refuse(c, "the verification callback could not find the pin it was installed for");
         }
         *out_alert = SSL_AD_INTERNAL_ERROR;
         return ssl_verify_invalid;
@@ -500,7 +513,7 @@ static enum ssl_verify_result_t verify_pin(SSL *ssl, uint8_t *out_alert) {
 
     chain = SSL_get0_peer_certificates(ssl);
     if (!chain || sk_CRYPTO_BUFFER_num(chain) == 0) {
-        say(c, "the peer presented no certificate to pin against");
+        refuse(c, "the peer presented no certificate to pin against");
         *out_alert = SSL_AD_BAD_CERTIFICATE;
         return ssl_verify_invalid;
     }
@@ -517,8 +530,9 @@ static enum ssl_verify_result_t verify_pin(SSL *ssl, uint8_t *out_alert) {
         for (i = 0; i < SHA256_DIGEST_LENGTH; i++) {
             snprintf(hex + i * 2, 3, "%02x", digest[i]);
         }
-        snprintf(c->message, sizeof(c->message),
+        snprintf(c->refusal, sizeof(c->refusal),
                  "the certificate does not match the pin; it presented %s", hex);
+        say(c, c->refusal);
         *out_alert = SSL_AD_BAD_CERTIFICATE;
         return ssl_verify_invalid;
     }
@@ -1445,7 +1459,15 @@ Java_eu_nodepass_somewhere_quic_QuicConnection_nativeLastMessage(JNIEnv *env,
                                                                   jlong handle) {
     (void)clazz;
     struct quic_conn *c = (struct quic_conn *)(intptr_t)handle;
-    if (!c || c->message[0] == '\0') {
+    if (!c) {
+        return NULL;
+    }
+    // A refused certificate outranks whatever the transport said after it:
+    // it is the cause, and the rest is the consequence.
+    if (c->refusal[0] != '\0') {
+        return (*env)->NewStringUTF(env, c->refusal);
+    }
+    if (c->message[0] == '\0') {
         return NULL;
     }
     return (*env)->NewStringUTF(env, c->message);

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Below API 26 there is no adaptive icon; minSdk is 26, so this exists only
+     because a resource referenced from XML needs a default configuration. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/shortcut_background" />
+    <item android:drawable="@drawable/ic_notification" android:top="12dp" android:bottom="12dp" android:left="12dp" android:right="12dp" />
+</layer-list>

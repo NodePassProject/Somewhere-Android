@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,17 +37,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.apps.AppListView
+import eu.nodepass.somewhere.apps.AppSort
 import eu.nodepass.somewhere.apps.AppsController
 import eu.nodepass.somewhere.apps.InstalledApp
 import eu.nodepass.somewhere.apps.SelectionMode
+import eu.nodepass.somewhere.data.AppSettings
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.Segmented
@@ -68,6 +74,8 @@ fun AppsScreen(
     onBack: () -> Unit,
     controller: AppsController,
     onReconnect: () -> Unit,
+    settings: AppSettings = AppSettings(),
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
 ) {
     val colors = SomewhereTheme.colors
     val installed by controller.installed.collectAsState()
@@ -76,19 +84,17 @@ fun AppsScreen(
     val restartNeeded by controller.restartNeeded.collectAsState()
     val neverRouted by controller.unroutableCount.collectAsState()
     var query by remember { mutableStateOf("") }
+    val clipboard = LocalClipboardManager.current
+    // How many a paste selected; 0 when the clipboard held none; null before
+    // any paste. A count rather than a sentence, so it renders in the current
+    // language whenever it is drawn.
+    var pasted by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(Unit) { controller.refresh() }
 
     val shown =
-        remember(installed, query) {
-            if (query.isBlank()) {
-                installed
-            } else {
-                installed.filter {
-                    it.label.contains(query, ignoreCase = true) ||
-                        it.packageName.contains(query, ignoreCase = true)
-                }
-            }
+        remember(installed, query, settings.appsShowSystem, settings.appsSort, selection.packages) {
+            AppListView.arrange(installed, query, settings.appsShowSystem, settings.appsSort, selection.packages)
         }
 
     Column(Modifier.fillMaxSize()) {
@@ -130,6 +136,37 @@ fun AppsScreen(
         ) {
             item { SelfRow() }
             item { SearchBox(query) { query = it } }
+            item {
+                ListTools(
+                    showSystem = settings.appsShowSystem,
+                    sort = settings.appsSort,
+                    onShowSystem = { show -> onSettingsChange { it.copy(appsShowSystem = show) } },
+                    onSort = { sort -> onSettingsChange { it.copy(appsSort = sort) } },
+                    onSelectAll = { controller.selectAll(shown) },
+                    onSelectNone = { controller.selectNone(shown) },
+                    onCopy = { clipboard.setText(AnnotatedString(AppListView.export(selection))) },
+                    onPaste = {
+                        // At least one must be an app on this device: text
+                        // that merely looks like package names ("see
+                        // example.com") must not replace a selection.
+                        val parsed =
+                            clipboard
+                                .getText()
+                                ?.text
+                                ?.let(AppListView::parseImport)
+                                ?.takeIf { names -> installed.any { it.packageName in names } }
+                        if (parsed != null) controller.replacePackages(parsed)
+                        pasted = parsed?.size ?: 0
+                    },
+                )
+            }
+            pasted?.let { count ->
+                item {
+                    Footnote(
+                        if (count == 0) stringResource(R.string.apps_paste_nothing) else stringResource(R.string.apps_pasted, count),
+                    )
+                }
+            }
 
             if (loading) {
                 // Not an empty list: "still reading" and "nothing to show" are
@@ -138,6 +175,10 @@ fun AppsScreen(
                 item { Footnote(stringResource(R.string.apps_loading)) }
             } else if (installed.isEmpty()) {
                 item { Footnote(stringResource(R.string.apps_none)) }
+            } else if (shown.isEmpty()) {
+                // The device has apps; the filter or the search hides them
+                // all. An empty list with nothing said reads as "no apps".
+                item { Footnote(stringResource(R.string.apps_none_shown)) }
             }
 
             items(shown, key = InstalledApp::packageName) { app ->
@@ -369,4 +410,77 @@ private fun SearchBox(
             )
         }
     }
+}
+
+/**
+ * Filter, order, and the bulk actions.
+ *
+ * Select all and none act on what is shown, so a search narrows them: "all
+ * the Google apps" is a search and a tap. Copy and paste move the package
+ * list as text, one per line, which is also what other clients export.
+ */
+@Composable
+private fun ListTools(
+    showSystem: Boolean,
+    sort: AppSort,
+    onShowSystem: (Boolean) -> Unit,
+    onSort: (AppSort) -> Unit,
+    onSelectAll: () -> Unit,
+    onSelectNone: () -> Unit,
+    onCopy: () -> Unit,
+    onPaste: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = stringResource(R.string.apps_show_system),
+                fontFamily = SomewhereType.Body,
+                fontSize = 13.sp,
+                color = colors.inkMuted,
+                modifier = Modifier.weight(1f),
+            )
+            SomewhereSwitch(showSystem, onShowSystem)
+        }
+        val sorts = AppSort.entries
+        Segmented(
+            options =
+                sorts.map {
+                    stringResource(
+                        when (it) {
+                            AppSort.Name -> R.string.apps_sort_name
+                            AppSort.InstallTime -> R.string.apps_sort_installed
+                        },
+                    )
+                },
+            selectedIndex = sorts.indexOf(sort),
+            onSelect = { onSort(sorts[it]) },
+            height = 30.dp,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            ToolAction(stringResource(R.string.apps_select_all), onSelectAll)
+            ToolAction(stringResource(R.string.apps_select_none), onSelectNone)
+            ToolAction(stringResource(R.string.apps_copy), onCopy)
+            ToolAction(stringResource(R.string.apps_paste), onPaste)
+        }
+    }
+}
+
+@Composable
+private fun ToolAction(
+    label: String,
+    onClick: () -> Unit,
+) {
+    Text(
+        text = label,
+        fontFamily = SomewhereType.Body,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.5.sp,
+        color = SomewhereTheme.colors.brand,
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+    )
 }

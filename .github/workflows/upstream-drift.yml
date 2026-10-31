@@ -20,13 +20,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Clone upstream
-        run: git clone --quiet https://github.com/NodePassProject/Nowhere.git upstream-nowhere
+        run: |
+          git clone --quiet https://github.com/NodePassProject/Nowhere.git upstream-nowhere
+          git clone --quiet https://github.com/NodePassProject/Nowhere-Protocol.git upstream-nowhere-protocol
 
       - name: Drift check
         id: drift
         run: |
           set +e
-          OUT="$(bash conformance/scripts/drift-check.sh "$GITHUB_WORKSPACE/upstream-nowhere" 2>&1)"
+          OUT="$(bash conformance/scripts/drift-check.sh "$GITHUB_WORKSPACE/upstream-nowhere" "$GITHUB_WORKSPACE/upstream-nowhere-protocol" 2>&1)"
           CODE=$?
           echo "$OUT"
           {

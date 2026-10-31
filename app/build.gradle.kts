@@ -195,6 +195,15 @@ dependencies {
     // minSdk. See docs/adr-0001-tls-exporter.md.
     implementation(libs.conscrypt.android)
 
+    // Scanning a node's QR code. ZXing decodes, CameraX supplies frames.
+    // ZXing rather than ML Kit because ML Kit is a Play-services binary: no
+    // source, and nothing a GPL-3.0 client published with its corresponding
+    // source should depend on. ZXing core is plain Java under Apache-2.0.
+    implementation(libs.zxing.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+
     testImplementation(libs.junit)
     // Needed by the tests that drive the repository, which is suspend-shaped
     // because a subscription fetch is a network call.
@@ -634,6 +643,19 @@ tasks.named("check") { dependsOn(nativeLibraryChecks) }
 tasks.withType<Test>().configureEach {
     System.getenv("SOMEWHERE_QUIC_LIBRARY")?.takeIf { it.isNotBlank() }?.let {
         systemProperty("somewhere.quic.library", it)
+    }
+    // Several unit tests read these by path — every translation, every
+    // bundled rule set — so they are inputs. Undeclared, a deleted
+    // translation left the test task up to date and the build green.
+    inputs.dir("src/main/res").withPropertyName("resources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("src/main/assets").withPropertyName("assets").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("src/main/jni").withPropertyName("native").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir("../conformance/vectors").withPropertyName("vectors").withPathSensitivity(PathSensitivity.RELATIVE)
+    // The live-Portal tests skip without these, so whether a Portal is running
+    // is an input too. Undeclared, a run with a Portal reused the results of a
+    // run without one, and reported every live test as skipped, green.
+    listOf("NOWHERE_E2E_PORTAL", "NOWHERE_E2E_KEY", "NOWHERE_E2E_PIN", "NOWHERE_BIN", "SOMEWHERE_QUIC_LIBRARY").forEach { name ->
+        inputs.property("env.$name", providers.environmentVariable(name).orElse(""))
     }
 }
 

@@ -205,4 +205,40 @@ class RoutingRulesTest {
             set.decide(ByteArray(random.nextInt(0, 20)) { random.nextInt(0, 256).toByte() })
         }
     }
+
+    @Test
+    fun aSuffixMatchesOnALabelBoundaryAndTheLongestWins() {
+        val set =
+            rules(
+                Rule(RuleType.DomainSuffix, "example.com", RouteAction.Direct),
+                Rule(RuleType.DomainSuffix, "deep.example.com", RouteAction.Reject),
+                Rule(RuleType.DomainSuffix, "com", RouteAction.Tunnel),
+            )
+        assertEquals(RouteAction.Direct, set.decide("example.com"))
+        assertEquals(RouteAction.Direct, set.decide("a.example.com"))
+        assertEquals(RouteAction.Reject, set.decide("x.deep.example.com"))
+        assertEquals("not a label boundary", RouteAction.Tunnel, set.decide("badexample.com"))
+        assertEquals(null, set.decide("example.org"))
+    }
+
+    @Test
+    fun aLaterSuffixRuleOverridesAnEarlierOne() {
+        val set =
+            rules(
+                Rule(RuleType.DomainSuffix, "example.com", RouteAction.Direct),
+                Rule(RuleType.DomainSuffix, "EXAMPLE.com.", RouteAction.Reject),
+            )
+        assertEquals(RouteAction.Reject, set.decide("www.example.com"))
+    }
+
+    @Test
+    fun anInternationalisedNameMatchesItsAsciiForm() {
+        // A rule written in Chinese and the xn-- form a DNS query carries are
+        // the same suffix.
+        val set = rules(Rule(RuleType.DomainSuffix, "中国", RouteAction.Direct))
+        assertEquals(RouteAction.Direct, set.decide("www.xn--fiqs8s"))
+        assertEquals(RouteAction.Direct, set.decide("例子.中国"))
+        val ascii = rules(Rule(RuleType.DomainSuffix, "xn--fiqs8s", RouteAction.Direct))
+        assertEquals(RouteAction.Direct, ascii.decide("政府.中国"))
+    }
 }

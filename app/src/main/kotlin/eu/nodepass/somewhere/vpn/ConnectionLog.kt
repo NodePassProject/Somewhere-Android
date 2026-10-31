@@ -48,14 +48,19 @@ class ConnectionLog(
         target: Target?,
         flowId: UInt?,
         carrier: String,
+        /** How long the flow took to be answered, measured by the caller; null if not measured. */
+        setupMillis: Long? = null,
     ) {
         val entry =
             ConnectionLogEntry(
                 result = result,
-                timestamp = FORMAT.format(Date(now())),
-                target = target?.let(::describe),
+                // SimpleDateFormat is not thread-safe, and flows end on
+                // whichever IO thread they ran on.
+                timestamp = synchronized(FORMAT) { FORMAT.format(Date(now())) },
+                target = target?.let(TargetText::describe),
                 flowId = flowId?.toInt(),
                 carrier = carrier,
+                setupMillis = setupMillis,
             )
         synchronized(entries) {
             entries.addFirst(entry)
@@ -71,42 +76,8 @@ class ConnectionLog(
         }
     }
 
-    /**
-     * A target as `host:port`, and nothing else.
-     *
-     * A domain target already is one. An address target is rendered from its
-     * octets rather than from anything a peer supplied, so a name that arrived
-     * carrying punctuation cannot reach a log line at all.
-     */
-    private fun describe(target: Target): String =
-        when (target) {
-            is Target.Domain -> "${sanitise(target.host)}:${target.port}"
-            is Target.Ip ->
-                if (target.octets.size == 4) {
-                    target.octets.joinToString(".") { (it.toInt() and 0xFF).toString() } + ":${target.port}"
-                } else {
-                    target.octets.joinToString(":") { "%02x".format(it) } + " port ${target.port}"
-                }
-        }
-
-    /**
-     * Strips what a log line must not carry.
-     *
-     * A hostname cannot legally contain any of this, so removing it costs a
-     * correct name nothing — and a value that arrived from a peer carrying a
-     * newline, a userinfo separator or a percent-encoded byte is precisely the
-     * thing that must not reach a line someone copies.
-     */
-    private fun sanitise(value: String): String =
-        value
-            .asSequence()
-            .filter { it.isLetterOrDigit() || it == '.' || it == '-' }
-            .take(MAX_HOST_LENGTH)
-            .joinToString("")
-
     private companion object {
         const val CAPACITY = 200
-        const val MAX_HOST_LENGTH = 253
         val FORMAT = SimpleDateFormat("HH:mm:ss", Locale.US)
     }
 }

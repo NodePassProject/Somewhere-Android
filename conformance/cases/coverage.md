@@ -1,7 +1,7 @@
 # Coverage map
 
 Every row of [`conformance-matrix.md`](conformance-matrix.md), and what covers
-it, at **Nowhere v3.0.1**. Eighty-nine rows, in the matrix's own order.
+it, at **Nowhere v3.1.0**. Ninety-one rows, in the matrix's own order.
 
 A row is in one of two states, and there is no third:
 
@@ -119,60 +119,62 @@ git history up to `8f16af2`.
 | 57 | `fade` prelude | covered | `MorphPreludeTest.fadeSamplesTheBoundariesAsUpstreamDoes`, `.rejectionSamplingRedrawsTheBiasedTail`, `.fadeHasThreeBandsWithBoundariesInRange` |
 | 58 | UDP wire image | covered | `MorphVectorTest.theUdpWireIsUpstreamsLayout`, `.aDatagramNoLongerThanTheNonceIsDiscarded`, `.everyDatagramGetsItsOwnNonce` |
 | 59 | QUIC payload reduced by the nonce | manual | Set in the bridge (`max_udp_payload`) and in `QuicConnection.open`; observable only as the absence of loss on a 1500-byte path. The device and oracle runs carry 20 MiB with Morph on, which is where an oversized packet would show as a stall |
-| 60 | Both modes interoperate; a mismatch fails | covered | `oracle-diff.sh` (all cases with Morph on and off); `NowhereDialerAgainstPortalTest.aMorphMismatchFailsTheHandshake` *(Portal)* |
+| 60 | Both modes interoperate; a mismatch fails (since 3.1: silently, then a reset) | covered | `oracle-diff.sh` (all cases with Morph on and off); `NowhereDialerAgainstPortalTest.aMorphMismatchFailsTheHandshake` *(Portal)* |
+| 61 | Authenticated Prelude: upstream's vectors | covered | `AuthenticatedPreludeTest.theFixedVectorEncodesToUpstreamsTail`, `.theExtremeFieldVectorsMatch`, `.anyChangedBitFailsTheTag`, `.encodingKeepsThePolicysPrefixAndEveryHighBit`, `MorphVectorTest.theAuthenticatedPreludeChangesOnlyTheTailsLowBits`; `verify-vectors.py` recomputes the four vectors bit by bit |
+| 62 | A 3.1 Portal verifies the Tag | covered | `AuthenticatedPreludeAgainstPortalTest.aReplayedCounterIsRefusedAndAFreshOneIsNot` *(Portal)* — a refused replay is what only a verified Tag produces; `.countersStartAtOneAndConcurrentCallersNeverShareOne`, `.exhaustionIsPermanentAndNeverWraps`, `.eachPortalsKeyHasItsOwnIdentity` |
 
 ## 9. Configuration and certificates
 
 | # | Case | State | Covered by |
 |---|---|---|---|
-| 61 | Parse a share link | covered | `NowhereUrlTest.theClientSchemeIsNowhere` and thirty-five further cases |
-| 62 | Defaults | covered | `NowhereUrlTest.defaultsMatchTheSpecification` |
-| 63 | First duplicate wins | covered | `NowhereUrlTest.theFirstDuplicateWins` |
-| 64 | Unknown and retired parameters ignored | covered | `NowhereUrlTest.unknownParametersAreIgnoredRatherThanRejected`, `.legacyParametersAreIgnoredRatherThanRejected` |
-| 65 | A 2.x dashboard's `up`/`down` | covered | `NowhereUrlTest.agreeingLegacyCarriersAreTakenAsNet`, `.aLegacySplitFallsBackToTheDefault`, `.netWinsOverLegacyCarriers`, `.aLegacyLinkIsRewrittenInV3Form` |
-| 66 | Carrier paths refused | covered | `NowhereUrlTest.aCarrierPathIsRefusedWithItsName` |
-| 67 | Round trip | covered (this client) / manual (the dashboard) | `NowhereUrlTest.generatedUrlsParseBackToTheSameNode`, `NowhereUrlRoundTripFuzzTest.*`. The dashboard half needs a running NowhereDash; NowhereDash at `c753043` targets Nowhere 2.1.1 and does not yet emit v3 links |
-| 68 | `pin` over `sni`; validation | covered | `NowhereUrlTest.pinTakesPriorityOverSni`, `.aPinIsNormalisedToLowerCase`, `.aMalformedPinIsRejected`, `.sniMustBeAnAsciiDnsName` |
-| 69 | No unverified mode | covered | `PeerVerificationTest.*`; `QuicPinTest.neitherAPinNorAChainCheckIsRefused` *(device)*; `NowhereDialerAgainstPortalTest.aGeneratedCertificateIsNotTrustedByName` *(Portal)* |
-| 70 | Hostname matching | covered | `PeerVerificationTest.anExactNameMatchesCaseInsensitively`, `.aWildcardStandsForExactlyOneLeftmostLabel`, `.anIpLiteralMatchesAnIpEntryByItsBytes`, `.theCommonNameIsNeverConsulted` |
-| 71 | A wrong `pin` fails, named | covered | `NowhereDialerAgainstPortalTest.aWrongPinIsRefusedAndNamesWhatWasPresented` *(Portal)*; `QuicPinTest.oneWrongNibbleStopsTheHandshake` *(device)* — the pin is the one the Portal logged, so a pass cannot be the client agreeing with itself |
-| 72 | Refused by name on a device | covered | `ChainVerificationOnDeviceTest.*` *(device)*. The acceptance half — a chain this device trusts — is manual: it needs a CA key a test can sign with, and committing one would make every debug build trust its reader. `PortalLifecycleTest` accepts a chain by name against a live Portal on the JVM |
-| 73 | ALPN `nw3` | covered | `oracle-diff.sh` (every case negotiates it); `DialReason.AlpnRejected` is the observable mismatch — a Portal that refuses aborts the handshake instead, see `CLAUDE.md` fact 11 |
+| 63 | Parse a share link | covered | `NowhereUrlTest.theClientSchemeIsNowhere` and thirty-five further cases |
+| 64 | Defaults | covered | `NowhereUrlTest.defaultsMatchTheSpecification` |
+| 65 | First duplicate wins | covered | `NowhereUrlTest.theFirstDuplicateWins` |
+| 66 | Unknown and retired parameters ignored | covered | `NowhereUrlTest.unknownParametersAreIgnoredRatherThanRejected`, `.legacyParametersAreIgnoredRatherThanRejected` |
+| 67 | A 2.x dashboard's `up`/`down` | covered | `NowhereUrlTest.agreeingLegacyCarriersAreTakenAsNet`, `.aLegacySplitFallsBackToTheDefault`, `.netWinsOverLegacyCarriers`, `.aLegacyLinkIsRewrittenInV3Form` |
+| 68 | Carrier paths refused | covered | `NowhereUrlTest.aCarrierPathIsRefusedWithItsName` |
+| 69 | Round trip | covered (this client) / manual (the dashboard) | `NowhereUrlTest.generatedUrlsParseBackToTheSameNode`, `NowhereUrlRoundTripFuzzTest.*`. The dashboard half needs a running NowhereDash; NowhereDash at `c753043` targets Nowhere 2.1.1 and does not yet emit v3 links |
+| 70 | `pin` over `sni`; validation | covered | `NowhereUrlTest.pinTakesPriorityOverSni`, `.aPinIsNormalisedToLowerCase`, `.aMalformedPinIsRejected`, `.sniMustBeAnAsciiDnsName` |
+| 71 | No unverified mode | covered | `PeerVerificationTest.*`; `QuicPinTest.neitherAPinNorAChainCheckIsRefused` *(device)*; `NowhereDialerAgainstPortalTest.aGeneratedCertificateIsNotTrustedByName` *(Portal)* |
+| 72 | Hostname matching | covered | `PeerVerificationTest.anExactNameMatchesCaseInsensitively`, `.aWildcardStandsForExactlyOneLeftmostLabel`, `.anIpLiteralMatchesAnIpEntryByItsBytes`, `.theCommonNameIsNeverConsulted` |
+| 73 | A wrong `pin` fails, named | covered | `NowhereDialerAgainstPortalTest.aWrongPinIsRefusedAndNamesWhatWasPresented` *(Portal)*; `QuicPinTest.oneWrongNibbleStopsTheHandshake` *(device)* — the pin is the one the Portal logged, so a pass cannot be the client agreeing with itself |
+| 74 | Refused by name on a device | covered | `ChainVerificationOnDeviceTest.*` *(device)*. The acceptance half — a chain this device trusts — is manual: it needs a CA key a test can sign with, and committing one would make every debug build trust its reader. `PortalLifecycleTest` accepts a chain by name against a live Portal on the JVM |
+| 75 | ALPN `nw3` | covered | `oracle-diff.sh` (every case negotiates it); `DialReason.AlpnRejected` is the observable mismatch — a Portal that refuses aborts the handshake instead, see `CLAUDE.md` fact 11 |
 
 ## 10. Dashboard integration
 
 | # | Case | State | Covered by |
 |---|---|---|---|
-| 74 | Fetch and parse | covered | `SubscriptionFetcherTest.nodesAreFetchedAndParsed`, against a real local `HttpServer` |
-| 75 | http warned about | covered | `SubscriptionEndpointTest.httpIsFlaggedAsPlaintext`, `SubscriptionFetcherTest.plaintextTransportIsReportedToTheCaller` |
-| 76 | Token never logged | covered | `SubscriptionEndpointTest.redactsTheToken` and six further cases, `SubscriptionFetcherTest.noFailureReasonEverContainsTheToken`, `FailureMessageTest.noReasonCarriesKeyMaterialMarkers` |
-| 77 | `subscription-userinfo` | covered | `SubscriptionFetcherTest.usageHeaderIsParsed` |
-| 78 | `total=-1` | covered | `SubscriptionFetcherTest.unlimitedIsRepresentedAsUnlimitedNotAsMinusOne`, `DesignRuleUiTest.quotaSaysCountedRatherThanUsed` *(device)* |
-| 79 | No upload figure | covered | `SubscriptionFetcherTest.thereIsNoWayToReadAnUploadFigure`, `DesignRuleUiTest.nothingOnTheNodeListPresentsUploadAsAMeasurement` *(device)* |
-| 80 | `profile-title` | covered | `SubscriptionFetcherTest.aBase64TitleIsDecoded`, `.aMalformedTitleIsDroppedRatherThanFailingTheFetch` |
-| 81 | `add-proxy` deep link | covered | `ImportLinkTest.*` |
-| 82 | Empty feed read as expiry | covered | `SubscriptionFetcherTest.anEmptyFeedIsReportedAsQuotaExhaustionNotAsAnError`, `SubscriptionRefreshTest.anEmptyFeedMarksEveryNodeRatherThanReportingANetworkError`, `.aNodeTheFeedDropsIsKeptAndMarkedRatherThanDeleted` |
-| 83 | `type` / `ver` / `caps` | covered | `SubscriptionEndpointTest.appendsTypeVersionAndCapabilities`, `SubscriptionFetcherTest.capabilityParametersAreActuallySent` — `caps` is now `nw3,quic` |
+| 76 | Fetch and parse | covered | `SubscriptionFetcherTest.nodesAreFetchedAndParsed`, against a real local `HttpServer` |
+| 77 | http warned about | covered | `SubscriptionEndpointTest.httpIsFlaggedAsPlaintext`, `SubscriptionFetcherTest.plaintextTransportIsReportedToTheCaller` |
+| 78 | Token never logged | covered | `SubscriptionEndpointTest.redactsTheToken` and six further cases, `SubscriptionFetcherTest.noFailureReasonEverContainsTheToken`, `FailureMessageTest.noReasonCarriesKeyMaterialMarkers` |
+| 79 | `subscription-userinfo` | covered | `SubscriptionFetcherTest.usageHeaderIsParsed` |
+| 80 | `total=-1` | covered | `SubscriptionFetcherTest.unlimitedIsRepresentedAsUnlimitedNotAsMinusOne`, `DesignRuleUiTest.quotaSaysCountedRatherThanUsed` *(device)* |
+| 81 | No upload figure | covered | `SubscriptionFetcherTest.thereIsNoWayToReadAnUploadFigure`, `DesignRuleUiTest.nothingOnTheNodeListPresentsUploadAsAMeasurement` *(device)* |
+| 82 | `profile-title` | covered | `SubscriptionFetcherTest.aBase64TitleIsDecoded`, `.aMalformedTitleIsDroppedRatherThanFailingTheFetch` |
+| 83 | `add-proxy` deep link | covered | `ImportLinkTest.*` |
+| 84 | Empty feed read as expiry | covered | `SubscriptionFetcherTest.anEmptyFeedIsReportedAsQuotaExhaustionNotAsAnError`, `SubscriptionRefreshTest.anEmptyFeedMarksEveryNodeRatherThanReportingANetworkError`, `.aNodeTheFeedDropsIsKeptAndMarkedRatherThanDeleted` |
+| 85 | `type` / `ver` / `caps` | covered | `SubscriptionEndpointTest.appendsTypeVersionAndCapabilities`, `SubscriptionFetcherTest.capabilityParametersAreActuallySent` — `caps` is now `nw3,quic` |
 
 ## 11. Cross-cutting
 
 | # | Case | State | Covered by |
 |---|---|---|---|
-| 84 | Decoders survive arbitrary bytes | covered | `DecoderFuzzTest.*` over eleven decoders including `MorphDatagram.open`; `DnsInterceptorTest.arbitrary bytes neither crash nor allocate without bound`; `NowhereUrlRoundTripFuzzTest.*`; `ImportLinkTest.arbitrary text neither throws nor produces something longer than it was given` |
-| 85 | Headers before variable data | covered | `DecoderFuzzTest.aHostileLengthFieldNeverDrivesAnUnboundedAllocation`, `TargetVectorTest.aHostileLengthByteCannotDriveAnUnboundedRead`, `UdpOverTcpVectorTest.aDeclaredLengthCannotDriveAnUnboundedRead`, `DnsMessageTest.a label length past the end of the message does not read past it` |
-| 86 | Recovery after a Portal restart | covered | `PortalLifecycleTest.aNewFlowSucceedsAfterThePortalHasRestarted` (`portal-lifecycle.sh`) |
-| 87 | Kotlin and Rust identical | covered | `oracle-diff.sh` — 22 cases and 2 connection counts, every case over four carrier and Morph combinations. Found two defects on its first v3 runs; see below |
-| 88 | Remote resolution on a device | covered | `e2e-fakeip.sh` — the origin is reachable only by a name that resolves on the Portal's docker network, and it hears only from the Portal |
-| 89 | Coverage ≥ 90% | covered | `koverVerifyDebug` — 91.7% at this baseline |
+| 86 | Decoders survive arbitrary bytes | covered | `DecoderFuzzTest.*` over eleven decoders including `MorphDatagram.open`; `DnsInterceptorTest.arbitrary bytes neither crash nor allocate without bound`; `NowhereUrlRoundTripFuzzTest.*`; `ImportLinkTest.arbitrary text neither throws nor produces something longer than it was given` |
+| 87 | Headers before variable data | covered | `DecoderFuzzTest.aHostileLengthFieldNeverDrivesAnUnboundedAllocation`, `TargetVectorTest.aHostileLengthByteCannotDriveAnUnboundedRead`, `UdpOverTcpVectorTest.aDeclaredLengthCannotDriveAnUnboundedRead`, `DnsMessageTest.a label length past the end of the message does not read past it` |
+| 88 | Recovery after a Portal restart | covered | `PortalLifecycleTest.aNewFlowSucceedsAfterThePortalHasRestarted` (`portal-lifecycle.sh`) |
+| 89 | Kotlin and Rust identical | covered | `oracle-diff.sh` — 22 cases and 2 connection counts, every case over four carrier and Morph combinations. Found two defects on its first v3 runs; see below |
+| 90 | Remote resolution on a device | covered | `e2e-fakeip.sh` — the origin is reachable only by a name that resolves on the Portal's docker network, and it hears only from the Portal |
+| 91 | Coverage ≥ 90% | covered | `koverVerifyDebug` — 92.0% at this baseline |
 
 ---
 
 ## Summary
 
-**88 of 89 rows covered by an automated test or script, one manual with its
-reason (row 59), and none blocked.** Two rows are covered with a stated gap:
-row 67's dashboard half, because NowhereDash does not yet emit v3 links, and
-row 72's acceptance half, for the reason given there.
+**90 of 91 rows covered by an automated test or script, one manual with its
+reason (row 59), and none blocked.** Two of the 90 are covered with a stated
+gap: row 69's dashboard half, because NowhereDash does not yet emit v3 links,
+and row 74's acceptance half, for the reason given there.
 
 ## What the first v3 runs found
 

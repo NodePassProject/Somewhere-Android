@@ -18,18 +18,28 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,9 +49,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import eu.nodepass.somewhere.BuildConfig
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.data.AppSettingsStore
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.subscription.RefreshPreferences
@@ -50,13 +63,19 @@ import eu.nodepass.somewhere.ui.screens.AppsScreen
 import eu.nodepass.somewhere.ui.screens.DiagnosticsScreen
 import eu.nodepass.somewhere.ui.screens.HomeScreen
 import eu.nodepass.somewhere.ui.screens.ImportScreen
+import eu.nodepass.somewhere.ui.screens.NetworkScreen
 import eu.nodepass.somewhere.ui.screens.NodeEditorScreen
 import eu.nodepass.somewhere.ui.screens.NodesScreen
 import eu.nodepass.somewhere.ui.screens.RoutingScreen
+import eu.nodepass.somewhere.ui.screens.ScanScreen
 import eu.nodepass.somewhere.ui.screens.SettingsScreen
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.update.UpdateController
+import eu.nodepass.somewhere.vpn.ActivityExport
+import eu.nodepass.somewhere.vpn.NetworkSettingsStore
 import eu.nodepass.somewhere.vpn.TunnelController
+import kotlinx.coroutines.launch
 
 /** The four destinations that carry a tab. Everything else is pushed over them. */
 enum class Tab(
@@ -67,7 +86,7 @@ enum class Tab(
     Home("home", R.string.tab_home, SomewhereIcons.TabHome),
     Nodes("nodes", R.string.tab_nodes, SomewhereIcons.TabNodes),
     Routing("routing", R.string.tab_routing, SomewhereIcons.TabRouting),
-    Logs("logs", R.string.tab_logs, SomewhereIcons.TabLogs),
+    Activity("activity", R.string.tab_activity, SomewhereIcons.TabLogs),
 }
 
 object Routes {
@@ -75,6 +94,8 @@ object Routes {
     const val IMPORT = "import"
     const val APPS = "apps"
     const val SETTINGS = "settings"
+    const val SCAN = "scan"
+    const val NETWORK = "network"
 }
 
 @Composable
@@ -84,7 +105,9 @@ fun SomewhereApp(
     routing: RoutingController,
     pendingLink: String? = null,
     onLinkHandled: () -> Unit = {},
-    onToggleTunnel: (NowhereUrl) -> Unit = {},
+    onToggleTunnel: () -> Unit = {},
+    /** The user picked a node, or automatic. Persisting it, and reconnecting, is the caller's. */
+    onChoose: (NodeChoice) -> Unit = {},
     onReconnect: () -> Unit = {},
     onImportRules: () -> Unit = {},
     /**
@@ -96,6 +119,15 @@ fun SomewhereApp(
     refresh: RefreshPreferences = RefreshPreferences(java.io.File("")),
     /** Called after the preference changes, to put the schedule where it says. */
     onRefreshScheduleChanged: () -> Unit = {},
+    /** The app's own preferences. A default store with no file serves previews and tests. */
+    settings: AppSettingsStore = AppSettingsStore(null),
+    /** How the TUN is built. A store with no file serves previews and tests. */
+    network: NetworkSettingsStore = NetworkSettingsStore(java.io.File("/dev/null/none")),
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {},
+    backupMessage: Int? = null,
+    /** Release checks. Null in previews and tests, which have no network to ask. */
+    updates: UpdateController? = null,
     navController: NavHostController = rememberNavController(),
 ) {
     val colors = SomewhereTheme.colors
@@ -116,6 +148,18 @@ fun SomewhereApp(
     // the navigation back stack, and from there into logs and crash reports.
     var editing by remember { mutableStateOf<NowhereUrl?>(null) }
 
+    // What the scanner read, on its way to the import screen. Held here for the
+    // same reason as [editing]: it may be a node URL with its shared key.
+    var scanned by remember { mutableStateOf<String?>(null) }
+
+    // One node removed, undoable for as long as the snackbar shows. Held here
+    // and not in the back stack for the reason [editing] is: a node URL is a
+    // shared key.
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val removedText = stringResource(R.string.node_removed)
+    val undoText = stringResource(R.string.action_undo)
+
     Column(
         Modifier
             .fillMaxSize()
@@ -132,8 +176,12 @@ fun SomewhereApp(
                     )
                 }
                 composable(Tab.Nodes.route) {
+                    val current by settings.settings.collectAsState()
                     NodesScreen(
                         nodes = nodes,
+                        onChoose = onChoose,
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onAdd = {
                             onLinkHandled()
                             navController.navigate(Routes.IMPORT)
@@ -153,9 +201,48 @@ fun SomewhereApp(
                         onImportRules = onImportRules,
                     )
                 }
-                composable(Tab.Logs.route) {
+                composable(Tab.Activity.route) {
                     val entries by TunnelController.connectionLog.recent.collectAsState()
-                    DiagnosticsScreen(entries = entries)
+                    val live by TunnelController.connections.collectAsState()
+                    val dns by TunnelController.dnsLog.recent.collectAsState()
+                    // Its own clock. Keyed on the list it froze: an idle
+                    // connection makes an equal snapshot, a StateFlow does not
+                    // emit an equal value, and the age of exactly the
+                    // connections whose age matters stopped.
+                    var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            now = android.os.SystemClock.elapsedRealtime()
+                            kotlinx.coroutines.delay(1_000)
+                        }
+                    }
+                    val context = LocalContext.current
+                    val baseline = stringResource(R.string.protocol_baseline)
+                    DiagnosticsScreen(
+                        entries = entries,
+                        connections = live,
+                        dns = dns,
+                        nowElapsedMillis = now,
+                        onClose = TunnelController::closeConnection,
+                        onCloseAll = TunnelController::closeAllConnections,
+                        onExport = {
+                            context.shareText(
+                                ActivityExport.render(
+                                    appVersion = BuildConfig.VERSION_NAME,
+                                    protocolBaseline = baseline,
+                                    exportedAt =
+                                        java.time.OffsetDateTime
+                                            .now()
+                                            .withNano(0)
+                                            .toString(),
+                                    portalAnswers = entries,
+                                    dns = dns,
+                                    live = live,
+                                    nowElapsedMillis = android.os.SystemClock.elapsedRealtime(),
+                                ),
+                            )
+                        },
+                    )
                 }
                 composable(Routes.EDITOR) {
                     NodeEditorScreen(
@@ -163,22 +250,59 @@ fun SomewhereApp(
                         editing = editing,
                         onBack = {
                             editing = null
-                            navController.popBackStack()
+                            // Only while the editor is on top. Clearing
+                            // [editing] recomposes the leaving screen, whose
+                            // nothing-to-edit guard calls this again; a second
+                            // pop took the user from Nodes back to Home.
+                            if (navController.currentDestination?.route == Routes.EDITOR) navController.popBackStack()
+                        },
+                        onRemoved = { removed ->
+                            scope.launch {
+                                snackbar.currentSnackbarData?.dismiss()
+                                val answer =
+                                    snackbar.showSnackbar(removedText, actionLabel = undoText, duration = SnackbarDuration.Long)
+                                if (answer == SnackbarResult.ActionPerformed) nodes.restore(removed)
+                            }
                         },
                     )
                 }
                 composable(Routes.IMPORT) {
+                    // Gone with the screen, however it closes. Cleared only on
+                    // Add, a system back left the scan behind, and the next
+                    // import opened pre-filled with it — a node key included.
+                    DisposableEffect(Unit) { onDispose { scanned = null } }
                     ImportScreen(
                         nodes = nodes,
-                        link = pendingLink,
+                        link = scanned ?: pendingLink,
                         onClose = {
+                            scanned = null
                             onLinkHandled()
+                            navController.popBackStack()
+                        },
+                        onScan = { navController.navigate(Routes.SCAN) },
+                    )
+                }
+                composable(Routes.NETWORK) {
+                    NetworkScreen(
+                        initial = remember { network.load() },
+                        onSave = { network.save(it) },
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+                composable(Routes.SCAN) {
+                    ScanScreen(
+                        onBack = { navController.popBackStack() },
+                        onScanned = { text ->
+                            scanned = text
                             navController.popBackStack()
                         },
                     )
                 }
                 composable(Routes.APPS) {
+                    val current by settings.settings.collectAsState()
                     AppsScreen(
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
                         controller = apps,
                         onReconnect = onReconnect,
@@ -189,20 +313,50 @@ fun SomewhereApp(
                     // preference is a file the scheduled job also reads, and a
                     // screen holding a cached copy would disagree with it after
                     // the job cancelled its own schedule.
-                    val refreshSettings = remember { refresh.load() }
-                    var automatic by remember { mutableStateOf(refreshSettings.automatic) }
+                    var refreshSettings by remember { mutableStateOf(refresh.load()) }
+                    val current by settings.settings.collectAsState()
                     SettingsScreen(
+                        onOpenNetwork = { navController.navigate(Routes.NETWORK) },
+                        onExportBackup = onExportBackup,
+                        onImportBackup = onImportBackup,
+                        backupMessage = backupMessage,
+                        updateState = updates?.state?.collectAsState()?.value ?: UpdateController.State.Idle,
+                        onCheckForUpdates = { updates?.checkNow() },
+                        settings = current,
+                        onSettingsChange = { settings.update(it) },
                         onBack = { navController.popBackStack() },
-                        automaticRefresh = automatic,
+                        automaticRefresh = refreshSettings.automatic,
                         refreshIntervalHours = refreshSettings.effectiveIntervalHours,
                         onToggleAutomaticRefresh = { wanted ->
-                            automatic = wanted
-                            refresh.save(refreshSettings.copy(automatic = wanted))
+                            refreshSettings = refreshSettings.copy(automatic = wanted)
+                            refresh.save(refreshSettings)
+                            onRefreshScheduleChanged()
+                        },
+                        onRefreshIntervalChange = { hours ->
+                            refreshSettings = refreshSettings.copy(intervalHours = hours)
+                            refresh.save(refreshSettings)
+                            // Rescheduled, because a periodic job keeps the
+                            // interval it was scheduled with.
                             onRefreshScheduleChanged()
                         },
                     )
                 }
             }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 12.dp)) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = colors.surfaceAlt,
+                    contentColor = colors.ink,
+                    actionColor = colors.brand,
+                    shape = RoundedCornerShape(12.dp),
+                )
+            }
+        }
+
+        // Over whatever screen is open: an automatic check finishes when it
+        // finishes, and the answer is the same wherever the user is.
+        updates?.offer?.collectAsState()?.value?.let { release ->
+            UpdateDialog(release, onLater = { updates.dismiss(release) })
         }
 
         if (tab != null) {

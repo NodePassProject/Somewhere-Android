@@ -18,6 +18,14 @@ import javax.crypto.spec.SecretKeySpec
  * udp_s2c = HMAC-SHA256(root, "udp s2c" || 0x01)
  * ```
  *
+ * Two more from the same root, for the Authenticated Prelude (Nowhere
+ * `docs/prelude.md` § Authentication), independent of the four above:
+ *
+ * ```
+ * auth_key = HMAC-SHA256(root, "tcp prelude auth" || 0x01)
+ * mask_key = HMAC-SHA256(root, "tcp prelude mask" || 0x01)
+ * ```
+ *
  * **The root label is the HMAC key itself, not hashed first.** Authentication
  * hashes its label into a salt and Morph does not; the specification calls the
  * difference out, and transcribing one derivation from the other is the
@@ -36,6 +44,8 @@ class MorphKeys private constructor(
     private val tcpS2c: ByteArray,
     private val udpC2s: ByteArray,
     private val udpS2c: ByteArray,
+    private val preludeAuth: ByteArray,
+    private val preludeMask: ByteArray,
 ) {
     fun tcpClientToServer(): ByteArray = tcpC2s.copyOf()
 
@@ -44,6 +54,10 @@ class MorphKeys private constructor(
     fun udpClientToServer(): ByteArray = udpC2s.copyOf()
 
     fun udpServerToClient(): ByteArray = udpS2c.copyOf()
+
+    internal fun preludeAuthKey(): ByteArray = preludeAuth.copyOf()
+
+    internal fun preludeMaskKey(): ByteArray = preludeMask.copyOf()
 
     /** Key material never reaches a log. */
     override fun toString(): String = "MorphKeys(REDACTED)"
@@ -64,6 +78,8 @@ class MorphKeys private constructor(
                 tcpS2c = expand(root, "tcp s2c"),
                 udpC2s = expand(root, "udp c2s"),
                 udpS2c = expand(root, "udp s2c"),
+                preludeAuth = expand(root, "tcp prelude auth"),
+                preludeMask = expand(root, "tcp prelude mask"),
             )
         }
 
@@ -72,7 +88,7 @@ class MorphKeys private constructor(
             info: String,
         ): ByteArray = hmac(root, info.encodeToByteArray() + 0x01)
 
-        private fun hmac(
+        internal fun hmac(
             key: ByteArray,
             message: ByteArray,
         ): ByteArray =

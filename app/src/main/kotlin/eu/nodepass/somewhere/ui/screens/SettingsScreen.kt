@@ -13,16 +13,21 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,17 +38,28 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import eu.nodepass.somewhere.BuildConfig
+import eu.nodepass.somewhere.QuickActionActivity
 import eu.nodepass.somewhere.R
+import eu.nodepass.somewhere.data.AppSettings
+import eu.nodepass.somewhere.data.ThemeMode
+import eu.nodepass.somewhere.subscription.RefreshPreferences
+import eu.nodepass.somewhere.ui.AppLanguage
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.Panel
 import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.PanelRow
 import eu.nodepass.somewhere.ui.components.SectionLabel
+import eu.nodepass.somewhere.ui.components.Segmented
 import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
+import eu.nodepass.somewhere.ui.openReleasePage
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
+import eu.nodepass.somewhere.update.UpdateCheck
+import eu.nodepass.somewhere.update.UpdateController
+import eu.nodepass.somewhere.vpn.SomewhereVpnService
 
 @Composable
 fun SettingsScreen(
@@ -51,19 +67,41 @@ fun SettingsScreen(
     automaticRefresh: Boolean = false,
     refreshIntervalHours: Int = 0,
     onToggleAutomaticRefresh: (Boolean) -> Unit = {},
+    onRefreshIntervalChange: (Int) -> Unit = {},
+    updateState: UpdateController.State = UpdateController.State.Idle,
+    onCheckForUpdates: () -> Unit = {},
+    settings: AppSettings = AppSettings(),
+    onSettingsChange: ((AppSettings) -> AppSettings) -> Unit = {},
+    onOpenNetwork: () -> Unit = {},
+    onExportBackup: () -> Unit = {},
+    onImportBackup: () -> Unit = {},
+    /** What the last backup action said, already a resource id; null for nothing. */
+    backupMessage: Int? = null,
 ) {
     val colors = SomewhereTheme.colors
     val context = LocalContext.current
+    // Re-read on every return to the screen: the system's notification
+    // settings are where this changes, and the user comes back from there.
+    var notificationsOn by remember { mutableStateOf(true) }
+    LifecycleResumeEffect(Unit) {
+        notificationsOn = context.notificationsEnabled()
+        onPauseOrDispose {}
+    }
+    var choosingLanguage by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf<Int?>(null) }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState()),
-    ) {
+    // The header stays put and the form scrolls under it. Scrolled with the
+    // form, the header slid up beneath the status bar, whose icons then sat
+    // on top of the title.
+    Column(Modifier.fillMaxSize()) {
         ScreenHeader(stringResource(R.string.settings_title), onBack)
 
         Column(
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -106,6 +144,19 @@ fun SettingsScreen(
                         }
                         Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
                     }
+                    PanelDivider()
+                    PanelRow(onClick = onOpenNetwork) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                stringResource(R.string.settings_network),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(stringResource(R.string.network_detail), style = SomewhereType.bodySmall, color = colors.muted)
+                        }
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
                 }
             }
 
@@ -138,10 +189,33 @@ fun SettingsScreen(
                                 color = colors.muted,
                             )
                         }
-                        Switch(
-                            checked = automaticRefresh,
-                            onCheckedChange = onToggleAutomaticRefresh,
-                        )
+                        // The design system's switch, as every other row here
+                        // uses: two switch styles on one screen read as two
+                        // kinds of setting.
+                        SomewhereSwitch(automaticRefresh, onToggleAutomaticRefresh)
+                    }
+                    if (automaticRefresh) {
+                        PanelDivider()
+                        PanelRow {
+                            Text(
+                                text = stringResource(R.string.settings_refresh_interval),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                                modifier = Modifier.weight(0.8f),
+                            )
+                            val choices = RefreshPreferences.INTERVAL_CHOICES
+                            Segmented(
+                                options = choices.map { stringResource(R.string.settings_refresh_hours, it) },
+                                // An interval written by hand that is not one of
+                                // the choices selects none, rather than pretending.
+                                selectedIndex = choices.indexOf(refreshIntervalHours),
+                                onSelect = { index -> onRefreshIntervalChange(choices[index]) },
+                                height = 30.dp,
+                                mono = true,
+                                modifier = Modifier.weight(2f),
+                            )
+                        }
                     }
                     PanelDivider()
                     // "Only over HTTPS" was a switch over an enforcement that
@@ -161,6 +235,144 @@ fun SettingsScreen(
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_appearance))
+                Panel {
+                    PanelRow {
+                        Text(
+                            text = stringResource(R.string.settings_theme),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(0.8f),
+                        )
+                        val modes = ThemeMode.entries
+                        Segmented(
+                            options =
+                                modes.map {
+                                    stringResource(
+                                        when (it) {
+                                            ThemeMode.System -> R.string.theme_system
+                                            ThemeMode.Light -> R.string.theme_light
+                                            ThemeMode.Dark -> R.string.theme_dark
+                                        },
+                                    )
+                                },
+                            selectedIndex = modes.indexOf(settings.theme),
+                            onSelect = { index -> onSettingsChange { it.copy(theme = modes[index]) } },
+                            height = 30.dp,
+                            modifier = Modifier.weight(2f),
+                        )
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = { choosingLanguage = true }) {
+                        Text(
+                            text = stringResource(R.string.settings_language),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        val current = AppLanguage.current(context)
+                        Text(
+                            text = if (current.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(current),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 13.sp,
+                            color = colors.muted,
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_app))
+                Panel {
+                    if (!notificationsOn) {
+                        PanelRow(onClick = { context.openNotificationSettings() }) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = stringResource(R.string.settings_notifications_off),
+                                    style = SomewhereType.bodySmall,
+                                    color = colors.warn,
+                                )
+                                Text(
+                                    text = stringResource(R.string.settings_notifications_allow),
+                                    fontFamily = SomewhereType.Body,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 13.sp,
+                                    color = colors.brand,
+                                )
+                            }
+                            Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                        }
+                        PanelDivider()
+                    }
+                    SwitchRow(
+                        title = stringResource(R.string.settings_connect_on_launch),
+                        detail = stringResource(R.string.settings_connect_on_launch_detail),
+                        checked = settings.connectOnLaunch,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(connectOnLaunch = on) } },
+                    )
+                    PanelDivider()
+                    SwitchRow(
+                        title = stringResource(R.string.settings_hide_recents),
+                        detail = null,
+                        checked = settings.hideFromRecents,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(hideFromRecents = on) } },
+                    )
+                    PanelDivider()
+                    SwitchRow(
+                        title = stringResource(R.string.settings_automation),
+                        // The action names are identifiers an automation app
+                        // needs verbatim, so they are arguments, not prose.
+                        detail =
+                            stringResource(
+                                R.string.settings_automation_detail,
+                                listOf(QuickActionActivity.ACTION_START, QuickActionActivity.ACTION_STOP, QuickActionActivity.ACTION_TOGGLE)
+                                    .joinToString(", "),
+                            ),
+                        checked = settings.automation,
+                        onCheckedChange = { on -> onSettingsChange { it.copy(automation = on) } },
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SectionLabel(stringResource(R.string.settings_backup))
+                Panel {
+                    PanelRow(onClick = { confirming = R.string.backup_export_warning }) {
+                        Text(
+                            stringResource(R.string.backup_export),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = { confirming = R.string.backup_import_warning }) {
+                        Text(
+                            stringResource(R.string.backup_import),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Icon(SomewhereIcons.ChevronRight, null, Modifier.size(16.dp), tint = colors.faint)
+                    }
+                }
+                backupMessage?.let {
+                    Text(
+                        stringResource(it),
+                        style = SomewhereType.bodySmall,
+                        color = colors.muted,
+                        modifier = Modifier.padding(horizontal = 2.dp),
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionLabel(stringResource(R.string.settings_about))
                 Panel {
                     PanelRow {
@@ -174,6 +386,42 @@ fun SettingsScreen(
                         MonoText(BuildConfig.VERSION_NAME, colors.muted, fontSize = 12.5.sp)
                     }
                     PanelDivider()
+                    // A found release opens its page; anything else checks
+                    // again. The answer is the row's detail line.
+                    val found = ((updateState as? UpdateController.State.Done)?.result as? UpdateCheck.Available)?.release
+                    PanelRow(onClick = { if (found != null) context.openReleasePage(found.page) else onCheckForUpdates() }) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = stringResource(R.string.update_check),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                text = updateDetail(updateState),
+                                style = SomewhereType.bodySmall,
+                                color = if (found != null) colors.brand else colors.muted,
+                            )
+                        }
+                    }
+                    PanelDivider()
+                    PanelRow(onClick = { onSettingsChange { it.copy(checkUpdates = !it.checkUpdates) } }) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = stringResource(R.string.update_automatic),
+                                fontFamily = SomewhereType.Body,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                text = stringResource(R.string.update_automatic_detail),
+                                style = SomewhereType.bodySmall,
+                                color = colors.muted,
+                            )
+                        }
+                        SomewhereSwitch(settings.checkUpdates, { on -> onSettingsChange { it.copy(checkUpdates = on) } })
+                    }
+                    PanelDivider()
                     PanelRow {
                         Text(
                             text = stringResource(R.string.settings_protocol),
@@ -185,7 +433,9 @@ fun SettingsScreen(
                         MonoText(stringResource(R.string.protocol_baseline), colors.muted, fontSize = 12.5.sp)
                     }
                     PanelDivider()
-                    PanelRow(onClick = {}) {
+                    // GPL-3.0: the source is part of what the user received,
+                    // so the row goes to it rather than being a drawn link.
+                    PanelRow(onClick = { context.openSourceCode() }) {
                         Text(
                             text = stringResource(R.string.settings_source_code),
                             fontFamily = SomewhereType.Body,
@@ -207,6 +457,84 @@ fun SettingsScreen(
             }
         }
     }
+
+    if (choosingLanguage) LanguageDialog(onDismiss = { choosingLanguage = false })
+
+    // Said before the file picker opens: an export is every key in plaintext,
+    // and an import replaces everything. Neither is a tap to make by accident.
+    confirming?.let { warning ->
+        val exporting = warning == R.string.backup_export_warning
+        AlertDialog(
+            onDismissRequest = { confirming = null },
+            containerColor = colors.surface,
+            shape = RoundedCornerShape(14.dp),
+            title = {
+                Text(
+                    stringResource(if (exporting) R.string.backup_export else R.string.backup_import),
+                    style = SomewhereType.rowHeading,
+                    color = colors.ink,
+                )
+            },
+            text = { Text(stringResource(warning), style = SomewhereType.bodySmall, color = colors.muted) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = null
+                    if (exporting) onExportBackup() else onImportBackup()
+                }) {
+                    Text(
+                        stringResource(if (exporting) R.string.backup_export else R.string.backup_import),
+                        color = if (exporting) colors.brand else colors.critical,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = null }) { Text(stringResource(R.string.action_cancel), color = colors.inkMuted) }
+            },
+        )
+    }
+}
+
+/** The four choices, each named in its own language. */
+@Composable
+private fun LanguageDialog(onDismiss: () -> Unit) {
+    val colors = SomewhereTheme.colors
+    val context = LocalContext.current
+    val current = AppLanguage.current(context)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = colors.surface,
+        shape = RoundedCornerShape(14.dp),
+        title = { Text(stringResource(R.string.settings_language), style = SomewhereType.rowHeading, color = colors.ink) },
+        text = {
+            Column {
+                AppLanguage.tags.forEach { tag ->
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable {
+                                    onDismiss()
+                                    AppLanguage.set(context, tag)
+                                }.padding(horizontal = 4.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (tag.isEmpty()) stringResource(R.string.language_system) else AppLanguage.endonym(tag),
+                            fontFamily = SomewhereType.Body,
+                            fontSize = 14.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (tag == current) Icon(SomewhereIcons.Check, null, Modifier.size(16.dp), tint = colors.brand)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel), color = colors.inkMuted) }
+        },
+    )
 }
 
 @Composable
@@ -293,4 +621,42 @@ private fun Context.openVpnSettings() {
             .setData(Uri.fromParts("package", packageName, null))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     runCatching { startActivity(vpn) }.recoverCatching { startActivity(fallback) }
+}
+
+/** Off altogether, or only the tunnel's channel blocked: either way the shade shows nothing. */
+private fun Context.notificationsEnabled(): Boolean {
+    val manager = getSystemService(android.app.NotificationManager::class.java) ?: return true
+    if (!manager.areNotificationsEnabled()) return false
+    val channel = manager.getNotificationChannel(SomewhereVpnService.CHANNEL) ?: return true
+    return channel.importance != android.app.NotificationManager.IMPORTANCE_NONE
+}
+
+/** The app's own notification settings, where the permission can be given once the system stops asking. */
+private fun Context.openNotificationSettings() {
+    val intent =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { startActivity(intent) }
+}
+
+@Composable
+private fun updateDetail(state: UpdateController.State): String =
+    when (state) {
+        UpdateController.State.Idle -> stringResource(R.string.update_idle)
+        UpdateController.State.Checking -> stringResource(R.string.update_checking)
+        is UpdateController.State.Done ->
+            when (val result = state.result) {
+                is UpdateCheck.Available -> stringResource(R.string.update_found, result.release.version.toString())
+                UpdateCheck.Current -> stringResource(R.string.update_current)
+                UpdateCheck.NoRelease -> stringResource(R.string.update_no_release)
+                is UpdateCheck.Failed -> stringResource(R.string.update_failed, result.reason)
+            }
+    }
+
+private fun Context.openSourceCode() {
+    val intent =
+        Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/NodePassProject/Somewhere-Android"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { startActivity(intent) }
 }

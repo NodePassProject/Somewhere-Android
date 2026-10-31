@@ -55,6 +55,16 @@ class Router(
     private val mode: () -> RoutingMode,
     /** What a rule set that mentions nothing about a destination means. */
     val fallback: RouteAction = RouteAction.Tunnel,
+    /**
+     * Rule sets consulted first, in every mode, for their DIRECT answers only.
+     *
+     * Network settings' "keep local networks out" excludes the local ranges
+     * from the TUN, but a flow to `nas.lan` arrives by name, holding a fake
+     * address that is always routed in. The bundled local-network set names
+     * those suffixes; consulting it here is what keeps a printer reached by
+     * name off the Portal too, even when everything else goes through it.
+     */
+    private val local: List<RoutingRules> = emptyList(),
 ) {
     /**
      * Where [target] goes.
@@ -64,6 +74,14 @@ class Router(
      * lookup would put a network's answer in charge of this device's routing.
      */
     fun decide(target: Target): RouteAction {
+        val localAnswer =
+            local.firstNotNullOfOrNull { set ->
+                when (target) {
+                    is Target.Domain -> set.decide(target.host)
+                    is Target.Ip -> set.decide(target.octets)
+                }
+            }
+        if (localAnswer == RouteAction.Direct) return RouteAction.Direct
         if (mode() == RoutingMode.Everything) return RouteAction.Tunnel
         val decided =
             rules().firstNotNullOfOrNull { set ->

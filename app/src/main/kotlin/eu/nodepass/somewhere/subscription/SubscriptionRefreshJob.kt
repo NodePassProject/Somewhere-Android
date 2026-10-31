@@ -52,7 +52,9 @@ class SubscriptionRefreshJob : JobService() {
             cancel(this)
             return false
         }
-        if (application.nodes.subscription.value == null) {
+        if (application.nodes.subscriptionList.value
+                .isEmpty()
+        ) {
             Log.i(TAG, "no subscription to refresh")
             return false
         }

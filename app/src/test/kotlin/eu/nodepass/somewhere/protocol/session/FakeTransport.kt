@@ -22,10 +22,10 @@ class FakeTransport(
     /**
      * Reproduce a Portal that neither answers nor closes.
      *
-     * Observed against a live Portal: a rejected AuthFrame is met with silence,
-     * so reads time out rather than reaching end of stream. Without this the
-     * unit tests would only ever exercise the EOF path, and the real client
-     * would hang on the one failure that matters most.
+     * A v1 Portal met a rejected AuthFrame this way, and a v3.1 Portal meets a
+     * bootstrap it cannot unmask the same way until its deadline, so reads time
+     * out rather than reaching end of stream. Without this the unit tests would
+     * only ever exercise the EOF path.
      */
     private val silentPeer: Boolean = false,
 ) : Transport {

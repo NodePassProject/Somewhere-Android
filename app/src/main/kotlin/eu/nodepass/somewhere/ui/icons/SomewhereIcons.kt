@@ -84,6 +84,7 @@ object SomewhereIcons {
     val Power = stroke("Power", 2.2f, paths = arrayOf("M18.36 6.64A9 9 0 1 1 5.64 6.64", "M12 2v10"))
     val Plus = stroke("Plus", 2.2f, paths = arrayOf("M12 5v14", "M5 12h14"))
     val Check = stroke("Check", 2.4f, paths = arrayOf("M20 6 9 17l-5-5"))
+    val Zap = stroke("Zap", 2f, paths = arrayOf("M13 2 3 14h9l-1 8 10-12h-9l1-8z"))
     val ChevronRight = stroke("ChevronRight", 2.2f, paths = arrayOf("m9 18 6-6-6-6"))
     val ChevronLeft = stroke("ChevronLeft", 2.2f, paths = arrayOf("m15 18-6-6 6-6"))
     val Close = stroke("Close", 2.2f, paths = arrayOf("M18 6 6 18", "m6 6 12 12"))

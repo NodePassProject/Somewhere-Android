@@ -69,11 +69,21 @@ class NodeStore(
         }
     }
 
-    /** A stored node, and the text it round-trips through. */
+    /**
+     * A stored node, and the text it round-trips through.
+     *
+     * [source] is the id of the subscription a feed node belongs to, and is
+     * meaningless for a manual one. With more than one subscription, a refresh
+     * of one must not mark the other's nodes as withdrawn — which it would, if
+     * all a node knew was that it came from *a* feed. A node written before
+     * there could be more than one has the empty id, which is also the id the
+     * subscription written then reads back with, so the two still match.
+     */
     data class Entry(
         val url: NowhereUrl,
         val line: String,
         val origin: Origin = Origin.Manual,
+        val source: String = "",
     )
 
     /**
@@ -108,13 +118,21 @@ class NodeStore(
      */
     private fun parseLine(line: String): Entry? {
         val separator = line.indexOf('\t')
-        val origin = if (separator < 0) Origin.Manual else Origin.fromMarker(line.take(separator)) ?: Origin.Manual
+        // `marker` or `marker:source`. The source is a subscription id, which
+        // this store generates and which never contains a tab or a colon.
+        val tag = if (separator < 0) "" else line.take(separator)
+        val origin = if (separator < 0) Origin.Manual else Origin.fromMarker(tag.substringBefore(':')) ?: Origin.Manual
+        val source = if (origin == Origin.Manual) "" else tag.substringAfter(':', "")
         val urlText = if (separator < 0) line else line.substring(separator + 1)
-        return (NowhereUrl.parse(urlText) as? DecodeResult.Ok)?.value?.let { Entry(it, urlText, origin) }
+        return (NowhereUrl.parse(urlText) as? DecodeResult.Ok)?.value?.let { Entry(it, urlText, origin, source) }
     }
 
     private fun render(entry: Entry): String =
-        if (entry.origin == Origin.Manual) entry.url.toUrl() else "${entry.origin.marker}\t${entry.url.toUrl()}"
+        when {
+            entry.origin == Origin.Manual -> entry.url.toUrl()
+            entry.source.isEmpty() -> "${entry.origin.marker}\t${entry.url.toUrl()}"
+            else -> "${entry.origin.marker}:${entry.source}\t${entry.url.toUrl()}"
+        }
 
     /** Replaces the list, treating every node as manual. */
     fun save(nodes: List<NowhereUrl>): Boolean = saveEntries(nodes.map { Entry(it, it.toUrl(), Origin.Manual) })
@@ -159,6 +177,76 @@ class NodeStore(
         return load()
     }
 
+    /**
+     * Lets go of subscription [source]'s nodes when the subscription is
+     * forgotten.
+     *
+     * The nodes it still lists become the user's own, manual, and keep
+     * working: they are the user's nodes, not the subscription's, and
+     * forgetting a credential is not asking to lose a working list. The ones it
+     * had already withdrawn go — nothing vouches for them any more, and as
+     * manual nodes they would read as working Portals that simply fail.
+     */
+    fun releaseSource(source: String): List<Entry> {
+        saveEntries(
+            load().mapNotNull { entry ->
+                when {
+                    entry.origin == Origin.Manual || entry.source != source -> entry
+                    entry.origin == Origin.Subscription -> entry.copy(origin = Origin.Manual, source = "")
+                    else -> null
+                }
+            },
+        )
+        return load()
+    }
+
+    /**
+     * Makes feed nodes whose subscription is gone the user's own.
+     *
+     * A listed one becomes manual. A withdrawn one is left as it is: it was
+     * shown withdrawn before and still is, and it is the user's to delete.
+     *
+     * @return the list afterwards, written only if something changed.
+     */
+    fun adoptOrphans(knownSources: Set<String>): List<Entry> {
+        val existing = load()
+        val adopted =
+            existing.map { entry ->
+                if (entry.origin == Origin.Subscription && entry.source !in knownSources) {
+                    entry.copy(origin = Origin.Manual, source = "")
+                } else {
+                    entry
+                }
+            }
+        if (adopted == existing) return existing
+        saveEntries(adopted)
+        return load()
+    }
+
+    /** [add] for several nodes, with one write. */
+    fun addAll(nodes: List<NowhereUrl>): List<Entry> {
+        val existing = load()
+        val known = existing.map { it.url.toUrl() }.toMutableSet()
+        val added = nodes.filter { known.add(it.toUrl()) }.map { Entry(it, it.toUrl(), Origin.Manual) }
+        if (added.isEmpty()) return existing
+        saveEntries(existing + added)
+        return load()
+    }
+
+    /**
+     * Puts back an entry [remove] took out, where it was, with its origin and
+     * subscription. Does nothing if an identical node has been stored since.
+     */
+    fun restore(
+        entry: Entry,
+        index: Int,
+    ): List<Entry> {
+        val existing = load()
+        if (existing.any { it.url.toUrl() == entry.url.toUrl() }) return existing
+        saveEntries(existing.toMutableList().apply { add(index.coerceIn(0, size), entry) })
+        return load()
+    }
+
     fun remove(node: NowhereUrl): List<Entry> {
         val rendered = node.toUrl()
         saveEntries(load().filter { it.url.toUrl() != rendered })
@@ -177,7 +265,11 @@ class NodeStore(
      *   Deleting it would leave the user with a shorter list and no explanation,
      *   which is the outcome the requirement exists to prevent.
      */
-    fun reconcileWithFeed(feed: List<NowhereUrl>): List<Entry> {
+    fun reconcileWithFeed(
+        feed: List<NowhereUrl>,
+        /** The subscription this feed came from. Only its own nodes are touched. */
+        source: String = "",
+    ): List<Entry> {
         // Deduplicated first, because dashboards do repeat themselves — the
         // same Portal under two names, or a feed concatenated from two sources.
         // Without this a duplicated entry was added twice on the refresh that
@@ -188,14 +280,22 @@ class NodeStore(
         val existing = load()
         val kept =
             existing.map { entry ->
+                val listed = entry.url.toUrl() in fresh
                 when {
                     entry.origin == Origin.Manual -> entry
-                    entry.url.toUrl() in fresh -> entry.copy(origin = Origin.Subscription)
-                    else -> entry.copy(origin = Origin.RemovedFromFeed)
+                    entry.source == source && listed -> entry.copy(origin = Origin.Subscription)
+                    entry.source == source -> entry.copy(origin = Origin.RemovedFromFeed)
+                    // Another subscription's node. Untouched — unless that
+                    // subscription has withdrawn it and this one lists it, in
+                    // which case it is this one's now: it is live, and leaving
+                    // it marked as withdrawn would hide a working node behind
+                    // the other subscription's expiry.
+                    entry.origin == Origin.RemovedFromFeed && listed -> entry.copy(origin = Origin.Subscription, source = source)
+                    else -> entry
                 }
             }
         val known = kept.map { it.url.toUrl() }.toSet()
-        val added = deduplicated.filter { it.toUrl() !in known }.map { Entry(it, it.toUrl(), Origin.Subscription) }
+        val added = deduplicated.filter { it.toUrl() !in known }.map { Entry(it, it.toUrl(), Origin.Subscription, source) }
         saveEntries(kept + added)
         return load()
     }

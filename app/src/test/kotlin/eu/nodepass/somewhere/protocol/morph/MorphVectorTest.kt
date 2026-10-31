@@ -83,6 +83,35 @@ class MorphVectorTest {
     }
 
     @Test
+    fun theAuthenticatedPreludeChangesOnlyTheTailsLowBits() {
+        val tcp = family["tcp"]!!.jsonObject
+        val keys = MorphKeys.derive(tcp.str("sharedKeyUtf8").encodeToByteArray())
+        val prelude = tcp.str("preludeHex").hexToByteArrayCompat()
+        val nonce = tcp.str("nonceHex").hexToByteArrayCompat()
+        val fields = AuthenticatedPrelude.Fields(identity = 0x0123456789abcdefL, counter = 1)
+        val written = ByteArrayOutputStream()
+        val socket =
+            MorphSocket.over(
+                FakeSocket(ByteArrayInputStream(ByteArray(0)), written),
+                keys,
+                prelude = prelude,
+                nonce = nonce,
+                authentication = { fields },
+            )
+        socket.getOutputStream().write("hello".encodeToByteArray())
+
+        val expectedPrelude = prelude.copyOf().also { AuthenticatedPrelude.encode(it, nonce, keys, fields) }
+        val wire = written.toByteArray()
+        assertEquals(expectedPrelude.toHex(), wire.copyOf(64).toHex())
+        assertEquals(fields, AuthenticatedPrelude.decode(wire.copyOf(64), nonce, keys))
+        // Everything after the prelude is the Core envelope, unchanged.
+        assertEquals(
+            tcp.str("expectedClientWireHex").substring(128),
+            wire.copyOfRange(64, wire.size).toHex(),
+        )
+    }
+
+    @Test
     fun theTcpWireIsUpstreamsLayout() {
         val tcp = family["tcp"]!!.jsonObject
         val keys = MorphKeys.derive(tcp.str("sharedKeyUtf8").encodeToByteArray())
@@ -94,6 +123,10 @@ class MorphVectorTest {
                 keys,
                 prelude = tcp.str("preludeHex").hexToByteArrayCompat(),
                 nonce = tcp.str("nonceHex").hexToByteArrayCompat(),
+                // The Core envelope, as the fixture records it. The Prelude
+                // Extension rewrites the tail's low bits; the next case says
+                // that it does, and only that.
+                authentication = null,
             )
 
         // Written in two pieces, so that a cipher restarted per write would show.

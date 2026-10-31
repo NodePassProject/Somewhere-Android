@@ -91,6 +91,85 @@ object TunConfiguration {
      */
     val carriesIpv6: Boolean get() = routes.any { it.isIpv6 }
 
+    /**
+     * The ranges that must reach this TUN whatever is excluded: its own
+     * subnets, where the announced resolvers live, and the fake-IP pools,
+     * where every name-routed flow arrives.
+     *
+     * Both can sit inside a range someone leaves out — `10.66.0.0/24` inside
+     * `10.0.0.0/8`, `fc00::/96` inside `fc00::/7` — and leaving them out with
+     * it would break every lookup and every flow by name. They are routed
+     * explicitly, and a longer prefix wins over the exclusion it sits in.
+     */
+    val protectedRoutes: List<Cidr> =
+        listOf(
+            Cidr("10.66.0.0", 24),
+            Cidr("fd66::", 64),
+            Cidr("198.18.0.0", 15),
+            Cidr("fc00::", 96),
+        )
+
+    /** What a TUN is built with, once the user's exclusions are applied. */
+    data class Plan(
+        val routes: List<Cidr>,
+        /** For `excludeRoute`, API 33+. Empty below, where [routes] is the complement instead. */
+        val excludes: List<Cidr>,
+        val mtu: Int,
+    )
+
+    /**
+     * Routes for [exclusions] on API [sdk].
+     *
+     * From 33 the platform excludes a range itself. Below, the only way is to
+     * route everything else: the complement of the exclusions, computed per
+     * family. Either way [protectedRoutes] are routed on top.
+     */
+    fun plan(
+        exclusions: List<Cidr>,
+        mtu: Int,
+        sdk: Int,
+    ): Plan {
+        // What the network settings screen refuses is dropped here too, for a
+        // file that did not come through that screen.
+        val usable = exclusions.filter(::isExcludable)
+        if (usable.isEmpty()) return Plan(routes, emptyList(), mtu)
+        val exclusions = usable
+        return if (sdk >= EXCLUDE_ROUTE_API) {
+            Plan(routes + protectedRoutes, exclusions, mtu)
+        } else {
+            // Loopback never belongs to a VPN, and the builder throws on it.
+            Plan(routes.flatMap { CidrSet.subtract(it, exclusions + LOOPBACK) } + protectedRoutes, emptyList(), mtu)
+        }
+    }
+
+    /** Loopback, which the builder refuses in a route or an exclusion. */
+    val LOOPBACK: List<Cidr> = listOf(Cidr("127.0.0.0", 8), Cidr("::1", 128), Cidr("::", 128))
+
+    /**
+     * Whether a range may be left out of the tunnel.
+     *
+     * Two prefixes are either nested or apart, so the question is which way
+     * round. One *wider* than a protected range is fine — the protected route
+     * is longer and wins — and that is how the LAN's 10.0.0.0/8 comes out with
+     * 10.66.0.0/24 left in. One equal to or *inside* a protected range is not:
+     * on API 33+ the first replaces the protected route and the second wins on
+     * prefix length, and either breaks every lookup or every flow by name.
+     * Nor one inside loopback, whose network address the builder throws on,
+     * nor a default route, which would leave the tunnel carrying nothing.
+     */
+    fun isExcludable(cidr: Cidr): Boolean {
+        val range = CidrSet.range(cidr) ?: return false
+        if (cidr.prefix == 0) return false
+        val inside = { other: Cidr ->
+            val o = CidrSet.range(other)
+            o != null && o.bytes == range.bytes && range.first >= o.first && range.last <= o.last
+        }
+        return LOOPBACK.none(inside) && protectedRoutes.none(inside)
+    }
+
+    /** `VpnService.Builder.excludeRoute`. */
+    const val EXCLUDE_ROUTE_API = 33
+
     /** Every announced address, as bytes, for the checks that are about ranges. */
     internal fun addressBytes(): List<ByteArray> = addresses.mapNotNull { parse(it.address) }
 

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.apps.AppsController
+import eu.nodepass.somewhere.routing.BundledRules
 import eu.nodepass.somewhere.routing.RoutingController
 import eu.nodepass.somewhere.routing.RoutingMode
 import eu.nodepass.somewhere.ui.components.Card
@@ -41,6 +42,7 @@ import eu.nodepass.somewhere.ui.components.Panel
 import eu.nodepass.somewhere.ui.components.PanelDivider
 import eu.nodepass.somewhere.ui.components.PanelRow
 import eu.nodepass.somewhere.ui.components.SectionLabel
+import eu.nodepass.somewhere.ui.components.SomewhereSwitch
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
@@ -136,11 +138,24 @@ fun RoutingScreen(
                     // V-05 problem in its worst form, and that stays true of a
                     // set with nothing controversial in it.
                     bundled.forEach { set ->
+                        // A policy set is the user's to switch; the structural
+                        // one is not, because turning it off only ever breaks
+                        // the printer.
+                        val switchable = set.tier == BundledRules.Tier.Policy
+                        val on = !switchable || settings.mainlandChina
                         PanelDivider()
-                        PanelRow(Modifier.padding(horizontal = 0.dp)) {
-                            Column(Modifier.weight(1f)) {
+                        PanelRow(
+                            modifier = Modifier.padding(horizontal = 0.dp),
+                            onClick = if (switchable) ({ routing.setMainlandChina(!settings.mainlandChina) }) else null,
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
-                                    text = stringResource(R.string.routing_bundled, set.name),
+                                    text =
+                                        if (switchable) {
+                                            stringResource(R.string.routing_mainland_china)
+                                        } else {
+                                            stringResource(R.string.routing_bundled, set.name)
+                                        },
                                     style = SomewhereType.bodySmall,
                                     color = colors.ink,
                                 )
@@ -154,6 +169,18 @@ fun RoutingScreen(
                                     style = SomewhereType.bodySmall,
                                     color = colors.muted,
                                 )
+                                if (switchable && settings.mode != RoutingMode.Rules) {
+                                    // Said rather than greyed out: a switch that
+                                    // is on and does nothing reads as broken.
+                                    Text(
+                                        text = stringResource(R.string.routing_mainland_china_rules_only),
+                                        style = SomewhereType.bodySmall,
+                                        color = colors.muted,
+                                    )
+                                }
+                            }
+                            if (switchable) {
+                                SomewhereSwitch(on, { routing.setMainlandChina(it) })
                             }
                         }
                     }

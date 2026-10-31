@@ -3,6 +3,7 @@
 
 package eu.nodepass.somewhere.vpn
 
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.service.quicksettings.Tile
@@ -11,8 +12,7 @@ import android.util.Log
 import eu.nodepass.somewhere.MainActivity
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.SomewhereApplication
-import eu.nodepass.somewhere.protocol.DecodeResult
-import eu.nodepass.somewhere.protocol.url.NowhereUrl
+import eu.nodepass.somewhere.ui.AppLanguage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,12 +44,17 @@ import kotlinx.coroutines.launch
  * over it, that is a control that silently does nothing. Consent is asked for
  * by opening the app, which is the only place a system dialog can be shown.
  *
- * **It must not guess a node.** The tile toggles the node the app last
- * connected with. With no node, it opens the app rather than choosing one:
- * picking a Portal for somebody from a shade tile is exactly the automatic
- * selection the failover policy refuses to do.
+ * **It must not make a choice the app would not.** The tile connects to
+ * exactly what Home would: the node the user chose, or — when they left it
+ * to the client — what automatic selection picks, with failover allowed only
+ * in that case. With no node at all it opens the app rather than inventing one.
  */
 class TunnelTileService : TileService() {
+    // The app's language below Android 13, where the platform does not keep it.
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     private var watching: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
@@ -75,7 +80,8 @@ class TunnelTileService : TileService() {
             return
         }
 
-        val node = lastNode()
+        val application = applicationContext as? SomewhereApplication
+        val node = application?.nodes?.target()?.url
         if (node == null || VpnService.prepare(this) != null) {
             // No node, or no consent. Both need the app: one to choose, the
             // other to show a system dialog, and neither can happen from here.
@@ -83,20 +89,7 @@ class TunnelTileService : TileService() {
             openApp()
             return
         }
-        SomewhereVpnService.start(this, node)
-    }
-
-    /**
-     * The node the app last connected with, or null.
-     *
-     * Read from the same list the app uses rather than from a copy: a tile
-     * holding its own idea of the node would connect to whatever it remembered
-     * after the user deleted it.
-     */
-    private fun lastNode(): NowhereUrl? {
-        val application = applicationContext as? SomewhereApplication ?: return null
-        val line = application.nodes.lastConnected() ?: return null
-        return (NowhereUrl.parse(line) as? DecodeResult.Ok)?.value
+        SomewhereVpnService.start(this, node, application.nodes.effectiveChoice().mayFailOver)
     }
 
     private fun openApp() {

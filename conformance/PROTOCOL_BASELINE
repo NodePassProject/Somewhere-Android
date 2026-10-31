@@ -6,17 +6,62 @@
 
 UPSTREAM_REPO=NodePassProject/Nowhere
 UPSTREAM_BRANCH=main
-UPSTREAM_TAG=v3.0.1
-UPSTREAM_COMMIT=00000e0
-UPSTREAM_COMMIT_DATE=2026-10-16
-BINARY_VERSION_STRING=nowhere-v3.0.1
+UPSTREAM_TAG=v3.1.0
+UPSTREAM_COMMIT=0000065
+UPSTREAM_COMMIT_DATE=2026-10-24
+BINARY_VERSION_STRING=nowhere-v3.1.0
 ALPN=nw3
 
-# Normative files watched for change. compatibility.md was deleted in v3;
-# interoperability.md is new and states what a compatible peer must do.
-SPEC_FILES=docs/protocol.md docs/configuration.md docs/security.md docs/interoperability.md
+# Normative files watched for change in the implementation repository.
+# protocol.md is now a page of links, kept because a change there is how a move
+# would be announced; prelude.md is the Prelude Extension this client sends.
+SPEC_FILES=docs/protocol.md docs/prelude.md docs/configuration.md docs/security.md docs/interoperability.md
+
+# The Core specification, standalone since v3.1.0. Watched as well: with only
+# the implementation repository watched, a Core edit would never be reported.
+SPEC_REPO=NodePassProject/Nowhere-Protocol
+SPEC_REPO_BRANCH=main
+SPEC_REPO_COMMIT=0000001
+SPEC_REPO_FILES=PROTOCOL.md
 
 # Known state
+# - Advanced from v3.0.1 (00000e0) to v3.1.0 (0000065) on 2026-10-24, after drift
+#   issue #3. No Core byte changed: the specification was extracted, unchanged
+#   on the wire, into NodePassProject/Nowhere-Protocol ("This extraction does not
+#   introduce a protocol upgrade"), with Egress and every implementation
+#   constant moved out of it. Two things did change:
+#
+#     * The Authenticated Prelude (docs/prelude.md), a Nowhere extension: the
+#       low seven bits of the Morph TCP prelude's last 32 bytes carry a masked
+#       Identity, Counter and 14-byte Tag, under two new keys from the Morph
+#       root ("tcp prelude auth", "tcp prelude mask"). A Portal that verifies a
+#       Tag refuses a replayed Counter; one that cannot match a Tag accepts as
+#       before, so sending it is safe against every v3 Portal. This client
+#       sends it on every Morph TCP connection, with one Identity per shared
+#       key (a Vector talks to one Portal; this client to many).
+#     * A Portal now answers a Morph bootstrap it cannot unmask — a wrong key,
+#       or Morph on one side only — with silence and a reset at its handshake
+#       deadline, where 3.0.1 failed the TLS handshake. The client reports
+#       that as DialReason.Silent, naming the key and Morph as what to check.
+#
+#   Verified at v3.1.0, on Linux x86_64, with the oracle built by
+#   `cargo build --release --locked`:
+#     * verify-vectors.py: 99 checks, the 86 before plus upstream's four
+#       Prelude vectors recomputed bit by bit;
+#     * AuthenticatedPreludeTest: the same vectors through the Kotlin encoder
+#       and decoder;
+#     * AuthenticatedPreludeAgainstPortalTest: a live 3.1.0 Portal refuses the
+#       same Counter a second time and accepts the next — which only a Tag it
+#       verified can produce;
+#     * smoke-local.sh: SOCKS5 through the oracle's Vector over TLS and QUIC;
+#     * oracle-diff.sh: this client, now sending the extension, and the oracle
+#       agree on every case over TLS and QUIC, Morph on and off, and on
+#       connection counts;
+#     * portal-lifecycle.sh: reclaim at the handshake deadline (5.0 s,
+#       INVALID_REQUEST);
+#     * quic-probe.sh: ngtcp2 + aws-lc export keying material a 3.1.0 Portal
+#       accepts.
+#
 # - Advanced from v1.8.2 (05366539) to v3.0.1 (00000e0) on 2026-10-21. The first
 #   drift to reach the wire, and it reached nearly all of it. Unlike the two
 #   advances below this is not a transcription fix: it is a different protocol

@@ -306,6 +306,42 @@ def verify_morph(section: dict) -> None:
     check("morph / udp overhead", udp["overhead"], 12)
 
 
+def prelude_tail(keys: dict, prefix: bytes, nonce: bytes, high: bytes, identity: bytes, counter: bytes):
+    """The Authenticated Prelude, written bit by bit from docs/prelude.md.
+
+    Deliberately not the client's accumulator loop: each of the 224 payload
+    bits is placed by its own index, so a shared off-by-one cannot hide.
+    """
+    header = nonce + prefix + high
+    tag = hmac256(keys["tcp prelude auth"], header + identity + counter)[:14]
+    mask = hmac256(keys["tcp prelude mask"], header)[:28]
+    payload = bytes(a ^ b for a, b in zip(identity + counter + tag, mask))
+    tail = bytearray()
+    for index in range(32):
+        high_bit = (high[index // 8] >> (7 - index % 8)) & 1
+        low = 0
+        for bit in range(7):
+            offset = index * 7 + bit
+            low = (low << 1) | ((payload[offset // 8] >> (7 - offset % 8)) & 1)
+        tail.append((high_bit << 7) | low)
+    return tag, bytes(tail)
+
+
+def verify_prelude(section: dict) -> None:
+    root = hmac256(b"nowhere/nw3/morph", section["sharedKeyUtf8"].encode())
+    keys = {label: hmac256(root, label.encode() + b"\x01")
+            for label in (section["authLabel"], section["maskLabel"])}
+    check("prelude / counter is 48 bits", int(section["maxCounterHex"], 16), (1 << 48) - 1)
+    for case in section["cases"]:
+        tag, tail = prelude_tail(keys, *(bytes.fromhex(case[f]) for f in
+                                         ("prefixHex", "nonceHex", "highBitsHex", "identityHex", "counterHex")))
+        check(f"prelude / {case['name']} tag", tag.hex(), case["tagHex"])
+        check(f"prelude / {case['name']} tail", tail.hex(), case["tailHex"])
+        check(f"prelude / {case['name']} keeps every high bit",
+              bytes(b & 0x80 for b in tail).hex(),
+              bytes(((bytes.fromhex(case["highBitsHex"])[i // 8] >> (7 - i % 8)) & 1) << 7 for i in range(32)).hex())
+
+
 def main() -> int:
     path = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -319,6 +355,7 @@ def main() -> int:
     verify_datagram(data["quicDatagram"])
     verify_flow_ids(data["udpFlowId"])
     verify_morph(data["morph"])
+    verify_prelude(data["morphPrelude"])
 
     base = data["baseline"]
     print(f"Baseline {base['upstreamRepo']} @ {base['tag']} {base['commit'][:8]}")

@@ -16,15 +16,18 @@ traffic.
 | | |
 |---|---|
 | Protocol | v3 authentication with role keys, the one-byte FlowStart, the five setup outcomes, UDP over a stream, stream-derived QUIC flow ids, UDP over DATAGRAM with fragmentation |
-| Morph | The v3 wire mask, on by default: ChaCha20 under TLS with the `fade` prelude, and per datagram under QUIC |
-| Carriers | TLS (one connection per flow) and QUIC (one connection for all of them), each with Morph on and off, compared case by case against the reference implementation, which agrees on every one |
+| Morph | The v3 wire mask, on by default: ChaCha20 under TLS with the `fade` prelude carrying upstream's Authenticated Prelude (v3.1.0), and per datagram under QUIC |
+| Carriers | TLS (one connection per flow) and QUIC (one connection for all of them), each with Morph on and off, compared case by case against the reference implementation, which agrees on every one. A node is checked before it is called Connected, and a QUIC node that does not answer is tried over TLS on the same port |
 | Certificates | Verified on both carriers, always: a pin, or this device's trust store and the hostname. v3 has no unverified mode |
 | Tunnel | `VpnService` + lwIP, **both address families**, TCP with back-pressure, UDP, DNS interception with fake-IP over IPv4 and IPv6, live throughput |
-| Routing | A rule matcher, an import path, a bundled network-structural rule set for both families, a direct path, a reject path |
-| Per-app | A real installed list, a persisted selection, and this client structurally outside its own tunnel |
-| Nodes | Stored, imported from a `nowhere://` link, probed for reachability, and failed over when one cannot be reached |
-| Subscription | Fetching and parsing with upstream's actual quota semantics, and a periodic refresh that is off until asked for |
-| UI | Nine screens, both themes, three locales, and a quick-settings tile |
+| Routing | Everything or Rules mode; TCP and UDP decided by the same rules; a bundled network-structural rule set, and a mainland-China set (Rules mode, switchable) generated reproducibly from APNIC and dnsmasq-china-list; an import path, a direct path, a reject path; local networks kept out of the tunnel by default; MTU and the DNS server for relayed queries |
+| Per-app | A real installed list, a persisted selection, system apps shown or hidden, select all or none, and the list copied or pasted as text; this client structurally outside its own tunnel |
+| Nodes | Chosen by the user or left automatic (failover only when automatic), imported from a link, a batch, a QR code or a picture, shared as a link or a QR code, probed over their own carrier, sorted and filtered |
+| Subscription | Several, each with its own quota, expiry, refresh and failure, using upstream's actual quota semantics; plain or base64 feeds, with unreadable lines counted rather than dropped; a periodic refresh, every 1 to 24 hours, that is off until asked for |
+| Activity | Live connections with the app that opened each, closable; the DNS queries; the Portal's answers with setup time; an export for an issue |
+| Outside the app | A notification with live rates and Disconnect, a quick-settings tile, launcher shortcuts, and START/STOP/TOGGLE for automation apps behind a switch that is off |
+| UI | Ten screens, three themes (light, dark, automatic), three locales chosen in the app on every supported Android version, an undoable node removal, and a plaintext backup with a warning |
+| Updates | A daily check of this repository's GitHub Releases, on by default and listed in [`docs/privacy.md`](docs/privacy.md) with its exact request; a new release is offered once and opened in the browser, never installed by the app |
 
 **What is not done**, stated as plainly as the rest:
 
@@ -60,8 +63,10 @@ There is no big-bang release.
 | **Release tail** | A bundled rule set, a connection log that shows what the Portal actually said, a launcher icon, a release build that has been run rather than only produced, and the documents a VPN-class listing requires | **Done**, 2026-08-29 |
 | **L4** · product surface | IPv6 end to end, `pin` on the QUIC carrier, node health and failover, a scheduled subscription refresh and a quick-settings tile | **Done**, 2026-08-29 |
 | **v3** · following upstream | Nowhere v3.0.1: the new authentication, FlowStart and setup outcomes; Mux and split carriers removed; stream-derived QUIC flow ids; Morph on both carriers; chain verification by name on QUIC; every conformance claim re-established against the v3 oracle and on an emulator | **Done**, 2026-10-21 |
-| **Device pass** | The first run on physical hardware: Private DNS, a real per-app list, a Wi-Fi to cellular change, Doze, a path MTU below 1500 | **Not started.** No physical device has ever been attached to this project |
-| **L5** · what the device pass asks for | Whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
+| **L5** · product surface | Everything a FlClash user reaches for that is not Clash configuration: node choice and automatic selection, QR and batch import, several subscriptions, live connections and DNS, notification, shortcuts and automation, theme and language, per-app tools, network settings, backup. Each part reviewed adversarially before the next began | **Done** on emulators, 2026-10-21 |
+| **Before users** | Following upstream to v3.1.0 and its Authenticated Prelude; four defects a first user would have met (a Portal named by host could not be reached, a dead TLS node read as Connected, UDP ignored the rules, the LAN went to the Portal); falling back from QUIC to TLS; mainland-China rules; base64 feeds; the update check; the language on every Android version; [`docs/ux.md`](docs/ux.md) | **Done** on emulators, 2026-10-24 |
+| **Device pass** | The first run on physical hardware, now one pass for everything: [`docs/device-checklist.md`](docs/device-checklist.md) and `conformance/scripts/device-acceptance.sh` | **Not started.** No physical device has ever been attached to this project |
+| **L6** · what the device pass asks for | Whatever a real phone turns out to need | **Not started**, deliberately: scope fixed after a device pass, not before |
 | **Publication** | A signing key, a distribution channel, a first release | **Waiting on decisions rather than on code** |
 
 ### How much of it is done
@@ -73,11 +78,11 @@ re-derived by reading it rather than taken on trust. They were wrong once,
 carried forward through two runs by hand, and that is why they are now counted
 from the table.
 
-| Rows | Covered by a test | Manual, with the reason | Partly, with the gap named | Blocked |
+| Rows | Covered by a test | of which with a gap named | Manual, with the reason | Blocked |
 |---|---|---|---|---|
-| 89 | 88 | 1 | 2 | 0 |
+| 91 | 90 | 2 | 1 | 0 |
 
-The two partial rows are each half of a pair: this client's half is tested, and
+The two rows with a gap are each half of a pair: this client's half is tested, and
 the other half needs something no repository should contain — a dashboard that
 emits v3 links, and a CA key a test could sign with.
 
@@ -87,9 +92,12 @@ a release stand a physical device and a signing key that will never live here.
 ## Protocol baseline
 
 Pinned in [`conformance/PROTOCOL_BASELINE`](conformance/PROTOCOL_BASELINE):
-Nowhere **v3.0.1** (`00000e0`). Every protocol implementation detail is
-traceable to a specific section of the upstream `docs/protocol.md`. v3 is not
-wire-compatible with v1: a v3 client cannot reach a v1 Portal, or the reverse.
+Nowhere **v3.1.0** (`0000065`), with the Core specification at
+[`Nowhere-Protocol`](https://github.com/NodePassProject/Nowhere-Protocol)
+`0000001`. Every protocol implementation detail is traceable to a section of
+that specification, or of Nowhere's `docs/prelude.md` for the Authenticated
+Prelude this client sends. v3 is not wire-compatible with v1: a v3 client
+cannot reach a v1 Portal, or the reverse.
 
 ## Conformance suite
 
@@ -99,9 +107,10 @@ deliberately: third-party implementations need it to align, dashboard and Portal
 interop checks need it, and community bug reports need it to be meaningful.
 
 ```sh
-python3 conformance/scripts/verify-vectors.py      # 86 known-answer checks
-NOWHERE_CLONE=/path/to/Nowhere conformance/scripts/drift-check.sh
+python3 conformance/scripts/verify-vectors.py      # 99 known-answer checks
+conformance/scripts/drift-check.sh /path/to/Nowhere /path/to/Nowhere-Protocol
 conformance/scripts/oracle-diff.sh                 # this client against upstream's own
+conformance/scripts/e2e-android.sh "$PWD"          # the whole instrumentation suite on a device
 ```
 
 `oracle-diff.sh` is the one worth running. It puts the same case list through
@@ -111,8 +120,10 @@ carrier reported in a form a caller could not read; on its first v3 run it found
 a refused AuthFrame over QUIC reported as a transport failure, where the oracle
 and the TLS carrier both read it as no answer.
 
-The suite makes no assumption about where an upstream clone lives; point
-`NOWHERE_CLONE` at one.
+The suite makes no assumption about where the upstream clones live; point
+`NOWHERE_CLONE` at Nowhere and `NOWHERE_SPEC_CLONE` at Nowhere-Protocol, or pass
+both to `drift-check.sh`. Since v3.1.0 the Core specification is its own
+repository, and the drift check watches both.
 
 ### Tests that need a live Portal
 
@@ -133,13 +144,15 @@ conformance/scripts/portal-for-tests.sh --stop
 
 | Document | Carries |
 |---|---|
-| [`docs/design-system.md`](docs/design-system.md) | Colour tokens for both themes with measured contrast, the type scale, and the four rules the UI has to keep |
+| [`docs/design-system.md`](docs/design-system.md) | Colour tokens for both themes with measured contrast, the type scale, and the rules the UI has to keep |
+| [`docs/ux.md`](docs/ux.md) | Which tab a feature belongs on, the theme modes, the states every screen handles, interaction, accessibility and writing |
 | [`docs/brand.md`](docs/brand.md) | The brand hue, which carries no protocol meaning and is derived rather than picked |
-| [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, and the rule that machine identifiers stay English while sentences translate |
+| [`docs/i18n.md`](docs/i18n.md) | The three shipping locales, how to add one, and the rule that machine identifiers stay English while sentences translate |
 | [`docs/adr-0001-tls-exporter.md`](docs/adr-0001-tls-exporter.md) | Where the TLS exporter comes from, and why `minSdk` is 26 |
 | [`docs/adr-0002-quic-certificate-verification.md`](docs/adr-0002-quic-certificate-verification.md) | How certificates are verified on the QUIC carrier: `pin` in the handshake, a name against the platform's trust store after it |
 | [`docs/adr-0003-morph.md`](docs/adr-0003-morph.md) | How Morph is applied under each carrier, and why TLS is now Conscrypt in engine mode everywhere |
-| [`docs/privacy.md`](docs/privacy.md) | What is stored, what leaves the device, and the longer list of what is not collected |
+| [`docs/privacy.md`](docs/privacy.md) | What is stored, every address the app contacts and what it sends, and the longer list of what is not collected |
+| [`docs/device-checklist.md`](docs/device-checklist.md) | Every feature, what to do on a phone, and what should happen — the device pass, numbered for reporting |
 | [`docs/store-policy.md`](docs/store-policy.md) | What a VPN-class listing requires, what is already satisfied, and what is still someone's decision |
 
 [`docs/architecture.md`](docs/architecture.md) covers the layers, which way they
@@ -218,7 +231,8 @@ Two properties worth stating plainly:
 GPL-3.0-only. See [LICENSE](LICENSE).
 
 Bundled fonts are OFL-1.1, icon path geometry is ISC, lwIP is BSD-3-Clause,
-ngtcp2 is MIT and aws-lc is Apache-2.0 OR ISC; see
+ngtcp2 is MIT and aws-lc is Apache-2.0 OR ISC; the mainland-China rule set is
+generated from APNIC's statistics and dnsmasq-china-list (WTFPL-2.0); see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which also records what was
 deliberately not taken from each.
 

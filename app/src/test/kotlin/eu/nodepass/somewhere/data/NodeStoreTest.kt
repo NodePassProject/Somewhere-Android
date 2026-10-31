@@ -282,4 +282,61 @@ class NodeStoreTest {
         assertFalse("writing over a directory must fail rather than throw", blocked.save(listOf(node(singapore))))
         assertEquals("the real list is untouched", 1, store.load().size)
     }
+
+    @Test
+    fun aRefreshOfOneSubscriptionLeavesAnothersNodesAlone() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt)), source = "aaaa")
+        store.reconcileWithFeed(listOf(node(singapore)), source = "bbbb")
+        val after = store.reconcileWithFeed(emptyList(), source = "aaaa")
+        assertEquals(NodeStore.Origin.RemovedFromFeed, after.single { it.url.host == node(frankfurt).host }.origin)
+        assertEquals(NodeStore.Origin.Subscription, after.single { it.url.host == node(singapore).host }.origin)
+        assertEquals("bbbb", after.single { it.url.host == node(singapore).host }.source)
+    }
+
+    @Test
+    fun aSourceSurvivesBeingWrittenAndReadBack() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt)), source = "c0ffee00")
+        assertEquals("c0ffee00", store().load().single().source)
+    }
+
+    @Test
+    fun aNodeOneSubscriptionWithdrewAndAnotherListsBelongsToTheSecond() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt)), source = "aaaa")
+        store.reconcileWithFeed(emptyList(), source = "aaaa")
+        val after = store.reconcileWithFeed(listOf(node(frankfurt)), source = "bbbb")
+        assertEquals(1, after.size)
+        assertEquals(NodeStore.Origin.Subscription, after.single().origin)
+        assertEquals("bbbb", after.single().source)
+    }
+
+    @Test
+    fun releasingASourceKeepsItsLiveNodesAsManualAndDropsItsWithdrawnOnes() {
+        val store = store()
+        store.reconcileWithFeed(listOf(node(frankfurt), node(singapore)), source = "aaaa")
+        store.reconcileWithFeed(listOf(node(frankfurt)), source = "aaaa")
+        val after = store.releaseSource("aaaa")
+        assertEquals(1, after.size)
+        assertEquals(NodeStore.Origin.Manual, after.single().origin)
+        assertEquals(node(frankfurt).host, after.single().url.host)
+    }
+
+    @Test
+    fun aRemovedNodeIsRestoredWhereItWasWithItsOrigin() {
+        val store = store()
+        store.add(node(frankfurt))
+        store.add(node(singapore), NodeStore.Origin.Subscription)
+        store.add(node("nowhere://0123456789abcdef0123456789abcdef@lon.example.net:443#London"))
+        val before = store.load()
+        val taken = before[1]
+
+        store.remove(taken.url)
+        val after = store.restore(taken, 1)
+
+        assertEquals(before.map { it.url.toUrl() }, after.map { it.url.toUrl() })
+        assertEquals(NodeStore.Origin.Subscription, after[1].origin)
+        assertEquals("restoring twice adds nothing", after, store.restore(taken, 0))
+    }
 }

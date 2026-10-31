@@ -48,8 +48,15 @@ object TunnelHarness {
         // logged, because v3 has no unverified mode.
         val node = E2eEnvironment.node()
 
+        // A Connected that *this* start produced, not one left by the case
+        // before: `state` is process-wide and outlives the test that set it
+        // (fact 39), and the service brings a tunnel up on its own thread, so
+        // there is a window in which the previous tunnel still reads as up.
+        val requested = android.os.SystemClock.elapsedRealtime()
         SomewhereVpnService.start(context, node)
-        await("the tunnel to come up") { TunnelController.state.value is TunnelState.Connected }
+        await("the tunnel to come up") {
+            (TunnelController.state.value as? TunnelState.Connected)?.let { it.sinceElapsedRealtime >= requested } == true
+        }
     }
 
     /**

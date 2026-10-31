@@ -24,8 +24,8 @@ import org.junit.runner.RunWith
  * ## Why the proof is a flow rather than the AuthFrame
  *
  * Authentication has **no response frame**, by design: a Portal that answered
- * differently on failure would be an oracle for active probing. A wrong tag is
- * met with silence, and the connection is left open and ignored. So "the tag
+ * differently on failure would be an oracle for active probing. A wrong tag
+ * ends the connection without a word. So "the tag
  * verified" is not directly observable — the first observable consequence is
  * the Portal answering a flow at all, and that answer is the `SetupResult` byte.
  *

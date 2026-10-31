@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,14 +42,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.nodepass.somewhere.R
 import eu.nodepass.somewhere.data.NodeRepository
+import eu.nodepass.somewhere.data.ProbeResult
+import eu.nodepass.somewhere.nodes.NodeChoice
 import eu.nodepass.somewhere.protocol.url.NextHopCarrier
-import eu.nodepass.somewhere.protocol.url.NowhereUrl
 import eu.nodepass.somewhere.ui.components.Card
 import eu.nodepass.somewhere.ui.components.IconSquare
 import eu.nodepass.somewhere.ui.components.Meter
 import eu.nodepass.somewhere.ui.components.MonoText
 import eu.nodepass.somewhere.ui.components.SectionLabel
 import eu.nodepass.somewhere.ui.components.SmallButton
+import eu.nodepass.somewhere.ui.components.Sparkline
 import eu.nodepass.somewhere.ui.components.StatusDot
 import eu.nodepass.somewhere.ui.icons.SomewhereIcons
 import eu.nodepass.somewhere.ui.state.Format
@@ -56,6 +60,7 @@ import eu.nodepass.somewhere.ui.state.SessionSnapshot
 import eu.nodepass.somewhere.ui.theme.SomewhereTheme
 import eu.nodepass.somewhere.ui.theme.SomewhereType
 import eu.nodepass.somewhere.ui.theme.direction
+import eu.nodepass.somewhere.vpn.TrafficHistory
 import eu.nodepass.somewhere.vpn.TunnelController
 import eu.nodepass.somewhere.vpn.TunnelState
 import kotlinx.coroutines.delay
@@ -74,13 +79,20 @@ fun HomeScreen(
     nodes: NodeRepository,
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
-    onToggleTunnel: (NowhereUrl) -> Unit = {},
+    onToggleTunnel: () -> Unit = {},
 ) {
     val stored by nodes.nodes.collectAsState()
-    val first = stored.firstOrNull()
+    // Read so that the target below is recomputed when either changes: an
+    // automatic choice moves when a probe comes back faster, and the screen
+    // has to name the node a tap would actually connect to.
+    val choice by nodes.choice.collectAsState()
+    val probes by nodes.probes.collectAsState()
+    val health by nodes.healthChanges.collectAsState()
+    val target = remember(stored, choice, probes, health) { nodes.target() }
+    val automatic = remember(stored, choice) { nodes.effectiveChoice() == NodeChoice.Automatic }
 
-    if (first == null) {
-        NoNodeYet(onOpenNodes)
+    if (target == null) {
+        NoNodeYet(onOpenNodes, onOpenSettings)
         return
     }
 
@@ -110,13 +122,20 @@ fun HomeScreen(
     // all — until then every figure renders as an em dash rather than as zero,
     // which would claim a measurement that was never taken.
     val traffic by TunnelController.traffic.collectAsState()
+    val history by TunnelController.trafficHistory.collectAsState()
 
     Home(
-        node = NodeEntry(first.url),
+        node = NodeEntry(target.url),
+        automatic = automatic,
+        // While connected, the node the tunnel is actually on. It can differ
+        // from the target: an automatic choice may have failed over, or moved
+        // since the tunnel came up.
+        connectedName = (tunnel as? TunnelState.Connected)?.node,
         session =
             SessionSnapshot.DISCONNECTED.copy(
                 connected = tunnel is TunnelState.Connected,
                 connecting = tunnel is TunnelState.Connecting,
+                fellBackToTls = (tunnel as? TunnelState.Connected)?.fellBackToTls == true,
                 measured = traffic.measured,
                 upstreamBytesPerSecond = traffic.upstreamBytesPerSecond,
                 downstreamBytesPerSecond = traffic.downstreamBytesPerSecond,
@@ -125,16 +144,46 @@ fun HomeScreen(
                 activeFlows = traffic.activeFlows,
                 sessionBytes = traffic.totalBytes,
                 connectedSeconds = elapsedSeconds,
+                handshakeMillis =
+                    (tunnel as? TunnelState.Connected)
+                        ?.nodeUrl
+                        ?.let { (probes[it] as? ProbeResult.Reachable)?.handshakeMillis },
             ),
         onOpenNodes = onOpenNodes,
         onOpenSettings = onOpenSettings,
-        onToggleTunnel = { onToggleTunnel(first.url) },
+        onToggleTunnel = onToggleTunnel,
+        upstreamHistory = history.upstream,
+        downstreamHistory = history.downstream,
     )
 }
 
 /** No node to connect to. The one thing to do from here is add one. */
 @Composable
-private fun NoNodeYet(onOpenNodes: () -> Unit) {
+private fun NoNodeYet(
+    onOpenNodes: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    val colors = SomewhereTheme.colors
+    // Settings stays reachable with no node: it is where a backup is restored
+    // from, which is the first thing a new device with an old setup needs.
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 52.dp, end = 20.dp),
+        ) {
+            IconSquare(
+                icon = SomewhereIcons.MoreVertical,
+                contentDescription = stringResource(R.string.settings_title),
+                onClick = onOpenSettings,
+            )
+        }
+        NoNodeYetBody(onOpenNodes)
+    }
+}
+
+@Composable
+private fun NoNodeYetBody(onOpenNodes: () -> Unit) {
     val colors = SomewhereTheme.colors
     Column(
         modifier =
@@ -175,6 +224,11 @@ internal fun Home(
     onOpenNodes: () -> Unit,
     onOpenSettings: () -> Unit,
     onToggleTunnel: () -> Unit = {},
+    automatic: Boolean = false,
+    connectedName: String? = null,
+    /** The last minute of rates, per direction. Empty draws the meter instead. */
+    upstreamHistory: List<Long> = emptyList(),
+    downstreamHistory: List<Long> = emptyList(),
 ) {
     val colors = SomewhereTheme.colors
     Column(Modifier.fillMaxSize()) {
@@ -191,13 +245,18 @@ internal fun Home(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    SectionLabel(
-                        stringResource(
-                            if (session.connected) R.string.home_connected_to else R.string.home_not_connected,
-                        ),
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SectionLabel(
+                            stringResource(
+                                if (session.connected) R.string.home_connected_to else R.string.home_not_connected,
+                            ),
+                        )
+                        if (automatic) {
+                            SectionLabel(stringResource(R.string.nodes_automatic), color = colors.brand)
+                        }
+                    }
                     Text(
-                        text = node.displayName,
+                        text = connectedName?.takeIf { session.connected } ?: node.displayName,
                         fontFamily = SomewhereType.Display,
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp,
@@ -210,7 +269,10 @@ internal fun Home(
                 }
                 IconSquare(
                     icon = SomewhereIcons.MoreVertical,
-                    contentDescription = stringResource(R.string.home_node_options),
+                    // What it opens, as the empty Home's button says. It was
+                    // labelled "Node options", which a screen reader announced
+                    // for a button that opens Settings.
+                    contentDescription = stringResource(R.string.settings_title),
                     onClick = onOpenSettings,
                 )
             }
@@ -225,19 +287,30 @@ internal fun Home(
                 icon = SomewhereIcons.ArrowUp,
                 color = colors.direction(upstream = true).figure,
                 tint = colors.direction(upstream = true).tint,
-                carrier = carrierLabel(node.url.net),
+                carrier = carrierLabel(if (session.fellBackToTls) NextHopCarrier.Tcp else node.url.net),
                 bytesPerSecond = session.upstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.upstreamOfPeak else 0f,
+                history = upstreamHistory.takeIf { session.measured }.orEmpty(),
             )
             DirectionCard(
                 label = stringResource(R.string.direction_downstream),
                 icon = SomewhereIcons.ArrowDown,
                 color = colors.direction(upstream = false).figure,
                 tint = colors.direction(upstream = false).tint,
-                carrier = carrierLabel(node.url.net),
+                carrier = carrierLabel(if (session.fellBackToTls) NextHopCarrier.Tcp else node.url.net),
                 bytesPerSecond = session.downstreamBytesPerSecond.takeIf { session.measured },
                 ofPeak = if (session.measured) session.downstreamOfPeak else 0f,
+                history = downstreamHistory.takeIf { session.measured }.orEmpty(),
             )
+            // The cards name the carrier in use; this says why it is not the
+            // one the link asked for, which would otherwise look like a bug.
+            if (session.connected && session.fellBackToTls) {
+                Text(
+                    text = stringResource(R.string.home_fell_back_to_tls),
+                    style = SomewhereType.bodySmall,
+                    color = colors.muted,
+                )
+            }
         }
 
         SessionFacts(session, Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp))
@@ -290,6 +363,7 @@ private fun DirectionCard(
     /** Null when nothing has measured this direction yet — not the same as zero. */
     bytesPerSecond: Long?,
     ofPeak: Float,
+    history: List<Long> = emptyList(),
 ) {
     val colors = SomewhereTheme.colors
     val reading = bytesPerSecond?.let(Format::throughput)
@@ -329,7 +403,14 @@ private fun DirectionCard(
                 modifier = Modifier.padding(bottom = 3.dp),
             )
         }
-        Meter(fraction = ofPeak, color = color, track = tint)
+        // The last minute once there is one; until then the meter, which
+        // reads zero honestly rather than drawing a flat line that looks like
+        // a measured idle link.
+        if (history.size >= 2) {
+            Sparkline(history, color = color, track = tint, capacity = TrafficHistory.CAPACITY)
+        } else {
+            Meter(fraction = ofPeak, color = color, track = tint)
+        }
     }
 }
 
@@ -370,8 +451,10 @@ private fun SessionFacts(
         )
         Fact(
             Modifier.weight(1f),
-            if (session.measured) session.handshakeMillis.toString() else unmeasured,
-            "ms".takeIf { session.measured },
+            // With the other figures or not at all: a row where one figure is
+            // set and the rest are dashes reads as a half-working tunnel.
+            session.handshakeMillis?.takeIf { session.measured }?.toString() ?: unmeasured,
+            "ms".takeIf { session.measured && session.handshakeMillis != null },
             stringResource(R.string.home_stat_handshake),
         )
     }
@@ -432,10 +515,14 @@ private fun PrimaryAction(
     onClick: () -> Unit,
 ) {
     val colors = SomewhereTheme.colors
+    val haptics = LocalHapticFeedback.current
+    // Cancel while connecting, because that is what a tap does then: the
+    // state line above already says "Connecting…", and a button repeating it
+    // hid that it could stop the attempt.
     val label =
         when {
             session.connected -> R.string.action_disconnect
-            session.connecting -> R.string.home_connecting
+            session.connecting -> R.string.action_cancel
             else -> R.string.action_connect
         }
     Row(
@@ -446,7 +533,11 @@ private fun PrimaryAction(
                 .clip(RoundedCornerShape(14.dp))
                 .background(colors.primaryAction)
                 .border(1.dp, colors.primaryActionLine, RoundedCornerShape(14.dp))
-                .clickable(onClick = onClick),
+                .clickable {
+                    // The one haptic in the app (docs/ux.md § Interaction).
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    onClick()
+                },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
     ) {

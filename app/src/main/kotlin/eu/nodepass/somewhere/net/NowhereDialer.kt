@@ -7,6 +7,7 @@ import eu.nodepass.somewhere.protocol.DecodeReason
 import eu.nodepass.somewhere.protocol.DecodeResult
 import eu.nodepass.somewhere.protocol.Nw3
 import eu.nodepass.somewhere.protocol.invalid
+import eu.nodepass.somewhere.protocol.morph.AuthenticatedPrelude
 import eu.nodepass.somewhere.protocol.morph.MorphKeys
 import eu.nodepass.somewhere.protocol.morph.MorphSocket
 import eu.nodepass.somewhere.protocol.session.Transport
@@ -32,6 +33,24 @@ import javax.net.ssl.X509TrustManager
 sealed interface DialReason : DecodeReason {
     data object Unreachable : DialReason {
         override val detail: String = "the Portal did not answer"
+    }
+
+    /**
+     * The Portal accepted the TCP connection, then closed it without a byte
+     * of TLS.
+     *
+     * A 3.1 Portal reads a Morph bootstrap it cannot unmask — a wrong key, or
+     * Morph on one side only — and says nothing: it holds the connection to
+     * its handshake deadline and resets it, so that a prober learns nothing.
+     * A network that interferes after the ClientHello ends the same way. This
+     * client cannot tell those apart and does not pretend to; it names the
+     * key and Morph as the things to check, and treats it as unreachable so
+     * that a node on an interfering path can still be failed over.
+     */
+    data object Silent : DialReason {
+        override val detail: String =
+            "the Portal accepted the connection and closed it without answering; " +
+                "check the key and that both sides agree on morph, or the network may be interfering"
     }
 
     /**
@@ -125,6 +144,14 @@ class NowhereDialer(
     private val readTimeoutMillis: Int = 20_000,
     private val protect: (Socket) -> Boolean = { true },
     private val trust: ServerTrust = PlatformServerTrust,
+    /**
+     * What a Morph connection's Authenticated Prelude carries. The default
+     * allocates the next Counter for the node's key; a live test fixes it, to
+     * show a Portal refusing a replay.
+     */
+    private val preludeFields: (MorphKeys) -> AuthenticatedPrelude.Fields = { keys ->
+        AuthenticatedPrelude.allocatorFor(keys).allocate()
+    },
 ) {
     fun connect(node: NowhereUrl): DecodeResult<Transport> {
         val socket =
@@ -161,6 +188,7 @@ class NowhereDialer(
         val verifyAs = (node.certificateVerification as? CertificateVerification.Sni)?.host ?: node.host
 
         var raw: Socket? = null
+        var connected = false
         return try {
             val tcp = Socket().also { raw = it }
 
@@ -182,10 +210,12 @@ class NowhereDialer(
             }
 
             tcp.connect(InetSocketAddress(node.host, node.port), connectTimeoutMillis)
+            connected = true
             tcp.tcpNoDelay = true
             val carrier: Socket =
                 if (node.morph) {
-                    MorphSocket.over(tcp, MorphKeys.derive(node.sharedKey))
+                    val keys = MorphKeys.derive(node.sharedKey)
+                    MorphSocket.over(tcp, keys, authentication = { preludeFields(keys) })
                 } else {
                     tcp
                 }
@@ -211,7 +241,7 @@ class NowhereDialer(
             invalid(DialReason.HandshakeFailed)
         } catch (_: IOException) {
             runCatching { raw?.close() }
-            invalid(DialReason.Unreachable)
+            invalid(if (connected) DialReason.Silent else DialReason.Unreachable)
         }
     }
 

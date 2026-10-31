@@ -42,49 +42,50 @@ python3 scripts/verify-vectors.py
 # 2) End-to-end smoke test (build the binary first: cargo build --release --locked)
 scripts/smoke-local.sh
 
-# 3) Upstream drift detection
-scripts/drift-check.sh
+# 3) Upstream drift detection, against both upstream repositories
+scripts/drift-check.sh /path/to/Nowhere /path/to/Nowhere-Protocol
 
 # 4) This implementation against the reference one, case by case
 scripts/oracle-diff.sh
 
 # 5) Remote resolution on a device (needs Docker and one Android device)
 scripts/e2e-fakeip.sh
+
+# 6) The whole instrumentation suite on a device, with its Portal and origins
+scripts/e2e-android.sh /path/to/Somewhere-Android
 ```
 
-**Verified on 2026-10-21, at the baseline this file pins (v3.0.1), on Linux
+**Verified on 2026-10-24, at the baseline this file pins (v3.1.0), on Linux
 x86_64 and an API 35 x86_64 emulator:**
 
-- `verify-vectors.py` — 86 checks pass. It carries its own ChaCha20, checked
-  against RFC 8439 before it judges the Morph vectors.
+- `verify-vectors.py` — 99 checks pass, among them upstream's four
+  Authenticated Prelude vectors recomputed bit by bit. It carries its own
+  ChaCha20, checked against RFC 8439 before it judges the Morph vectors.
 - `smoke-local.sh` — passes over TLS and QUIC, Morph on: SOCKS5 → the oracle's
   Vector → Portal → target.
-- `drift-check.sh` — passes. Upstream is ahead at `eee7965c` and no normative
-  file differs from the pin. It caught the v3 change that this baseline is the
-  answer to.
+- `drift-check.sh` — passes, watching both Nowhere and the standalone
+  Nowhere-Protocol specification. It caught v3.1.0, which this baseline is the
+  answer to; pointed at the previous pin it still reports the five changed files.
 - `oracle-diff.sh` — passes. Five cases — payload by address, payload by name,
   `DIAL_FAILED`, a wrong key, a UDP round trip — over four combinations (TLS
   and QUIC, Morph on and off), plus a burst of sixteen held flows per carrier:
   sixteen TCP connections over TLS and none over QUIC, from each
   implementation, counted by `ss` at the instant the origin releases them.
-  Found two client defects on its first runs; see `cases/coverage.md`.
+  This client now sends the Authenticated Prelude, and still agrees.
 - `portal-lifecycle.sh` — passes. A connection that authenticates and sends no
-  flow is answered `INVALID_REQUEST` after **5002 ms**, the handshake deadline;
-  and a session keeps working across a Portal kill and restart. Both on a
-  supplied certificate, verified by name.
+  flow is answered `INVALID_REQUEST` after **5002 ms**, the handshake deadline.
 - `quic-probe.sh` — passes. ngtcp2 v1.17.0 over aws-lc v1.68.0 builds for both
-  ABIs, exports 32 bytes under `EXPORTER-Nowhere-nw3-Auth`, and a v3 Portal
+  ABIs, exports 32 bytes under `EXPORTER-Nowhere-nw3-Auth`, and a 3.1.0 Portal
   answers READY; a wrong key gets no answer.
-- `e2e-tunnel-fetch.sh` — passes over TLS and QUIC: a fetch from the shell user,
-  who is inside the tunnel, arrives intact and the Portal's `nowhere status`
-  totals move by exactly its size.
 - `e2e-fakeip.sh` — passes over TLS and QUIC: 20 MiB by a name only the
   Portal's network can resolve, over IPv4 and a synthetic IPv6 address, and the
   origin hears only from the Portal.
-- The instrumentation suite — 57 tests, none failing, seven skipped by design
-  (three `@Ignore`d in favour of the shell-driven scripts, three per-app cases
-  that need an origin the device cannot reach directly, one holder that runs
-  only when asked).
+- `e2e-android.sh` — the whole instrumentation suite, **70 tests, none
+  failing**. It installs, pre-grants VPN consent and runs
+  with `am instrument` (`connectedAndroidTest` reinstalls and drops the
+  grant), beside `quic-origin.py`, the origin and UDP echo the QUIC cases dial.
+- `e2e-tunnel-fetch.sh` — not re-run at v3.1.0; it last passed on 2026-10-21 at
+  v3.0.1, over TLS and QUIC.
 
 ## Device side
 

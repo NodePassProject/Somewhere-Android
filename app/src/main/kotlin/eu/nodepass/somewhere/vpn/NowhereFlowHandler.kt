@@ -6,6 +6,7 @@ package eu.nodepass.somewhere.vpn
 import android.util.Log
 import eu.nodepass.somewhere.dns.DnsInterceptor
 import eu.nodepass.somewhere.dns.DnsMessage
+import eu.nodepass.somewhere.dns.DnsOverTcp
 import eu.nodepass.somewhere.dns.FakeIpPool
 import eu.nodepass.somewhere.dns.FakeIpResolver
 import eu.nodepass.somewhere.dns.UpstreamResolvers
@@ -23,9 +24,11 @@ import eu.nodepass.somewhere.routing.RoutingRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -104,6 +107,15 @@ class NowhereFlowHandler(
      * Portal's answer would be inventing one.
      */
     private val log: ConnectionLog = ConnectionLog(),
+    /** Where live connections are listed, for the screen that can close them. */
+    private val tracker: ConnectionTracker = ConnectionTracker { 0L },
+    /** The names the device asked for, and what became of each. */
+    private val dnsLog: DnsLog = DnsLog(),
+    /**
+     * Which app opened a connection. Asked off the lwIP thread, once per
+     * connection; null when the platform will not say.
+     */
+    private val ownerOf: (OwnerQuery) -> String? = { null },
 ) : TunPump.FlowHandler {
     /** What the log's carrier column says for a Portal-bound flow. */
     private fun carrierName(): String = if (session.carriesPackets) QUIC else TLS
@@ -138,6 +150,9 @@ class NowhereFlowHandler(
          * unstable connection rather than as a stable measurement.
          */
         const val SAMPLE_INTERVAL_MILLIS = 1_000L
+
+        /** How long a DNS-over-TCP client may say nothing before it is closed. */
+        const val DOT_IDLE_MILLIS = 30_000L
     }
 
     /**
@@ -157,6 +172,14 @@ class NowhereFlowHandler(
         /** One release per hold, however the flow ends. */
         val released = AtomicBoolean(false)
 
+        /**
+         * Set by the one teardown that wins. A connection can be ended by the
+         * device (onTcpClosed), by the flow finishing, by a failed dial, or by
+         * the user from the connections list — often two of those at once —
+         * and only the first may touch the pcb.
+         */
+        val ended = AtomicBoolean(false)
+
         /** Bytes from the device, awaiting a flow to write them to. */
         val outbound = Channel<ByteArray>(capacity = Channel.UNLIMITED)
 
@@ -168,6 +191,14 @@ class NowhereFlowHandler(
         val acknowledged = Channel<Unit>(capacity = Channel.CONFLATED)
 
         @Volatile var flow: Flow? = null
+
+        /** The device side of the connection, and the address it dialled. */
+        var source: ByteArray = ByteArray(0)
+        var sourcePort: Int = 0
+        var destination: ByteArray = ByteArray(0)
+
+        /** Its entry in the live list, once it has one. Rejected flows never get one. */
+        @Volatile var tracked: ConnectionTracker.Handle? = null
 
         /**
          * Whether this flow left the device without touching the Portal.
@@ -218,7 +249,7 @@ class NowhereFlowHandler(
     private val dns = DnsInterceptor(fakeIp, synthesiseIpv6 = TunConfiguration.carriesIpv6)
 
     /** Datagrams, carried as UDP over stream. Everything DNS cannot answer lands here. */
-    private val udp = UdpRelay(session, fakeIp, meter, pump, scope)
+    private val udp = UdpRelay(session, fakeIp, meter, pump, scope, tracker, ownerOf, router, direct)
     private val nextId = AtomicLong(1)
     private val connections = ConcurrentHashMap<Long, Connection>()
 
@@ -227,6 +258,8 @@ class NowhereFlowHandler(
         port: Int,
         isIpv6: Boolean,
         pcb: Long,
+        source: ByteArray,
+        sourcePort: Int,
     ): Long {
         val resolved = FakeIpResolver.resolve(fakeIp, destination, port)
         val target =
@@ -248,7 +281,11 @@ class NowhereFlowHandler(
                 pcb = pcb,
                 target = target,
                 heldAddress = if (resolved.retained) destination.copyOf() else null,
-            )
+            ).also {
+                it.source = source.copyOf()
+                it.sourcePort = sourcePort
+                it.destination = destination.copyOf()
+            }
         connections[connection.id] = connection
         connection.job = scope.launch { serve(connection) }
         return connection.id
@@ -279,13 +316,12 @@ class NowhereFlowHandler(
         id: Long,
         error: Int,
     ) {
-        val connection = connections.remove(id) ?: return
-        // The pcb is already freed. Nothing below may touch it.
+        val connection = connections[id] ?: return
+        // The pcb is already freed. Nothing below may touch it — and this runs
+        // on the lwIP thread, so every stack-thread check after it sees this.
         connection.gone = true
-        releaseFakeIp(connection)
-        connection.outbound.close()
         connection.job?.cancel()
-        runCatching { connection.flow?.close() }
+        end(connection, reset = false)
     }
 
     override fun onUdpDatagram(
@@ -300,6 +336,7 @@ class NowhereFlowHandler(
             when (val outcome = dns.handle(data)) {
                 is DnsInterceptor.Outcome.Answer -> {
                     if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "answered ${outcome.name} locally")
+                    dnsLog.record(outcome.name, outcome.type, if (outcome.noData) DnsOutcome.NoData else DnsOutcome.FakeIp)
                     // Back to the device from the resolver it asked, so the
                     // answer matches the socket the query left on.
                     answerLocally(source, sourcePort, destination, destinationPort, isIpv6, outcome.message)
@@ -308,7 +345,8 @@ class NowhereFlowHandler(
 
                 is DnsInterceptor.Outcome.Relay -> {
                     if (Log.isLoggable(TAG, Log.VERBOSE)) Log.v(TAG, "relaying a query: ${outcome.why}")
-                    relayQuery(source, sourcePort, destination, destinationPort, isIpv6, data)
+                    val relayed = relayQuery(source, sourcePort, destination, destinationPort, isIpv6, data)
+                    dnsLog.record(outcome.name, outcome.type, if (relayed) DnsOutcome.Relayed else DnsOutcome.Failed)
                     return
                 }
             }
@@ -332,14 +370,14 @@ class NowhereFlowHandler(
         destinationPort: Int,
         isIpv6: Boolean,
         data: ByteArray,
-    ) {
+    ): Boolean {
         // Family is a preference rather than a requirement; see [UpstreamResolvers].
         val resolver = UpstreamResolvers.choose(upstreamResolvers, destination.size)
         if (resolver == null) {
             answerLocally(source, sourcePort, destination, destinationPort, isIpv6, serverFailure(data))
-            return
+            return false
         }
-        udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data, dialAddress = resolver)
+        return udp.offer(source, sourcePort, destination, destinationPort, isIpv6, data, dialAddress = resolver)
     }
 
     /** SERVFAIL for a query that can be neither answered nor forwarded. */
@@ -398,6 +436,10 @@ class NowhereFlowHandler(
         upstream: Int = 0,
         downstream: Int = 0,
     ) {
+        connection.tracked?.let {
+            if (upstream > 0) it.upstream(upstream)
+            if (downstream > 0) it.downstream(downstream)
+        }
         if (connection.direct) {
             meter.recordDirect(upstream + downstream)
             return
@@ -413,6 +455,21 @@ class NowhereFlowHandler(
         // even started.
         val first = connection.outbound.tryReceive().getOrNull() ?: ByteArray(0)
 
+        // The resolver this tunnel announced exists only inside the TUN, so a
+        // TCP connection to it is answered here or refused here. Sent to the
+        // Portal it could only fail — and did, as DIAL_FAILED entries for
+        // port 853 every time Android's Private DNS probed for DoT.
+        if (TunConfiguration.resolverBytes().any { it.contentEquals(connection.destination) }) {
+            if (connection.target.port == DNS_PORT) {
+                serveDnsOverTcp(connection, first)
+            } else {
+                // 853 above all: refusing it at once is what sends Private DNS
+                // in its automatic mode back to plain DNS, which is answered.
+                abort(connection)
+            }
+            return
+        }
+
         val action = router.decide(connection.target)
         if (action == RouteAction.Reject) {
             // A decision, not a failure. The device sees a reset, which is what
@@ -424,9 +481,45 @@ class NowhereFlowHandler(
             return
         }
         connection.direct = action == RouteAction.Direct
+        val handle =
+            tracker.open(
+                ConnectionProtocol.Tcp,
+                TargetText.describe(connection.target),
+                if (connection.direct) ConnectionRoute.Direct else ConnectionRoute.Portal,
+            ) { close(connection) }
+        connection.tracked = handle
+        // The device may have reset the connection between serve starting and
+        // the line above; its teardown found nothing to finish, so this does.
+        // Written then read here, and set then read in [end]: one of the two
+        // always sees the other.
+        if (connection.ended.get()) {
+            tracker.finished(handle)
+            return
+        }
+        // Beside the dial rather than before it: the lookup is a binder call
+        // and, the first time an app is seen, a label from the package
+        // manager, and a dial should not wait on either.
+        scope.launch {
+            handle.owner(
+                ownerOf(
+                    OwnerQuery(
+                        ConnectionProtocol.Tcp,
+                        connection.source,
+                        connection.sourcePort,
+                        connection.destination,
+                        connection.target.port,
+                    ),
+                ),
+            )
+        }
 
+        val dialStarted = android.os.SystemClock.elapsedRealtime()
+        // Not cancellable: openFlow blocks, and a dial cancelled half-way would
+        // return a flow nobody holds — a Portal connection, or a QUIC stream
+        // counted as live, left open until the tunnel stops. It finishes, and
+        // a connection ended meanwhile closes what it got below.
         val opened =
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO + NonCancellable) {
                 runCatching {
                     if (connection.direct) {
                         direct.connect(connection.target)
@@ -446,6 +539,11 @@ class NowhereFlowHandler(
                 abort(connection)
                 return
             }
+
+        if (connection.ended.get()) {
+            (opened as? DecodeResult.Ok)?.value?.let { runCatching { it.close() } }
+            return
+        }
 
         val flow =
             when (opened) {
@@ -467,7 +565,8 @@ class NowhereFlowHandler(
             }
 
         if (!connection.direct) {
-            flow.setupResult?.let { log.record(it, connection.target, flow.id, carrierName()) }
+            val setupMillis = android.os.SystemClock.elapsedRealtime() - dialStarted
+            flow.setupResult?.let { log.record(it, connection.target, flow.id, carrierName(), setupMillis) }
         }
 
         connection.flow = flow
@@ -486,10 +585,63 @@ class NowhereFlowHandler(
             credit(connection, first.size)
         }
 
-        val upstream = scope.launch { pumpUpstream(connection, flow) }
-        val downstream = scope.launch { pumpDownstream(connection, flow) }
-        upstream.join()
-        downstream.join()
+        // Children of this coroutine, not of the handler's scope, so that
+        // ending the connection ends them too. As siblings they outlived a
+        // user's close and kept writing to a pcb the close had freed.
+        coroutineScope {
+            launch { pumpUpstream(connection, flow) }
+            launch { pumpDownstream(connection, flow) }
+        }
+        finish(connection)
+    }
+
+    /**
+     * DNS over TCP to the tunnel's own resolver, answered by the interceptor.
+     *
+     * What the interceptor would relay over UDP is answered SERVFAIL here:
+     * relaying over TCP would need a TCP path to the device's resolver, and a
+     * definite failure sends the device to its next resolver at once.
+     */
+    private suspend fun serveDnsOverTcp(
+        connection: Connection,
+        first: ByteArray,
+    ) {
+        val framer = DnsOverTcp()
+
+        suspend fun answer(chunk: ByteArray) {
+            for (query in framer.feed(chunk)) {
+                // An empty frame is not a query, and logging each would let
+                // any app flood the real entries out of the DNS log.
+                if (query.isEmpty()) continue
+                val reply =
+                    when (val outcome = dns.handle(query)) {
+                        is DnsInterceptor.Outcome.Answer -> {
+                            dnsLog.record(outcome.name, outcome.type, if (outcome.noData) DnsOutcome.NoData else DnsOutcome.FakeIp)
+                            outcome.message
+                        }
+                        is DnsInterceptor.Outcome.Relay -> {
+                            dnsLog.record(outcome.name, outcome.type, DnsOutcome.Failed)
+                            serverFailure(query)
+                        }
+                    } ?: continue
+                val framed = DnsOverTcp.frame(reply)
+                if (!deliver(connection, framed, framed.size)) return
+            }
+            credit(connection, chunk.size)
+        }
+        try {
+            if (first.isNotEmpty()) answer(first)
+            // A client that goes quiet is let go after a while, as a resolver
+            // would: otherwise it holds a pcb for the life of the tunnel.
+            while (true) {
+                val chunk =
+                    withTimeoutOrNull(DOT_IDLE_MILLIS) { connection.outbound.receiveCatching().getOrNull() }
+                        ?: break
+                answer(chunk)
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "a DNS-over-TCP connection ended: ${error.message}")
+        }
         finish(connection)
     }
 
@@ -603,22 +755,51 @@ class NowhereFlowHandler(
         }
     }
 
-    /** The connection was accepted and then could not be served. */
-    private fun abort(connection: Connection) {
-        connections.remove(connection.id)
-        releaseFakeIp(connection)
-        pump()?.writeToDevice {
-            if (!connection.gone) NativeBridge.nativeTcpAbort(connection.pcb)
-        }
+    /**
+     * Ends a connection the user asked to close.
+     *
+     * A reset rather than a close: the app on the device should see its
+     * connection end now, not wait out a FIN exchange through a Portal that
+     * may be the reason it was closed. Called from the main thread, so nothing
+     * here blocks: the serving coroutine and its pumps are cancelled, and the
+     * flow is closed on an IO thread by [end].
+     */
+    private fun close(connection: Connection) {
+        connection.job?.cancel()
+        end(connection, reset = true)
     }
 
+    /** The connection was accepted and then could not be served. */
+    private fun abort(connection: Connection) = end(connection, reset = true)
+
     /** Both directions finished. */
-    private fun finish(connection: Connection) {
+    private fun finish(connection: Connection) = end(connection, reset = false)
+
+    /**
+     * The one way a connection ends, whoever ends it.
+     *
+     * Once: the first caller wins and everything after is a no-op, so a close
+     * racing a finish cannot hand lwIP the same pcb twice. The pcb is touched
+     * only on the stack thread and only if the device has not already freed
+     * it; [Connection.gone] is set there in the same step, so a pump's next
+     * stack-thread check sees it and stops. The channel is closed so an
+     * upstream pump waiting on it ends rather than waiting forever.
+     */
+    private fun end(
+        connection: Connection,
+        reset: Boolean,
+    ) {
+        if (!connection.ended.compareAndSet(false, true)) return
+        connection.tracked?.let(tracker::finished)
         connections.remove(connection.id)
         releaseFakeIp(connection)
-        runCatching { connection.flow?.close() }
+        connection.outbound.close()
+        connection.flow?.let { flow -> scope.launch(Dispatchers.IO) { runCatching { flow.close() } } }
         pump()?.writeToDevice {
-            if (!connection.gone) NativeBridge.nativeTcpClose(connection.pcb)
+            if (!connection.gone) {
+                connection.gone = true
+                if (reset) NativeBridge.nativeTcpAbort(connection.pcb) else NativeBridge.nativeTcpClose(connection.pcb)
+            }
         }
     }
 
@@ -626,6 +807,7 @@ class NowhereFlowHandler(
         sampler.cancel()
         udp.shutdown()
         connections.values.forEach {
+            it.tracked?.let(tracker::finished)
             releaseFakeIp(it)
             runCatching { it.flow?.close() }
         }

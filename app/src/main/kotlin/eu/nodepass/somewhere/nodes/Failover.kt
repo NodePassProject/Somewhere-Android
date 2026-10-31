@@ -13,11 +13,10 @@ package eu.nodepass.somewhere.nodes
  * ## The rule that matters
  *
  * **Only unreachability moves a connection.** Everything else — a refused
- * authentication, a Portal that answered and said no, a node the user
- * configured wrongly — stays where it is and reports what happened. See
- * [Attempt] for why: a Portal answers a bad key with silence, so a client that
- * treated silence as unreachability would walk the whole list on one typo and
- * then blame the last node.
+ * certificate, a handshake that failed, a node the user configured wrongly —
+ * stays where it is and reports what happened. See [Attempt] for why: a client
+ * that moved on a configuration mistake would walk the whole list on one typo
+ * and then blame the last node.
  *
  * ## The other rule
  *
